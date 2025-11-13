@@ -1,0 +1,248 @@
+/* Main Container */
+.users-teams-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Header styles moved to PageHeader.css */
+
+/* Tabs */
+.users-teams-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.users-teams-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Action Buttons */
+.users-teams-action-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.users-teams-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.users-teams-icon-with-margin {
+  margin-right: 0.5rem;
+}
+
+/* Form Styles */
+.users-teams-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.users-teams-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.users-teams-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+/* Table Styles */
+.users-teams-table-container {
+  overflow-x: auto;
+}
+
+.users-teams-table {
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.users-teams-table thead tr {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.users-teams-table th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+}
+
+.users-teams-table th.text-right {
+  text-align: right;
+}
+
+.users-teams-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.users-teams-table td {
+  padding: 0.75rem 1rem;
+}
+
+.users-teams-table td.text-right {
+  text-align: right;
+}
+
+.users-teams-table-id {
+  color: #64748b;
+}
+
+.users-teams-table-email {
+  color: #475569;
+}
+
+/* Action Buttons in Table */
+.users-teams-table-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.users-teams-delete-button {
+  color: #dc2626;
+}
+
+.users-teams-delete-button:hover {
+  color: #b91c1c;
+}
+
+.users-teams-status-active {
+  color: #16a34a;
+}
+
+.users-teams-status-inactive {
+  color: #dc2626;
+}
+
+/* Empty Message */
+.users-teams-empty-message {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+/* Modal Overlay */
+.users-team-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Modal Content */
+.users-team-modal-content {
+  background-color: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  padding: 1.5rem;
+  max-width: 32rem;
+  width: 100%;
+  margin: 0 1rem;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Modal Header */
+.users-team-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.users-team-modal-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.75rem;
+}
+
+/* Modal Close Button */
+.users-team-modal-close {
+  height: 2rem;
+  width: 2rem;
+  padding: 0;
+}
+
+/* Modal Form */
+.users-team-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.users-team-modal-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.users-team-modal-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.users-team-modal-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.users-team-modal-error {
+  background-color: #fef2f2;
+  color: #dc2626;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+/* Team Detail Dialog */
+.users-teams-dialog-content {
+  max-width: 42rem;
+}
+
+.users-teams-team-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.users-teams-team-members-section {
+  margin-bottom: 0.75rem;
+}
+
+.users-teams-team-members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.users-teams-team-member-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+}
+
+.users-teams-team-member-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.users-teams-team-member-role {
+  font-size: 0.875rem;
+  color: #475569;
+}
+

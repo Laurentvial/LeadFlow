@@ -1,0 +1,11 @@
+schemaVersion: "1.2"
+endpoints:
+    - name: test-rest-endpoint-5c6
+      displayName: Test REST Endpoint
+      service:
+        basePath: /
+        port: 8000
+      type: REST
+      networkVisibilities:
+        - Project
+        - Public

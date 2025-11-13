@@ -1,0 +1,33 @@
+/* Common Page Header Styles */
+
+/* Header Container - for pages with action buttons */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Header Section - for pages without action buttons */
+.page-header-section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Title Section - contains title and subtitle */
+.page-title-section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Page Title */
+.page-title {
+  margin-bottom: 0.5rem;
+  color: var(--primary);
+  font-size: 2rem;
+}
+
+/* Page Subtitle */
+.page-subtitle {
+  color: #475569;
+}
+

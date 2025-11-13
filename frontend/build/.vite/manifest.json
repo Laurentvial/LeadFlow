@@ -1,0 +1,50 @@
+{
+  "_charts-DytZZ8Ed.js": {
+    "file": "assets/charts-DytZZ8Ed.js",
+    "name": "charts",
+    "imports": [
+      "_radix-ui-BNaYseCA.js"
+    ]
+  },
+  "_forms-BraXt8tE.js": {
+    "file": "assets/forms-BraXt8tE.js",
+    "name": "forms",
+    "imports": [
+      "_radix-ui-BNaYseCA.js"
+    ]
+  },
+  "_radix-ui-BNaYseCA.js": {
+    "file": "assets/radix-ui-BNaYseCA.js",
+    "name": "radix-ui",
+    "imports": [
+      "_react-vendor-D3F3s8fL.js"
+    ]
+  },
+  "_react-vendor-D3F3s8fL.js": {
+    "file": "assets/react-vendor-D3F3s8fL.js",
+    "name": "react-vendor"
+  },
+  "_ui-utils-CNMAcKcF.js": {
+    "file": "assets/ui-utils-CNMAcKcF.js",
+    "name": "ui-utils",
+    "imports": [
+      "_charts-DytZZ8Ed.js",
+      "_radix-ui-BNaYseCA.js"
+    ]
+  },
+  "index.html": {
+    "file": "assets/index-Cp1rfk3C.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "imports": [
+      "_radix-ui-BNaYseCA.js",
+      "_react-vendor-D3F3s8fL.js",
+      "_ui-utils-CNMAcKcF.js",
+      "_charts-DytZZ8Ed.js"
+    ],
+    "css": [
+      "assets/index-DERnnkwX.css"
+    ]
+  }
+}

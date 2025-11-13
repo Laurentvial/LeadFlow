@@ -1,0 +1,87 @@
+/* Form Container */
+.form-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  max-width: 28rem;
+  width: 100%;
+}
+
+.form-container h1 {
+  color: var(--primary);
+  font-size: 2rem;
+  font-weight: var(--font-weight-medium);
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+/* Form Input */
+.form-input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background-color: var(--input-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size);
+  color: var(--foreground);
+  transition: border-color 0.2s ease-in-out;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Form Field Wrapper */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.form-field label {
+  font-size: var(--font-size);
+  font-weight: var(--font-weight-medium);
+  color: var(--foreground);
+}
+
+/* Select in Form */
+.form-field .form-input[role="combobox"] {
+  cursor: pointer;
+}
+
+/* Form Button */
+.form-button {
+  width: 100%;
+  padding: 0.625rem 1rem;
+  margin-top: 0.5rem;
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+.form-button:hover {
+  opacity: 0.9;
+}
+
+.form-button:active {
+  opacity: 0.8;
+}
+
+.form-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

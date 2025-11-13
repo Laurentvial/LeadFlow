@@ -1,0 +1,226 @@
+/* Dashboard Container */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Header styles moved to PageHeader.css */
+
+/* Loading State */
+.dashboard-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24rem;
+}
+
+/* Filters */
+.dashboard-filters-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .dashboard-filters-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.dashboard-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Statistics Cards */
+.dashboard-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .dashboard-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .dashboard-stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.dashboard-stat-card-content {
+  padding-top: 1.5rem;
+}
+
+.dashboard-stat-card-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dashboard-stat-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-stat-label {
+  font-size: 0.875rem;
+  color: #475569;
+  margin-bottom: 0.25rem;
+}
+
+.dashboard-stat-value-green {
+  color: #16a34a;
+}
+
+.dashboard-stat-value-orange {
+  color: #ea580c;
+}
+
+.dashboard-stat-value-blue {
+  color: #2563eb;
+}
+
+.dashboard-stat-value-purple {
+  color: #9333ea;
+}
+
+.dashboard-stat-value-indigo {
+  color: #4f46e5;
+}
+
+.dashboard-stat-value-pink {
+  color: #db2777;
+}
+
+.dashboard-stat-icon-wrapper {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background-color: #f8fafc;
+}
+
+.dashboard-stat-icon-wrapper-green {
+  color: #16a34a;
+}
+
+.dashboard-stat-icon-wrapper-orange {
+  color: #ea580c;
+}
+
+.dashboard-stat-icon-wrapper-blue {
+  color: #2563eb;
+}
+
+.dashboard-stat-icon-wrapper-purple {
+  color: #9333ea;
+}
+
+.dashboard-stat-icon-wrapper-indigo {
+  color: #4f46e5;
+}
+
+.dashboard-stat-icon-wrapper-pink {
+  color: #db2777;
+}
+
+.dashboard-stat-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+/* Messages Section */
+.dashboard-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dashboard-section-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.dashboard-messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dashboard-message-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background-color: #f8fafc;
+  border-radius: 0.5rem;
+}
+
+.dashboard-message-content {
+  flex: 1;
+}
+
+.dashboard-message-subject {
+  font-size: 0.875rem;
+}
+
+.dashboard-message-date {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.25rem;
+}
+
+.dashboard-message-badge {
+  padding: 0.25rem 0.5rem;
+  background-color: #dbeafe;
+  color: #1e40af;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+}
+
+.dashboard-empty-message {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+/* Transactions Table */
+.dashboard-table-container {
+  overflow-x: auto;
+}
+
+.dashboard-table {
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.dashboard-table thead tr {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.dashboard-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+}
+
+.dashboard-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.dashboard-table td {
+  padding: 0.5rem 0.75rem;
+}
+
+.dashboard-table-type {
+  text-transform: capitalize;
+}
+
+.dashboard-table-badge {
+  padding: 0.25rem 0.5rem;
+  background-color: #f1f5f9;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+}

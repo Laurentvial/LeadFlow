@@ -1,0 +1,209 @@
+/* Main Container */
+.planning-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Header styles moved to PageHeader.css */
+
+.planning-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.planning-icon-sm {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.planning-icon-md {
+  width: 1rem;
+  height: 1rem;
+}
+
+.planning-icon-with-margin {
+  margin-right: 0.5rem;
+}
+
+
+/* Calendar Header */
+.planning-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.planning-calendar-nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Calendar Grid */
+.planning-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+}
+
+.planning-weekday {
+  text-align: center;
+  font-size: 0.875rem;
+  color: #475569;
+  padding: 0.5rem;
+}
+
+.planning-calendar-empty {
+  padding: 0.5rem;
+}
+
+.planning-calendar-day {
+  padding: 0.5rem;
+  border: 1px solid #e2e8f0;
+  min-height: 6rem;
+}
+
+.planning-calendar-day-today {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.planning-day-number {
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.planning-day-events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Event Badge */
+.planning-event-badge {
+  background-color: #dbeafe;
+  color: #1e40af;
+  font-size: 0.75rem;
+  padding: 0.25rem;
+}
+
+.planning-event-time {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.planning-event-client {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Events List */
+.planning-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.planning-event-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+}
+
+.planning-event-content {
+  flex: 1;
+}
+
+.planning-event-meta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.planning-event-date-time {
+  display: flex;
+  flex-direction: column;
+}
+
+.planning-event-date-row,
+.planning-event-time-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.planning-event-time-row {
+  margin-bottom: 0.25rem;
+}
+
+.planning-event-client-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.planning-event-comment {
+  font-size: 0.875rem;
+  color: #475569;
+  margin-top: 0.5rem;
+}
+
+.planning-event-created-info {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
+.planning-event-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.planning-delete-button {
+  color: #dc2626;
+}
+
+.planning-delete-button:hover {
+  color: #b91c1c;
+}
+
+.planning-empty-message {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+/* Icon Colors */
+.planning-icon-slate {
+  color: #64748b;
+}
+
+/* Force 24-hour format for time inputs */
+.time-input-24h::-webkit-datetime-edit-meridiem-field,
+input[type="time"]::-webkit-datetime-edit-meridiem-field {
+  display: none !important;
+}
+
+.time-input-24h::-webkit-datetime-edit-hour-field,
+.time-input-24h::-webkit-datetime-edit-minute-field,
+input[type="time"]::-webkit-datetime-edit-hour-field,
+input[type="time"]::-webkit-datetime-edit-minute-field {
+  padding: 0;
+}
+
+/* For Firefox */
+.time-input-24h,
+input[type="time"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.time-input-24h::-moz-datetime-edit-meridiem-field,
+input[type="time"]::-moz-datetime-edit-meridiem-field {
+  display: none !important;
+}
+

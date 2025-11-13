@@ -1,0 +1,422 @@
+/* Clients Page Styles */
+
+.clients-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden; /* Empêche le débordement horizontal du conteneur */
+}
+
+.clients-header {
+  position: sticky;
+  top: 0;
+  background-color: white;
+  z-index: 30;
+  padding: 1rem 0;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Header title/subtitle styles moved to PageHeader.css */
+
+.clients-filters-card {
+  position: sticky;
+  top: 80px; /* Ajuster selon la hauteur du header */
+  background-color: white;
+  z-index: 20;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+.clients-filters {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .clients-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.clients-search-wrapper {
+  position: relative;
+}
+
+.clients-search-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  color: #94a3b8;
+}
+
+.clients-search-input {
+  padding-left: 2.5rem;
+}
+
+.clients-table-wrapper {
+  overflow-x: auto;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  max-height: calc(100vh - 300px); /* Ajuster selon la hauteur disponible */
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: #cbd5e1 #f1f5f9; /* Firefox */
+}
+
+/* Webkit scrollbar styling */
+.clients-table-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+
+.clients-table-wrapper::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 0px;
+}
+
+.clients-table-wrapper::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 0px;
+}
+
+.clients-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.clients-table {
+  width: 100%;
+  font-size: 0.875rem;
+  min-width: 1400px; /* Largeur minimale pour toutes les colonnes */
+  border-collapse: collapse;
+}
+
+.clients-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #f8fafc;
+}
+
+.clients-table thead tr {
+  border-bottom: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+}
+
+.clients-table th {
+  text-align: left;
+  padding: 0.75rem 0.5rem;
+  font-weight: 600;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.clients-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.clients-table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.clients-table td {
+  padding: 0.75rem 0.5rem;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+
+.clients-table-id {
+  color: #64748b;
+}
+
+.clients-table-email {
+  color: #475569;
+}
+
+.clients-status-active {
+  color: #16a34a;
+}
+
+.clients-status-inactive {
+  color: #dc2626;
+}
+
+.clients-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.clients-empty {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.clients-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.clients-name-link {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font: inherit;
+  transition: color 0.2s;
+}
+
+.clients-name-link:hover {
+  color: var(--primary, #3b82f6);
+}
+
+/* Checkbox styles */
+.clients-checkbox {
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+  accent-color: var(--primary, #3b82f6);
+}
+
+/* Barre d'actions multiples */
+.clients-bulk-actions {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.clients-bulk-actions-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.clients-bulk-actions-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-weight: 500;
+  color: #475569;
+}
+
+.clients-bulk-actions-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.clients-bulk-action-select {
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 768px) {
+  .clients-bulk-actions-content {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .clients-bulk-actions-info {
+    justify-content: space-between;
+  }
+  
+  .clients-bulk-actions-buttons {
+    width: 100%;
+  }
+  
+  .clients-bulk-actions-buttons button {
+    flex: 1;
+  }
+}
+
+/* Client Detail and Add Client Styles */
+
+/* Checkbox styles */
+.client-checkbox {
+  height: 1rem;
+  width: 1rem;
+  border-radius: 0.25rem;
+  border-color: rgb(203 213 225);
+  color: rgb(37 99 235);
+}
+
+.client-checkbox:focus {
+  --tw-ring-color: rgb(59 130 246);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+}
+
+/* Chevron icon styles */
+.client-chevron {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: rgb(100 116 139);
+  transition: transform 0.2s ease-in-out;
+}
+
+.client-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Objective and Experience button base styles */
+.client-toggle-button {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid;
+  transition: all 0.2s ease-in-out;
+}
+
+.client-toggle-button.inactive {
+  background-color: white;
+  border-color: rgb(203 213 225);
+  color: rgb(51 65 85);
+}
+
+.client-toggle-button.active {
+  background-color: rgb(219 234 254);
+  border-color: rgb(59 130 246);
+  color: rgb(29 78 216);
+}
+
+.client-toggle-button:hover {
+  opacity: 0.9;
+}
+
+/* Time selector styles */
+.client-time-selector {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.client-time-selector-trigger {
+  flex: 1;
+}
+
+.client-time-separator {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+/* Objective and Experience badge styles (for display in ClientDetail and interactive in AddClient) */
+.client-badge {
+  padding: 0.5rem 1rem;
+  border: 1px solid rgb(0, 0, 0);
+  background-color: rgb(240, 240, 240);
+  color: rgb(0, 0, 0);
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.client-badge.active {
+  background-color: rgb(0, 0, 0);
+  border-color: rgb(0, 0, 0);
+  color: rgb(255, 255, 255);
+}
+
+.client-badge:hover {
+  opacity: 0.9;
+}
+
+/* Profession badge styles */
+.client-profession-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgb(0, 0, 0);
+  background-color: rgb(240, 240, 240);
+  color: rgb(0, 0, 0);
+}
+
+/* Profile photo styles */
+.client-profile-photo-container {
+  position: relative;
+}
+
+.client-profile-photo-preview {
+  width: 6rem;
+  height: 6rem;
+  object-fit: cover;
+  border: 1px solid rgb(203 213 225);
+}
+
+.client-profile-photo-remove-btn {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.5rem;
+  background-color: rgb(239 68 68);
+  color: white;
+  width: 1.2rem;
+  height: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.2s;
+}
+
+.client-profile-photo-remove-btn:hover {
+  background-color: rgb(220 38 38);
+}
+
+/* Profile photo display styles (for ClientDetail) */
+.client-profile-photo-display {
+  width: 6rem;
+  height: 6rem;
+  object-fit: cover;
+  border: 1px solid rgb(0, 0, 0);
+}
+
+.client-profile-photo-placeholder-display {
+  width: 4rem;
+  height: 4rem;
+  background-color: rgb(241 245 249);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(148 163 184);
+  border-width: 2px;
+  border-color: rgb(0, 0, 0);
+  border-style: solid;
+}
+
+/* Client action button styles */
+.client-action-button-activate {
+  background-color: rgb(34 197 94);
+  color: white;
+  border-color: rgb(34 197 94);
+}
+
+.client-action-button-activate:hover {
+  background-color: rgb(22 163 74);
+  border-color: rgb(22 163 74);
+}
+
+.client-action-button-deactivate {
+  background-color: rgb(239 68 68);
+  color: white;
+  border-color: rgb(239 68 68);
+}
+
+.client-action-button-deactivate:hover {
+  background-color: rgb(220 38 38);
+  border-color: rgb(220 38 38);
+}
