@@ -6,7 +6,8 @@ export interface User {
   username: string;
   email: string;
   phone?: string;
-  role: string;
+  role: string; // Role ID
+  roleName?: string; // Role name for display
   teamId: string | null;
   active: boolean;
 }

@@ -5,13 +5,13 @@ import { Trash2 } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 
-interface ClientNotesTabProps {
+interface ContactNotesTabProps {
   notes: any[];
-  clientId: string;
+  contactId: string;
   onRefresh: () => void;
 }
 
-export function ClientNotesTab({ notes, clientId, onRefresh }: ClientNotesTabProps) {
+export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTabProps) {
   async function handleDeleteNote(noteId: string) {
     if (!confirm('Supprimer cette note ?')) return;
     
@@ -63,4 +63,5 @@ export function ClientNotesTab({ notes, clientId, onRefresh }: ClientNotesTabPro
     </Card>
   );
 }
+
 

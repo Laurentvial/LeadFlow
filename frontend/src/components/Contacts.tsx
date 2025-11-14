@@ -14,22 +14,22 @@ import {
 import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
-import '../styles/Clients.css';
+import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 
-interface ClientsProps {
-  onSelectClient: (clientId: string) => void;
+interface ContactsProps {
+  onSelectContact: (contactId: string) => void;
 }
 
-export function Clients({ onSelectClient }: ClientsProps) {
+export function Contacts({ onSelectContact }: ContactsProps) {
   const navigate = useNavigate();
   const { users, loading: usersLoading, error: usersError } = useUsers();
-  const [clients, setClients] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('all');
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [selectedClients, setSelectedClients] = useState<Set<string>>(new Set());
+  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeamId, setBulkTeamId] = useState('');
   const [bulkManagerId, setBulkManagerId] = useState('');
@@ -51,77 +51,77 @@ export function Clients({ onSelectClient }: ClientsProps) {
 
   async function loadData() {
     try {
-      const [clientsData, teamsData] = await Promise.all([
-        apiCall('/api/clients/'),
+      const [contactsData, teamsData] = await Promise.all([
+        apiCall('/api/contacts/'),
         apiCall('/api/teams/')
       ]);
       
-      setClients(clientsData.clients || []);
+      setContacts(contactsData.contacts || []);
       setTeams(teamsData.teams || []);
     } catch (error) {
-      console.error('Error loading clients:', error);
+      console.error('Error loading contacts:', error);
     }
   }
 
-  async function handleToggleActive(clientId: string) {
+  async function handleToggleActive(contactId: string) {
     try {
-      await apiCall(`/api/clients/${clientId}/toggle-active/`, { method: 'POST' });
+      await apiCall(`/api/contacts/${contactId}/toggle-active/`, { method: 'POST' });
       loadData();
     } catch (error) {
-      console.error('Error toggling client status:', error);
+      console.error('Error toggling contact status:', error);
     }
   }
 
-  const filteredClients = clients.filter(client => {
-    const fullName = `${client.firstName || ''} ${client.lastName || ''}`.toLowerCase();
+  const filteredContacts = contacts.filter(contact => {
+    const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.toLowerCase();
     const matchesSearch = 
       fullName.includes(searchTerm.toLowerCase()) ||
-      client.email?.toLowerCase().includes(searchTerm.toLowerCase());
+      contact.email?.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesTeam = selectedTeam === 'all' || client.teamId === selectedTeam;
+    const matchesTeam = selectedTeam === 'all' || contact.teamId === selectedTeam;
     
     return matchesSearch && matchesTeam;
   });
 
-  const displayedClients = filteredClients.slice(0, itemsPerPage);
+  const displayedContacts = filteredContacts.slice(0, itemsPerPage);
 
   // Gestion de la sélection
-  function handleSelectClient(clientId: string) {
-    const newSelected = new Set(selectedClients);
-    if (newSelected.has(clientId)) {
-      newSelected.delete(clientId);
+  function handleSelectContact(contactId: string) {
+    const newSelected = new Set(selectedContacts);
+    if (newSelected.has(contactId)) {
+      newSelected.delete(contactId);
     } else {
-      newSelected.add(clientId);
+      newSelected.add(contactId);
     }
-    setSelectedClients(newSelected);
+    setSelectedContacts(newSelected);
     setShowBulkActions(newSelected.size > 0);
   }
 
   function handleSelectAll() {
-    if (selectedClients.size === displayedClients.length) {
-      setSelectedClients(new Set());
+    if (selectedContacts.size === displayedContacts.length) {
+      setSelectedContacts(new Set());
       setShowBulkActions(false);
     } else {
-      setSelectedClients(new Set(displayedClients.map(c => c.id)));
+      setSelectedContacts(new Set(displayedContacts.map(c => c.id)));
       setShowBulkActions(true);
     }
   }
 
   function handleClearSelection() {
-    setSelectedClients(new Set());
+    setSelectedContacts(new Set());
     setShowBulkActions(false);
   }
 
-  const allSelected = displayedClients.length > 0 && selectedClients.size === displayedClients.length;
-  const someSelected = selectedClients.size > 0 && selectedClients.size < displayedClients.length;
+  const allSelected = displayedContacts.length > 0 && selectedContacts.size === displayedContacts.length;
+  const someSelected = selectedContacts.size > 0 && selectedContacts.size < displayedContacts.length;
 
   // Actions multiples
   async function handleBulkChangeTeam(teamId: string) {
     if (!teamId) return;
     
     try {
-      const promises = Array.from(selectedClients).map(clientId =>
-        apiCall(`/api/clients/${clientId}/`, {
+      const promises = Array.from(selectedContacts).map(contactId =>
+        apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: JSON.stringify({ teamId: teamId === 'none' ? null : teamId })
         })
@@ -141,8 +141,8 @@ export function Clients({ onSelectClient }: ClientsProps) {
     try {
       const managerIdValue = managerId !== 'none' ? managerId : '';
       
-      const promises = Array.from(selectedClients).map(clientId =>
-        apiCall(`/api/clients/${clientId}/`, {
+      const promises = Array.from(selectedContacts).map(contactId =>
+        apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: JSON.stringify({ managed_by: managerIdValue })
         })
@@ -158,11 +158,11 @@ export function Clients({ onSelectClient }: ClientsProps) {
   }
 
   async function handleBulkToggleActive() {
-    if (!confirm(`Êtes-vous sûr de vouloir ${displayedClients.filter(c => selectedClients.has(c.id)).some(c => c.active) ? 'désactiver' : 'activer'} ${selectedClients.size} client(s) ?`)) return;
+    if (!confirm(`Êtes-vous sûr de vouloir ${displayedContacts.filter(c => selectedContacts.has(c.id)).some(c => c.active) ? 'désactiver' : 'activer'} ${selectedContacts.size} contact(s) ?`)) return;
     
     try {
-      const promises = Array.from(selectedClients).map(clientId =>
-        apiCall(`/api/clients/${clientId}/toggle-active/`, { method: 'POST' })
+      const promises = Array.from(selectedContacts).map(contactId =>
+        apiCall(`/api/contacts/${contactId}/toggle-active/`, { method: 'POST' })
       );
       await Promise.all(promises);
       loadData();
@@ -174,73 +174,73 @@ export function Clients({ onSelectClient }: ClientsProps) {
   }
 
   async function handleBulkDelete() {
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedClients.size} client(s) ? Cette action est irréversible.`)) return;
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedContacts.size} contact(s) ? Cette action est irréversible.`)) return;
     
     try {
-      const promises = Array.from(selectedClients).map(clientId =>
-        apiCall(`/api/clients/${clientId}/delete/`, { method: 'DELETE' })
+      const promises = Array.from(selectedContacts).map(contactId =>
+        apiCall(`/api/contacts/${contactId}/delete/`, { method: 'DELETE' })
       );
       await Promise.all(promises);
       loadData();
       handleClearSelection();
     } catch (error) {
-      console.error('Error deleting clients:', error);
-      alert('Erreur lors de la suppression des clients');
+      console.error('Error deleting contacts:', error);
+      alert('Erreur lors de la suppression des contacts');
     }
   }
 
-  function handlePlaceAppointment(clientId: string) {
+  function handlePlaceAppointment(contactId: string) {
     // TODO: Implémenter la fonctionnalité de placement de RDV
-    console.log('Placer RDV pour client:', clientId);
+    console.log('Placer RDV pour contact:', contactId);
   }
 
-  function handleAddNote(clientId: string) {
+  function handleAddNote(contactId: string) {
     // TODO: Implémenter la fonctionnalité d'ajout de note
-    console.log('Ajouter note pour client:', clientId);
+    console.log('Ajouter note pour contact:', contactId);
   }
 
-  function handlePlatformAccess(clientId: string) {
+  function handlePlatformAccess(contactId: string) {
     // TODO: Implémenter la fonctionnalité de connexion à la plateforme
-    console.log('Connexion plateforme pour client:', clientId);
+    console.log('Connexion plateforme pour contact:', contactId);
   }
 
-  async function handleDeleteClient(clientId: string) {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce client ?')) return;
+  async function handleDeleteContact(contactId: string) {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer ce contact ?')) return;
     
     try {
       // TODO: Implémenter l'endpoint de suppression
-      // await apiCall(`/api/clients/${clientId}/`, { method: 'DELETE' });
-      console.log('Supprimer client:', clientId);
+      // await apiCall(`/api/contacts/${contactId}/`, { method: 'DELETE' });
+      console.log('Supprimer contact:', contactId);
       loadData();
     } catch (error) {
-      console.error('Error deleting client:', error);
+      console.error('Error deleting contact:', error);
     }
   }
 
   return (
-    <div className="clients-container">
-      <div className="clients-header page-header">
+    <div className="contacts-container">
+      <div className="contacts-header page-header">
         <div className="page-title-section">
-          <h1 className="page-title">Clients</h1>
-          <p className="page-subtitle">Gestion de vos clients</p>
+          <h1 className="page-title">Contacts</h1>
+          <p className="page-subtitle">Gestion de vos contacts</p>
         </div>
         
-        <Button onClick={() => navigate('/clients/add')}>
+        <Button onClick={() => navigate('/contacts/add')}>
           <Plus className="w-4 h-4 mr-2" />
-          Ajouter un client
+          Ajouter un contact
         </Button>
       </div>
 
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="clients-filters">
-            <div className="clients-filter-section">
+          <div className="contacts-filters">
+            <div className="contacts-filter-section">
               <Label>Recherche</Label>
-              <div className="clients-search-wrapper">
-                <Search className="clients-search-icon" />
+              <div className="contacts-search-wrapper">
+                <Search className="contacts-search-icon" />
                 <Input
-                  className="clients-search-input"
+                  className="contacts-search-input"
                   placeholder="Nom, email..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -248,7 +248,7 @@ export function Clients({ onSelectClient }: ClientsProps) {
               </div>
             </div>
             
-            <div className="clients-filter-section">
+            <div className="contacts-filter-section">
               <Label>Équipe</Label>
               <Select value={selectedTeam} onValueChange={setSelectedTeam}>
                 <SelectTrigger>
@@ -265,7 +265,7 @@ export function Clients({ onSelectClient }: ClientsProps) {
               </Select>
             </div>
 
-            <div className="clients-filter-section">
+            <div className="contacts-filter-section">
               <Label>Affichage par</Label>
               <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(Number(value))}>
                 <SelectTrigger>
@@ -285,18 +285,18 @@ export function Clients({ onSelectClient }: ClientsProps) {
 
       {/* Barre d'actions multiples */}
       {showBulkActions && (
-        <Card className="clients-bulk-actions">
+        <Card className="contacts-bulk-actions">
           <CardContent className="pt-4">
-            <div className="clients-bulk-actions-content">
-              <div className="clients-bulk-actions-info">
-                <span>{selectedClients.size} client(s) sélectionné(s)</span>
+            <div className="contacts-bulk-actions-content">
+              <div className="contacts-bulk-actions-info">
+                <span>{selectedContacts.size} contact(s) sélectionné(s)</span>
                 <Button variant="ghost" size="sm" onClick={handleClearSelection}>
                   <X className="w-4 h-4 mr-2" />
                   Annuler
                 </Button>
               </div>
-              <div className="clients-bulk-actions-buttons">
-                <div className="clients-bulk-action-select">
+              <div className="contacts-bulk-actions-buttons">
+                <div className="contacts-bulk-action-select">
                   <Label className="sr-only">Changer d'équipe</Label>
                   <Select value={bulkTeamId} onValueChange={handleBulkChangeTeam}>
                     <SelectTrigger className="w-[180px]">
@@ -314,7 +314,7 @@ export function Clients({ onSelectClient }: ClientsProps) {
                   </Select>
                 </div>
 
-                <div className="clients-bulk-action-select">
+                <div className="contacts-bulk-action-select">
                   <Label className="sr-only">Attribuer un gestionnaire</Label>
                   <Select value={bulkManagerId} onValueChange={handleBulkAssignManager}>
                     <SelectTrigger className="w-[200px]">
@@ -357,15 +357,15 @@ export function Clients({ onSelectClient }: ClientsProps) {
         </Card>
       )}
 
-      {/* Clients List */}
+      {/* Contacts List */}
       <Card>
         <CardHeader>
-          <CardTitle>Liste des clients ({filteredClients.length})</CardTitle>
+          <CardTitle>Liste des contacts ({filteredContacts.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          {filteredClients.length > 0 ? (
-            <div className="clients-table-wrapper">
-              <table className="clients-table">
+          {filteredContacts.length > 0 ? (
+            <div className="contacts-table-wrapper">
+              <table className="contacts-table">
                 <thead>
                   <tr>
                     <th style={{ width: '40px' }}>
@@ -376,7 +376,7 @@ export function Clients({ onSelectClient }: ClientsProps) {
                           if (input) input.indeterminate = someSelected;
                         }}
                         onChange={handleSelectAll}
-                        className="clients-checkbox"
+                        className="contacts-checkbox"
                       />
                     </th>
                     <th>Id</th>
@@ -395,58 +395,58 @@ export function Clients({ onSelectClient }: ClientsProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedClients.map((client) => (
-                    <tr key={client.id}>
+                  {displayedContacts.map((contact) => (
+                    <tr key={contact.id}>
                       <td>
                         <input
                           type="checkbox"
-                          checked={selectedClients.has(client.id)}
-                          onChange={() => handleSelectClient(client.id)}
-                          className="clients-checkbox"
+                          checked={selectedContacts.has(contact.id)}
+                          onChange={() => handleSelectContact(contact.id)}
+                          className="contacts-checkbox"
                         />
                       </td>
-                      <td className="clients-table-id">
-                        {client.id.substring(0, 8)}
+                      <td className="contacts-table-id">
+                        {contact.id.substring(0, 8)}
                       </td>
                       <td>
                         <button
-                          onClick={() => navigate(`/clients/${client.id}`)}
-                          className="clients-name-link"
+                          onClick={() => navigate(`/contacts/${contact.id}`)}
+                          className="contacts-name-link"
                         >
-                          {client.fullName || `${client.firstName || ''} ${client.lastName || ''}`.trim() || '-'}
+                          {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
                         </button>
                       </td>
-                      <td>{client.phone || client.mobile || '-'}</td>
-                      <td className="clients-table-email">{client.email || '-'}</td>
+                      <td>{contact.phone || contact.mobile || '-'}</td>
+                      <td className="contacts-table-email">{contact.email || '-'}</td>
                       <td>
-                        {client.createdAt 
-                          ? new Date(client.createdAt).toLocaleString('fr-FR', {
+                        {contact.createdAt 
+                          ? new Date(contact.createdAt).toLocaleString('fr-FR', {
                               dateStyle: 'short',
                               timeStyle: 'short'
                             })
                           : '-'
                         }
                       </td>
-                      <td>{client.support || '-'}</td>
-                      <td>{client.managerName || client.manager || '-'}</td>
-                      <td>{client.source || '-'}</td>
+                      <td>{contact.support || '-'}</td>
+                      <td>{contact.managerName || contact.manager || '-'}</td>
+                      <td>{contact.source || '-'}</td>
                       <td>
-                        {client.capital 
+                        {contact.capital 
                           ? new Intl.NumberFormat('fr-FR', {
                               style: 'currency',
                               currency: 'EUR'
-                            }).format(client.capital)
+                            }).format(contact.capital)
                           : '0,00 €'
                         }
                       </td>
                       <td>
-                        <span className={client.active ? 'clients-status-active' : 'clients-status-inactive'}>
-                          {client.active ? 'Actif' : 'Inactif'}
+                        <span className={contact.active ? 'contacts-status-active' : 'contacts-status-inactive'}>
+                          {contact.active ? 'Actif' : 'Inactif'}
                         </span>
                       </td>
                       <td>
                         {(() => {
-                          const team = teams.find(t => t.id === client.teamId);
+                          const team = teams.find(t => t.id === contact.teamId);
                           return team ? team.name : '-';
                         })()}
                       </td>
@@ -454,14 +454,14 @@ export function Clients({ onSelectClient }: ClientsProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleToggleActive(client.id)}
-                          className={client.active ? 'clients-status-active' : 'clients-status-inactive'}
+                          onClick={() => handleToggleActive(contact.id)}
+                          className={contact.active ? 'contacts-status-active' : 'contacts-status-inactive'}
                         >
-                          {client.active ? 'Désactiver' : 'Activer'}
+                          {contact.active ? 'Désactiver' : 'Activer'}
                         </Button>
                       </td>
                       <td>
-                        <div className="clients-actions">
+                        <div className="contacts-actions">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="sm">
@@ -469,20 +469,20 @@ export function Clients({ onSelectClient }: ClientsProps) {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handlePlaceAppointment(client.id)}>
+                              <DropdownMenuItem onClick={() => handlePlaceAppointment(contact.id)}>
                                 <Calendar className="w-4 h-4 mr-2" />
                                 Placer RDV
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleAddNote(client.id)}>
+                              <DropdownMenuItem onClick={() => handleAddNote(contact.id)}>
                                 <FileText className="w-4 h-4 mr-2" />
                                 Ajouter une note
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handlePlatformAccess(client.id)}>
+                              <DropdownMenuItem onClick={() => handlePlatformAccess(contact.id)}>
                                 <LogIn className="w-4 h-4 mr-2" />
-                                Connexion à la plateforme client
+                                Connexion à la plateforme contact
                               </DropdownMenuItem>
                               <DropdownMenuItem 
-                                onClick={() => handleDeleteClient(client.id)}
+                                onClick={() => handleDeleteContact(contact.id)}
                                 className="text-red-600"
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
@@ -498,7 +498,7 @@ export function Clients({ onSelectClient }: ClientsProps) {
               </table>
             </div>
           ) : (
-            <p className="clients-empty">Aucun client trouvé</p>
+            <p className="contacts-empty">Aucun contact trouvé</p>
           )}
         </CardContent>
       </Card>
@@ -506,4 +506,4 @@ export function Clients({ onSelectClient }: ClientsProps) {
   );
 }
 
-export default Clients;
+export default Contacts;

@@ -18,10 +18,10 @@ export function Layout({ children }: LayoutProps) {
     if (path === '/') return 'dashboard';
     if (path === '/dashboard') return 'dashboard';
     if (path === '/users') return 'users-teams';
-    if (path === '/clients') return 'clients';
+    if (path === '/contacts') return 'contacts';
     if (path === '/planning') return 'planning';
+    if (path === '/settings') return 'settings';
     if (path === '/transactions') return 'transactions';
-    if (path === '/messagerie') return 'messagerie';
     if (path === '/placements') return 'placements';
     if (path === '/manage/ribs') return 'manage-ribs';
     if (path === '/manage/assets') return 'manage-assets';
@@ -49,7 +49,7 @@ export function Layout({ children }: LayoutProps) {
         <Sidebar 
           currentPage={getCurrentPage()} 
           onNavigate={handleNavigate} 
-          userRole={currentUser?.role || 'admin'} 
+          userRole={currentUser?.roleName || currentUser?.role || 'admin'} 
         />
         <div style={{ width: '100%', padding: '30px' }}>
           {children}

@@ -5,14 +5,14 @@ import Dashboard from './components/Dashboard';
 import NotFound from './components/NotFound';
 import UsersAndTeams from './components/UsersTeams';
 import Planning from './components/PlanningCalendar';
-import Clients from './components/Clients';
-import AddClient from './components/AddClient';
-import { ClientDetail } from './components/ClientDetail';
-import { ManageRibs } from './components/ManageRibs';
-import { ManageAssets } from './components/ManageAssets';
-import { ManageUsefulLinks } from './components/ManageUsefulLinks';
+import Contacts from './components/Contacts';
+import AddContact from './components/AddContact';
+import { ContactDetail } from './components/ContactDetail';
+import Settings from './components/Settings';
 import { UserProvider } from './contexts/UserContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import PermissionProtectedRoute from './components/PermissionProtectedRoute';
+import SettingsPermissionWrapper from './components/SettingsPermissionWrapper';
 import { Layout } from './components/Layout';
 import { Toaster } from './components/ui/sonner';
 
@@ -21,15 +21,15 @@ function Logout() {
     return <Navigate to="/login" />;
 }
 
-function ClientDetailWrapper() {
+function ContactDetailWrapper() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     
     if (!id) {
-        return <Navigate to="/clients" />;
+        return <Navigate to="/contacts" />;
     }
     
-    return <ClientDetail clientId={id} onBack={() => navigate('/clients')} />;
+    return <ContactDetail contactId={id} onBack={() => navigate('/contacts')} />;
 }
 
 function App() {
@@ -42,72 +42,70 @@ function App() {
                     <Route path="/logout" element={<Logout />} />
                     <Route path="/" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <Dashboard />
-                            </Layout>
+                            <PermissionProtectedRoute component="dashboard" action="view" fallbackPath={undefined}>
+                                <Layout>
+                                    <Dashboard />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/dashboard" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <Dashboard />
-                            </Layout>
+                            <PermissionProtectedRoute component="dashboard" action="view">
+                                <Layout>
+                                    <Dashboard />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/users" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <UsersAndTeams />
-                            </Layout>
+                            <PermissionProtectedRoute component="users" action="view">
+                                <Layout>
+                                    <UsersAndTeams />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/planning" element={
                         <ProtectedRoute>
+                            <PermissionProtectedRoute component="planning" action="view">
+                                <Layout>
+                                    <Planning />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="view">
+                                <Layout>
+                                    <Contacts onSelectContact={() => {}} />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/add" element={
+                        <ProtectedRoute>
                             <Layout>
-                                <Planning />
+                                <AddContact />
                             </Layout>
                         </ProtectedRoute>
                     } />
-                    <Route path="/clients" element={
+                    <Route path="/contacts/:id" element={
                         <ProtectedRoute>
                             <Layout>
-                                <Clients onSelectClient={() => {}} />
+                                <ContactDetailWrapper />
                             </Layout>
                         </ProtectedRoute>
                     } />
-                    <Route path="/clients/add" element={
+                    <Route path="/settings" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <AddClient />
-                            </Layout>
-                        </ProtectedRoute>
-                    } />
-                    <Route path="/clients/:id" element={
-                        <ProtectedRoute>
-                            <Layout>
-                                <ClientDetailWrapper />
-                            </Layout>
-                        </ProtectedRoute>
-                    } />
-                    <Route path="/manage/ribs" element={
-                        <ProtectedRoute>
-                            <Layout>
-                                <ManageRibs />
-                            </Layout>
-                        </ProtectedRoute>
-                    } />
-                    <Route path="/manage/assets" element={
-                        <ProtectedRoute>
-                            <Layout>
-                                <ManageAssets />
-                            </Layout>
-                        </ProtectedRoute>
-                    } />
-                    <Route path="/manage/useful-links" element={
-                        <ProtectedRoute>
-                            <Layout>
-                                <ManageUsefulLinks />
-                            </Layout>
+                            <SettingsPermissionWrapper>
+                                <Layout>
+                                    <Settings />
+                                </Layout>
+                            </SettingsPermissionWrapper>
                         </ProtectedRoute>
                     } />
                     <Route path="*" element={

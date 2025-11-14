@@ -1,18 +1,18 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Client, Note, UserDetails, Team, Event, TeamMember, Log, Asset, ClientAsset, RIB, ClientRIB, UsefulLink, ClientUsefulLink, Transaction
+from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    role = serializers.CharField(write_only=True, required=False, default='0')
+    roleId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     teamId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     
     class Meta:
         model = DjangoUser
-        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'role', 'phone', 'teamId']
+        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'roleId', 'phone', 'teamId']
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': False, 'allow_blank': True},
@@ -58,10 +58,8 @@ class UserSerializer(serializers.ModelSerializer):
         # Extract UserDetails fields
         first_name = validated_data.pop('first_name', '')
         last_name = validated_data.pop('last_name', '')
-        role = validated_data.pop('role', '0')
+        role_id = validated_data.pop('roleId', None)
         phone = validated_data.pop('phone', '')
-        # Ensure role doesn't exceed 12 characters (database constraint)
-        role = str(role)[:12] if role else '0'
         team_id = validated_data.pop('teamId', None)
         
         # Get and normalize username (already validated and stripped in validate_username)
@@ -99,6 +97,14 @@ class UserSerializer(serializers.ModelSerializer):
                 if not UserDetails.objects.filter(id=user_details_id).exists():
                     break
 
+        # Get role if role_id provided
+        role = None
+        if role_id:
+            try:
+                role = Role.objects.get(id=role_id)
+            except Role.DoesNotExist:
+                pass  # Role will be None if not found
+        
         # Create UserDetails entry for this user
         user_details = UserDetails.objects.create(
             id=user_details_id,
@@ -126,16 +132,26 @@ class UserSerializer(serializers.ModelSerializer):
         return user
 
 class NoteSerializer(serializers.ModelSerializer):
+    contactId = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), required=False, allow_null=True)
+    
     class Meta:
         model = Note
-        fields = ['id', 'clientId', 'userId', 'text', 'created_at', 'updated_at']
+        fields = ['id', 'contactId', 'userId', 'text', 'created_at', 'updated_at']
         extra_kwargs = {
             'userId': {'read_only': True},
-            'clientId': {'required': False, 'allow_null': True},
             'id': {'required': False}
         }
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        # Expose contactId as string ID in API response
+        ret['contactId'] = instance.contactId.id if instance.contactId else None
+        return ret
+    
+    def to_internal_value(self, data):
+        return super().to_internal_value(data)
 
-class ClientSerializer(serializers.ModelSerializer):
+class ContactSerializer(serializers.ModelSerializer):
     firstName = serializers.SerializerMethodField()
     lastName = serializers.SerializerMethodField()
     fullName = serializers.SerializerMethodField()
@@ -146,7 +162,7 @@ class ClientSerializer(serializers.ModelSerializer):
     source = serializers.SerializerMethodField()
     
     class Meta:
-        model = Client
+        model = Contact
         fields = '__all__'
     
     def get_firstName(self, obj):
@@ -163,7 +179,7 @@ class ClientSerializer(serializers.ModelSerializer):
         return obj.team.id if obj.team else None
     
     def get_capital(self, obj):
-        return float(obj.total_wealth) if obj.total_wealth else 0
+        return 0
     
     def get_manager(self, obj):
         return obj.managed_by or ''
@@ -179,7 +195,7 @@ class ClientSerializer(serializers.ModelSerializer):
         ret['lastName'] = instance.lname
         ret['fullName'] = f"{instance.fname} {instance.lname}".strip()
         ret['createdAt'] = instance.created_at
-        ret['capital'] = float(instance.total_wealth) if instance.total_wealth else 0
+        ret['capital'] = 0
         ret['source'] = instance.source or ''
         ret['teamId'] = instance.team.id if instance.team else None
         ret['teamName'] = instance.team.name if instance.team else ''
@@ -233,20 +249,7 @@ class ClientSerializer(serializers.ModelSerializer):
             ret['managerTeamName'] = ''
         
         # Convertir les champs personnels de snake_case à camelCase
-        if instance.profile_photo:
-            request = self.context.get('request')
-            if request:
-                ret['profilePhoto'] = request.build_absolute_uri(instance.profile_photo.url)
-            else:
-                ret['profilePhoto'] = instance.profile_photo.url if instance.profile_photo else ''
-        else:
-            ret['profilePhoto'] = ''
         ret['civility'] = ret.get('civility', '') or ''
-        ret['template'] = ret.get('template', '') or ''
-        ret['support'] = ret.get('support', '') or ''
-        ret['password'] = ret.get('password', '') or ''
-        ret['platformAccess'] = bool(ret.get('platform_access', True))
-        ret['active'] = bool(ret.get('active', True))
         ret['birthDate'] = instance.birth_date.isoformat() if instance.birth_date else None
         ret['birthPlace'] = ret.get('birth_place', '') or ''
         ret['address'] = ret.get('address', '') or ''
@@ -254,37 +257,6 @@ class ClientSerializer(serializers.ModelSerializer):
         ret['city'] = ret.get('city', '') or ''
         ret['nationality'] = ret.get('nationality', '') or ''
         ret['successor'] = ret.get('successor', '') or ''
-        
-        # Convertir les champs patrimoniaux de snake_case à camelCase
-        ret['professionalActivityStatus'] = ret.get('professional_activity_status', '') or ''
-        ret['professionalActivityComment'] = ret.get('professional_activity_comment', '') or ''
-        ret['professions'] = ret.get('professions', []) or []
-        ret['professionsComment'] = ret.get('professions_comment', '') or ''
-        ret['bankName'] = ret.get('bank_name', '') or ''
-        ret['currentAccount'] = float(ret.get('current_account', 0) or 0)
-        ret['livretAB'] = float(ret.get('livret_ab', 0) or 0)
-        ret['pea'] = float(ret.get('pea', 0) or 0)
-        ret['pel'] = float(ret.get('pel', 0) or 0)
-        ret['ldd'] = float(ret.get('ldd', 0) or 0)
-        ret['cel'] = float(ret.get('cel', 0) or 0)
-        ret['csl'] = float(ret.get('csl', 0) or 0)
-        ret['securitiesAccount'] = float(ret.get('securities_account', 0) or 0)
-        ret['lifeInsurance'] = float(ret.get('life_insurance', 0) or 0)
-        ret['savingsComment'] = ret.get('savings_comment', '') or ''
-        ret['totalWealth'] = float(ret.get('total_wealth', 0) or 0)
-        ret['objectives'] = ret.get('objectives', []) or []
-        ret['objectivesComment'] = ret.get('objectives_comment', '') or ''
-        ret['experience'] = ret.get('experience', []) or []
-        ret['experienceComment'] = ret.get('experience_comment', '') or ''
-        ret['taxOptimization'] = bool(ret.get('tax_optimization', False))
-        ret['taxOptimizationComment'] = ret.get('tax_optimization_comment', '') or ''
-        ret['annualHouseholdIncome'] = float(ret.get('annual_household_income', 0) or 0)
-        
-        # Convertir les champs wallet de snake_case à camelCase
-        ret['investedCapital'] = float(ret.get('invested_capital', 0) or 0)
-        ret['tradingPortfolio'] = float(ret.get('trading_portfolio', 0) or 0)
-        ret['bonus'] = float(ret.get('bonus', 0) or 0)
-        # availableFunds is calculated on frontend
         
         return ret
 
@@ -337,12 +309,43 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         team_member = obj.team_memberships.first()
         return team_member.team.id if team_member else None
     
+    def get_permissions(self, obj):
+        """Get all permissions for the user's role"""
+        if not obj.role:
+            return []
+        
+        # Get all PermissionRole objects for this role
+        permission_roles = obj.role.permission_roles.select_related('permission').all()
+        
+        # Serialize permissions
+        permissions = []
+        for pr in permission_roles:
+            perm = pr.permission
+            permissions.append({
+                'id': perm.id,
+                'component': perm.component,
+                'fieldName': perm.field_name,
+                'action': perm.action,
+                'statusId': perm.status.id if perm.status else None,
+            })
+        
+        return permissions
+    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['isLeader'] = instance.role == 'teamleader'
+        # Handle role as ForeignKey
+        if instance.role:
+            ret['role'] = instance.role.id
+            ret['roleName'] = instance.role.name
+        else:
+            ret['role'] = None
+            ret['roleName'] = None
+        ret['isLeader'] = instance.role and instance.role.name.lower() == 'teamleader'
         # Get teamId from TeamMember relationship
         team_member = instance.team_memberships.first()
         ret['teamId'] = team_member.team.id if team_member else None
+        # Include permissions
+        ret['permissions'] = self.get_permissions(instance)
         return ret
 
 class TeamMemberSerializer(serializers.ModelSerializer):
@@ -361,34 +364,38 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         return {
             'firstName': django_user.first_name if django_user else '',
             'lastName': django_user.last_name if django_user else '',
-            'role': user_details.role,
+            'role': user_details.role.id if user_details.role else None,
+            'roleName': user_details.role.name if user_details.role else None,
         }
     
     def get_isLeader(self, obj):
-        return obj.user.role == 'teamleader'
+        return obj.user.role and obj.user.role.name.lower() == 'teamleader'
 
 class TeamDetailSerializer(serializers.Serializer):
     team = TeamSerializer()
     members = TeamMemberSerializer(many=True, source='team_members')
 
 class EventSerializer(serializers.ModelSerializer):
-    clientId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
-    clientId_read = serializers.CharField(source='clientId.id', read_only=True, allow_null=True)
-    clientName = serializers.SerializerMethodField()
+    contactId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    contactName = serializers.SerializerMethodField()
     createdBy = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
-        fields = ['id', 'datetime', 'userId', 'clientId', 'clientId_read', 'comment', 'created_at', 'updated_at', 'clientName', 'createdBy']
+        fields = ['id', 'datetime', 'userId', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy']
         extra_kwargs = {
             'userId': {'read_only': True},
             'id': {'required': False}
         }
     
-    def get_clientName(self, obj):
-        if obj.clientId:
-            return f"{obj.clientId.fname} {obj.clientId.lname}"
+    def get_contactName(self, obj):
+        if obj.contactId:
+            return f"{obj.contactId.fname} {obj.contactId.lname}"
         return None
+    
+    def get_contactName(self, obj):
+        # Backward compatibility alias
+        return self.get_contactName(obj)
     
     def get_createdBy(self, obj):
         if obj.userId:
@@ -421,7 +428,8 @@ class EventSerializer(serializers.ModelSerializer):
         from django.utils import timezone
         import pytz
         ret = super().to_representation(instance)
-        ret['clientId'] = ret.pop('clientId_read', None)
+        # Expose contactId in API response
+        ret['contactId'] = instance.contactId.id if instance.contactId else None
         # Convertir l'UTC stocké en heure locale pour l'affichage
         if instance.datetime:
             # Le datetime stocké est déjà aware (avec timezone UTC)
@@ -462,160 +470,114 @@ class LogSerializer(serializers.ModelSerializer):
         ret['newValue'] = instance.new_value if instance.new_value else {}
         return ret
 
-class AssetSerializer(serializers.ModelSerializer):
+class StatusSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    orderIndex = serializers.IntegerField(source='order_index', required=False)
     
     class Meta:
-        model = Asset
-        fields = ['id', 'type', 'name', 'reference', 'category', 'subcategory', 'default', 'createdAt', 'updatedAt']
+        model = Status
+        fields = ['id', 'name', 'type', 'color', 'orderIndex', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['default'] = bool(instance.default)
+        ret['orderIndex'] = instance.order_index
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
 
-class ClientAssetSerializer(serializers.ModelSerializer):
-    asset = AssetSerializer(read_only=True)
-    assetId = serializers.CharField(write_only=True, required=False)
-    clientId = serializers.CharField(source='client.id', read_only=True)
-    featured = serializers.BooleanField()
+class RoleSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    dataAccess = serializers.CharField(source='data_access', required=False)
     
     class Meta:
-        model = ClientAsset
-        fields = ['id', 'clientId', 'asset', 'assetId', 'featured', 'createdAt', 'updatedAt']
+        model = Role
+        fields = ['id', 'name', 'dataAccess', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['clientId'] = instance.client.id
-        ret['asset'] = AssetSerializer(instance.asset).data
-        ret['featured'] = bool(instance.featured)
+        ret['dataAccess'] = instance.data_access
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
 
-class RIBSerializer(serializers.ModelSerializer):
+class PermissionSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
-    bankName = serializers.CharField(source='bank_name', required=False, allow_blank=True)
-    accountHolder = serializers.CharField(source='account_holder', required=False, allow_blank=True)
-    bankCode = serializers.CharField(source='bank_code', required=False, allow_blank=True)
-    branchCode = serializers.CharField(source='branch_code', required=False, allow_blank=True)
-    accountNumber = serializers.CharField(source='account_number', required=False, allow_blank=True)
-    ribKey = serializers.CharField(source='rib_key', required=False, allow_blank=True)
+    fieldName = serializers.CharField(source='field_name', required=False, allow_null=True, allow_blank=True)
+    action = serializers.CharField(required=False)
+    statusId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     
     class Meta:
-        model = RIB
-        fields = ['id', 'name', 'iban', 'bic', 'bankName', 'accountHolder', 'bankCode', 'branchCode', 'accountNumber', 'ribKey', 'domiciliation', 'default', 'createdAt', 'updatedAt']
+        model = Permission
+        fields = ['id', 'component', 'fieldName', 'action', 'statusId', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        ret['bankName'] = instance.bank_name
-        ret['accountHolder'] = instance.account_holder
-        ret['bankCode'] = instance.bank_code
-        ret['branchCode'] = instance.branch_code
-        ret['accountNumber'] = instance.account_number
-        ret['ribKey'] = instance.rib_key
-        ret['default'] = bool(instance.default)
-        ret['createdAt'] = instance.created_at
-        ret['updatedAt'] = instance.updated_at
-        return ret
-
-class ClientRIBSerializer(serializers.ModelSerializer):
-    rib = RIBSerializer(read_only=True)
-    ribId = serializers.CharField(write_only=True, required=False)
-    clientId = serializers.CharField(source='client.id', read_only=True)
-    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
-    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    def create(self, validated_data):
+        # Remove statusId from validated_data as it's not a model field
+        status_id = validated_data.pop('statusId', None)
+        status = None
+        if status_id:
+            try:
+                status = Status.objects.get(id=status_id)
+            except Status.DoesNotExist:
+                pass
+        
+        # Create the permission with status
+        # Extra kwargs from serializer.save() (like id, action) are already in validated_data
+        permission = Permission.objects.create(**validated_data, status=status)
+        return permission
     
-    class Meta:
-        model = ClientRIB
-        fields = ['id', 'clientId', 'rib', 'ribId', 'createdAt', 'updatedAt']
-        read_only_fields = ['id', 'createdAt', 'updatedAt']
-    
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        ret['clientId'] = instance.client.id
-        ret['rib'] = RIBSerializer(instance.rib).data
-        ret['createdAt'] = instance.created_at
-        ret['updatedAt'] = instance.updated_at
-        return ret
-
-class UsefulLinkSerializer(serializers.ModelSerializer):
-    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
-    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
-    imageUrl = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = UsefulLink
-        fields = ['id', 'name', 'url', 'description', 'image', 'imageUrl', 'default', 'createdAt', 'updatedAt']
-        read_only_fields = ['id', 'createdAt', 'updatedAt', 'imageUrl']
-    
-    def get_imageUrl(self, obj):
-        if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
-        return None
-    
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        ret['default'] = bool(instance.default)
-        ret['createdAt'] = instance.created_at
-        ret['updatedAt'] = instance.updated_at
-        if instance.image:
-            request = self.context.get('request')
-            if request:
-                ret['imageUrl'] = request.build_absolute_uri(instance.image.url)
+    def update(self, instance, validated_data):
+        # Handle statusId separately
+        status_id = validated_data.pop('statusId', None)
+        if status_id is not None:
+            if status_id:
+                try:
+                    instance.status = Status.objects.get(id=status_id)
+                except Status.DoesNotExist:
+                    pass
             else:
-                ret['imageUrl'] = instance.image.url
-        else:
-            ret['imageUrl'] = None
-        return ret
-
-class ClientUsefulLinkSerializer(serializers.ModelSerializer):
-    usefulLink = UsefulLinkSerializer(source='useful_link', read_only=True)
-    usefulLinkId = serializers.CharField(write_only=True, required=False)
-    clientId = serializers.CharField(source='client.id', read_only=True)
-    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
-    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
-    
-    class Meta:
-        model = ClientUsefulLink
-        fields = ['id', 'clientId', 'usefulLink', 'usefulLinkId', 'createdAt', 'updatedAt']
-        read_only_fields = ['id', 'createdAt', 'updatedAt']
+                instance.status = None
+        
+        # Update other fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['clientId'] = instance.client.id
-        # Pass the request context to UsefulLinkSerializer so it can build absolute URLs
-        request = self.context.get('request')
-        ret['usefulLink'] = UsefulLinkSerializer(instance.useful_link, context={'request': request}).data
+        ret['fieldName'] = instance.field_name if instance.field_name else None
+        ret['action'] = instance.action
+        ret['statusId'] = instance.status.id if instance.status else None
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
 
-class TransactionSerializer(serializers.ModelSerializer):
-    clientId = serializers.CharField(source='client.id', read_only=True)
+class PermissionRoleSerializer(serializers.ModelSerializer):
+    roleId = serializers.CharField(source='role.id', read_only=True)
+    roleName = serializers.CharField(source='role.name', read_only=True)
+    permissionId = serializers.CharField(source='permission.id', read_only=True)
+    permission = PermissionSerializer(read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
     
     class Meta:
-        model = Transaction
-        fields = ['id', 'clientId', 'type', 'amount', 'description', 'status', 'datetime', 'createdAt', 'updatedAt']
+        model = PermissionRole
+        fields = ['id', 'roleId', 'roleName', 'permissionId', 'permission', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['clientId'] = instance.client.id
+        ret['roleId'] = instance.role.id
+        ret['roleName'] = instance.role.name
+        ret['permissionId'] = instance.permission.id
+        ret['permission'] = PermissionSerializer(instance.permission).data
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
+

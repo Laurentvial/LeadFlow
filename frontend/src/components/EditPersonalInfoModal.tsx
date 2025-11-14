@@ -8,21 +8,21 @@ import { Upload, X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import '../styles/Modal.css';
-import '../styles/Clients.css';
+import '../styles/Contacts.css';
 
 interface EditPersonalInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  client: any;
-  clientId: string;
-  onUpdate: (updatedClient: any) => void;
+  contact: any;
+  contactId: string;
+  onUpdate: (updatedContact: any) => void;
 }
 
 export function EditPersonalInfoModal({
   isOpen,
   onClose,
-  client,
-  clientId,
+  contact,
+  contactId,
   onUpdate
 }: EditPersonalInfoModalProps) {
   const [editPersonalInfoForm, setEditPersonalInfoForm] = useState({
@@ -47,32 +47,32 @@ export function EditPersonalInfoModal({
     removeProfilePhoto: false
   });
 
-  // Initialize form when modal opens or client changes
+  // Initialize form when modal opens or contact changes
   React.useEffect(() => {
-    if (isOpen && client) {
+    if (isOpen && contact) {
       setEditPersonalInfoForm({
-        civility: client.civility || '',
-        firstName: client.firstName || '',
-        lastName: client.lastName || '',
-        template: client.template || '',
-        support: client.support || '',
-        password: client.password || '',
-        phone: client.phone || '',
-        mobile: client.mobile || '',
-        email: client.email || '',
-        birthDate: client.birthDate || '',
-        birthPlace: client.birthPlace || '',
-        address: client.address || '',
-        postalCode: client.postalCode || '',
-        city: client.city || '',
-        nationality: client.nationality || '',
-        successor: client.successor || '',
+        civility: contact.civility || '',
+        firstName: contact.firstName || '',
+        lastName: contact.lastName || '',
+        template: contact.template || '',
+        support: contact.support || '',
+        password: contact.password || '',
+        phone: contact.phone || '',
+        mobile: contact.mobile || '',
+        email: contact.email || '',
+        birthDate: contact.birthDate || '',
+        birthPlace: contact.birthPlace || '',
+        address: contact.address || '',
+        postalCode: contact.postalCode || '',
+        city: contact.city || '',
+        nationality: contact.nationality || '',
+        successor: contact.successor || '',
         profilePhoto: null,
-        profilePhotoPreview: client.profilePhoto || null,
+        profilePhotoPreview: contact.profilePhoto || null,
         removeProfilePhoto: false
       });
     }
-  }, [isOpen, client]);
+  }, [isOpen, contact]);
 
   function handlePhotoChangeEdit(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -130,7 +130,7 @@ export function EditPersonalInfoModal({
         });
         formDataToSend.append('profilePhoto', editPersonalInfoForm.profilePhoto);
         
-        response = await apiCall(`/api/clients/${clientId}/`, {
+        response = await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: formDataToSend
         });
@@ -142,13 +142,13 @@ export function EditPersonalInfoModal({
         });
         formDataToSend.append('removeProfilePhoto', 'true');
         
-        response = await apiCall(`/api/clients/${clientId}/`, {
+        response = await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: formDataToSend
         });
       } else {
         // Use JSON for regular update
-        response = await apiCall(`/api/clients/${clientId}/`, {
+        response = await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json'
@@ -157,8 +157,8 @@ export function EditPersonalInfoModal({
         });
       }
 
-      if (response?.client) {
-        onUpdate(response.client);
+      if (response?.contact) {
+        onUpdate(response.contact);
         onClose();
         toast.success('Informations personnelles mises à jour avec succès');
       }
@@ -190,12 +190,12 @@ export function EditPersonalInfoModal({
           <div className="modal-form-field">
             <Label>Photo de profil</Label>
             <div className="flex items-center gap-4">
-              {(editPersonalInfoForm.profilePhotoPreview || (client?.profilePhoto && !editPersonalInfoForm.removeProfilePhoto)) ? (
-                <div className="client-profile-photo-container">
+              {(editPersonalInfoForm.profilePhotoPreview || (contact?.profilePhoto && !editPersonalInfoForm.removeProfilePhoto)) ? (
+                <div className="contact-profile-photo-container">
                   <img 
-                    src={editPersonalInfoForm.profilePhotoPreview || client?.profilePhoto} 
+                    src={editPersonalInfoForm.profilePhotoPreview || contact?.profilePhoto} 
                     alt="Preview" 
-                    className="client-profile-photo-preview"
+                    className="contact-profile-photo-preview"
                   />
                   <button
                     type="button"
@@ -207,7 +207,7 @@ export function EditPersonalInfoModal({
                         removeProfilePhoto: true
                       });
                     }}
-                    className="client-profile-photo-remove-btn"
+                    className="contact-profile-photo-remove-btn"
                   >
                     ×
                   </button>
@@ -258,7 +258,7 @@ export function EditPersonalInfoModal({
                 id="editFirstName"
                 value={editPersonalInfoForm.firstName}
                 onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, firstName: e.target.value })}
-                placeholder="Prénom du client"
+                placeholder="Prénom du contact"
               />
             </div>
 
@@ -268,7 +268,7 @@ export function EditPersonalInfoModal({
                 id="editLastName"
                 value={editPersonalInfoForm.lastName}
                 onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, lastName: e.target.value })}
-                placeholder="Nom du client"
+                placeholder="Nom du contact"
               />
             </div>
           </div>

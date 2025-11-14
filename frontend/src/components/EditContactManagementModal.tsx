@@ -9,19 +9,19 @@ import { toast } from 'sonner';
 import { useUsers } from '../hooks/useUsers';
 import '../styles/Modal.css';
 
-interface EditClientManagementModalProps {
+interface EditContactManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
-  client: any;
-  onClientUpdated: () => void;
+  contact: any;
+  onContactUpdated: () => void;
 }
 
-export function EditClientManagementModal({ 
+export function EditContactManagementModal({ 
   isOpen, 
   onClose, 
-  client, 
-  onClientUpdated 
-}: EditClientManagementModalProps) {
+  contact, 
+  onContactUpdated 
+}: EditContactManagementModalProps) {
   const { users, loading: usersLoading } = useUsers();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -31,27 +31,27 @@ export function EditClientManagementModal({
   });
 
   useEffect(() => {
-    if (isOpen && client) {
+    if (isOpen && contact) {
       setFormData({
-        managerId: client.managerUserDetailsId || client.managerId || 'none',  // Use UserDetails.id for Select component, 'none' if empty
-        source: client.source || '',
+        managerId: contact.managerUserDetailsId || contact.managerId || 'none',  // Use UserDetails.id for Select component, 'none' if empty
+        source: contact.source || '',
       });
       setError('');
-    } else if (isOpen && !client) {
-      // Reset form if client is not available
+    } else if (isOpen && !contact) {
+      // Reset form if contact is not available
       setFormData({
         managerId: 'none',
         source: '',
       });
     }
-  }, [client, isOpen]);
+  }, [contact, isOpen]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     
-    if (!client || !client.id) {
-      setError('Client non disponible');
-      toast.error('Client non disponible');
+    if (!contact || !contact.id) {
+      setError('Contact non disponible');
+      toast.error('Contact non disponible');
       return;
     }
     
@@ -59,7 +59,7 @@ export function EditClientManagementModal({
     setLoading(true);
 
     try {
-      await apiCall(`/api/clients/${client.id}/`, {
+      await apiCall(`/api/contacts/${contact.id}/`, {
         method: 'PATCH',
         body: JSON.stringify({
           managed_by: formData.managerId || null,
@@ -69,9 +69,9 @@ export function EditClientManagementModal({
 
       toast.success('Informations de gestion mises à jour avec succès');
       onClose();
-      onClientUpdated();
+      onContactUpdated();
     } catch (err: any) {
-      console.error('Edit client management error:', err);
+      console.error('Edit contact management error:', err);
       const message = err?.message || 'Une erreur est survenue lors de la mise à jour';
       setError(message);
       toast.error(message);
@@ -96,9 +96,9 @@ export function EditClientManagementModal({
           </button>
         </div>
 
-        {!client ? (
+        {!contact ? (
           <div className="p-4 text-center">
-            <p>Chargement des données du client...</p>
+            <p>Chargement des données du contact...</p>
           </div>
         ) : (
         <form onSubmit={handleSubmit} className="modal-form">
@@ -143,7 +143,7 @@ export function EditClientManagementModal({
               id="source"
               value={formData.source}
               onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-              placeholder="Source du client"
+              placeholder="Source du contact"
             />
           </div>
 
@@ -166,4 +166,5 @@ export function EditClientManagementModal({
     </div>
   );
 }
+
 

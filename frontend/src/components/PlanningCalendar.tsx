@@ -48,7 +48,7 @@ export function PlanningCalendar() {
     try {
       const [eventsData, clientsData] = await Promise.all([
         apiCall('/api/events/'),
-        apiCall('/api/clients/')
+        apiCall('/api/contacts/')
       ]);
       
       setEvents(eventsData?.events || eventsData || []);

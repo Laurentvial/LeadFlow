@@ -137,7 +137,7 @@ export function UsersTab() {
                         </td>
                         <td className="users-teams-table-email">{user.email || user.username || '-'}</td>
                         <td>
-                          <Badge variant="outline">{user.role}</Badge>
+                          <Badge variant="outline">{user.roleName || user.role}</Badge>
                         </td>
                         <td>
                           {userTeam ? userTeam.name : '-'}

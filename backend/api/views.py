@@ -1,26 +1,20 @@
 from django.shortcuts import render
 from django.contrib.auth.models import User as DjangoUser
 from django.shortcuts import get_object_or_404
+from django.db import models
 from rest_framework import generics, status
-from .models import Client
+from .models import Contact
 from .models import Note
 from .models import UserDetails
 from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Asset
-from .models import ClientAsset
-from .models import RIB
-from .models import ClientRIB
-from .models import UsefulLink
-from .models import ClientUsefulLink
-from .models import Transaction
+from .models import Role, Permission, PermissionRole, Status
 from .serializer import (
-    UserSerializer, ClientSerializer, NoteSerializer,
+    UserSerializer, ContactSerializer, NoteSerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
-    AssetSerializer, ClientAssetSerializer, RIBSerializer, ClientRIBSerializer, UsefulLinkSerializer, ClientUsefulLinkSerializer,
-    TransactionSerializer
+    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -140,7 +134,8 @@ def get_user_data_for_log(django_user, user_details=None):
     
     if user_details:
         user_data['user_details_id'] = user_details.id
-        user_data['role'] = user_details.role
+        user_data['role'] = user_details.role.id if user_details.role else None
+        user_data['roleName'] = user_details.role.name if user_details.role else None
         if user_details.phone:
             user_data['phone'] = user_details.phone
         
@@ -225,7 +220,7 @@ class NoteListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         # serializer is already validated at this point
-        # clientId can be null if not provided - preserve it from validated_data
+        # contactId can be null if not provided - preserve it from validated_data
         # If not provided, it will be None/null which is allowed
         validated_data = serializer.validated_data
         note_id = validated_data.get('id')
@@ -239,7 +234,7 @@ class NoteListCreateView(generics.ListCreateAPIView):
         serializer.save(
             id=note_id,
             userId=self.request.user, 
-            clientId=validated_data.get('clientId')  # Can be None/null
+            contactId=validated_data.get('contactId')  # Can be None/null
         )
 
 class NoteDeleteView(generics.DestroyAPIView):
@@ -252,18 +247,18 @@ class NoteDeleteView(generics.DestroyAPIView):
         user = self.request.user
         return Note.objects.filter(userId=user)
 
-class ClientView(generics.ListAPIView):
-    queryset = Client.objects.all()
-    serializer_class = ClientSerializer
+class ContactView(generics.ListAPIView):
+    queryset = Contact.objects.all()
+    serializer_class = ContactSerializer
     permission_classes = [IsAuthenticated]  # Explicitly set permission
     
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        return Response({'clients': response.data})
+        return Response({'contacts': response.data})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def client_create(request):
+def contact_create(request):
     # Validate required fields
     if not request.data.get('firstName'):
         return Response({'error': 'Le prénom est requis'}, status=status.HTTP_400_BAD_REQUEST)
@@ -274,23 +269,13 @@ def client_create(request):
     
     # Check if email already exists
     email = request.data.get('email', '').strip()
-    if email and Client.objects.filter(email=email).exists():
-        return Response({'error': 'Un client avec cet email existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
+    if email and Contact.objects.filter(email=email).exists():
+        return Response({'error': 'Un contact avec cet email existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # Generate client ID
-    client_id = uuid.uuid4().hex[:12]
-    while Client.objects.filter(id=client_id).exists():
-        client_id = uuid.uuid4().hex[:12]
-    
-    # Helper function to safely convert to decimal
-    def to_decimal(value, default=0):
-        if value is None or value == '':
-            return default
-        try:
-            result = float(value)
-            return result if result >= 0 else default
-        except (ValueError, TypeError):
-            return default
+    # Generate contact ID
+    contact_id = uuid.uuid4().hex[:12]
+    while Contact.objects.filter(id=contact_id).exists():
+        contact_id = uuid.uuid4().hex[:12]
     
     # Helper function to safely get date
     def get_date(value):
@@ -298,31 +283,13 @@ def client_create(request):
             return None
         return value
     
-    # Helper function to safely get list
-    def get_list(value, default=None):
-        if default is None:
-            default = []
-        if value is None:
-            return default
-        if isinstance(value, list):
-            return value
-        # Handle QueryDict (from FormData) - getlist returns a list
-        if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
-            return list(value)
-        return default
-    
     # Map frontend field names to model field names
     # Informations personnelles
-    client_data = {
-        'id': client_id,
+    contact_data = {
+        'id': contact_id,
         'civility': request.data.get('civility', '') or '',
         'fname': request.data.get('firstName', '') or '',
         'lname': request.data.get('lastName', '') or '',
-        'platform_access': request.data.get('platformAccess', True),
-        'active': request.data.get('active', True),
-        'template': request.data.get('template', '') or '',
-        'support': request.data.get('support', '') or '',
-        'password': request.data.get('password', 'Access@123') or 'Access@123',
         'phone': request.data.get('phone', '') or '',
         'mobile': request.data.get('mobile', '') or '',
         'email': request.data.get('email', '') or '',
@@ -336,22 +303,6 @@ def client_create(request):
         # managed_by will be set separately to ensure it's a valid user ID
     }
     
-    # Handle profile photo upload
-    if 'profilePhoto' in request.FILES:
-        client_data['profile_photo'] = request.FILES['profilePhoto']
-    
-    # Convert platformAccess and active from string to boolean if needed (FormData sends strings)
-    if isinstance(client_data.get('platform_access'), str):
-        client_data['platform_access'] = client_data['platform_access'].lower() == 'true'
-    if isinstance(client_data.get('active'), str):
-        client_data['active'] = client_data['active'].lower() == 'true'
-    
-    # Handle patrimonial data
-    # Use getlist for FormData, get for JSON
-    professions = request.data.getlist('professions') if hasattr(request.data, 'getlist') else get_list(request.data.get('professions'))
-    objectives = request.data.getlist('objectives') if hasattr(request.data, 'getlist') else get_list(request.data.get('objectives'))
-    experience = request.data.getlist('experience') if hasattr(request.data, 'getlist') else get_list(request.data.get('experience'))
-    
     # Handle managed_by separately to ensure it's a valid user ID
     # The frontend sends UserDetails.id (string), we need to convert it to DjangoUser.id
     managed_by_value = request.data.get('managerId', '') or request.data.get('managed_by', '') or ''
@@ -361,14 +312,14 @@ def client_create(request):
             user_details = UserDetails.objects.filter(id=managed_by_value).first()
             if user_details and user_details.django_user:
                 # Use DjangoUser.id for managed_by
-                client_data['managed_by'] = str(user_details.django_user.id)
+                contact_data['managed_by'] = str(user_details.django_user.id)
             else:
                 # Fallback: try to find DjangoUser directly by ID (for backward compatibility)
                 try:
                     user_id = int(managed_by_value)
                     from django.contrib.auth.models import User as DjangoUser
                     if DjangoUser.objects.filter(id=user_id).exists():
-                        client_data['managed_by'] = str(user_id)
+                        contact_data['managed_by'] = str(user_id)
                     else:
                         return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
                 except (ValueError, TypeError):
@@ -376,103 +327,33 @@ def client_create(request):
                     from django.contrib.auth.models import User as DjangoUser
                     user = DjangoUser.objects.filter(username=managed_by_value).first()
                     if user:
-                        client_data['managed_by'] = str(user.id)
+                        contact_data['managed_by'] = str(user.id)
                     else:
                         return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': f'Error finding user: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     else:
-        client_data['managed_by'] = ''
-    
-    client_data.update({
-        # Fiche patrimoniale
-        'professional_activity_status': request.data.get('professionalActivityStatus') or '',
-        'professional_activity_comment': request.data.get('professionalActivityComment') or '',
-        'professions': professions,
-        'professions_comment': request.data.get('professionsComment') or '',
-        'bank_name': request.data.get('bankName') or '',
-        'current_account': to_decimal(request.data.get('currentAccount')),
-        'livret_ab': to_decimal(request.data.get('livretAB')),
-        'pea': to_decimal(request.data.get('pea')),
-        'pel': to_decimal(request.data.get('pel')),
-        'ldd': to_decimal(request.data.get('ldd')),
-        'cel': to_decimal(request.data.get('cel')),
-        'csl': to_decimal(request.data.get('csl')),
-        'securities_account': to_decimal(request.data.get('securitiesAccount')),
-        'life_insurance': to_decimal(request.data.get('lifeInsurance')),
-        'savings_comment': request.data.get('savingsComment') or '',
-        'total_wealth': to_decimal(request.data.get('totalWealth')),
-        'objectives': objectives,
-        'objectives_comment': request.data.get('objectivesComment') or '',
-        'experience': experience,
-        'experience_comment': request.data.get('experienceComment') or '',
-        'tax_optimization': bool(request.data.get('taxOptimization', False)) if not isinstance(request.data.get('taxOptimization'), str) else request.data.get('taxOptimization', 'false').lower() == 'true',
-        'tax_optimization_comment': request.data.get('taxOptimizationComment') or '',
-        'annual_household_income': to_decimal(request.data.get('annualHouseholdIncome')),
-    })
+        contact_data['managed_by'] = ''
     
     try:
-        client = Client.objects.create(**client_data)
+        contact = Contact.objects.create(**contact_data)
         
-        # Automatically assign default assets, RIBs, and useful links
-        # Assign default assets
-        default_assets = Asset.objects.filter(default=True)
-        for asset in default_assets:
-            # Check if client already has this asset (shouldn't happen for new client, but safety check)
-            if not ClientAsset.objects.filter(client=client, asset=asset).exists():
-                client_asset_id = uuid.uuid4().hex[:12]
-                while ClientAsset.objects.filter(id=client_asset_id).exists():
-                    client_asset_id = uuid.uuid4().hex[:12]
-                ClientAsset.objects.create(
-                    id=client_asset_id,
-                    client=client,
-                    asset=asset
-                )
-        
-        # Assign default RIBs
-        default_ribs = RIB.objects.filter(default=True)
-        for rib in default_ribs:
-            # Check if client already has this RIB (shouldn't happen for new client, but safety check)
-            if not ClientRIB.objects.filter(client=client, rib=rib).exists():
-                client_rib_id = uuid.uuid4().hex[:12]
-                while ClientRIB.objects.filter(id=client_rib_id).exists():
-                    client_rib_id = uuid.uuid4().hex[:12]
-                ClientRIB.objects.create(
-                    id=client_rib_id,
-                    client=client,
-                    rib=rib
-                )
-        
-        # Assign default useful links
-        default_useful_links = UsefulLink.objects.filter(default=True)
-        for useful_link in default_useful_links:
-            # Check if client already has this useful link (shouldn't happen for new client, but safety check)
-            if not ClientUsefulLink.objects.filter(client=client, useful_link=useful_link).exists():
-                client_useful_link_id = uuid.uuid4().hex[:12]
-                while ClientUsefulLink.objects.filter(id=client_useful_link_id).exists():
-                    client_useful_link_id = uuid.uuid4().hex[:12]
-                ClientUsefulLink.objects.create(
-                    id=client_useful_link_id,
-                    client=client,
-                    useful_link=useful_link
-                )
-        
-        serializer = ClientSerializer(client, context={'request': request})
+        serializer = ContactSerializer(contact, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"Error creating client: {error_details}")
+        print(f"Error creating contact: {error_details}")
         return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
-def client_detail(request, client_id):
-    client = get_object_or_404(Client, id=client_id)
+def contact_detail(request, contact_id):
+    contact = get_object_or_404(Contact, id=contact_id)
     
     if request.method == 'GET':
-        serializer = ClientSerializer(client, context={'request': request})
-        return Response({'client': serializer.data})
+        serializer = ContactSerializer(contact, context={'request': request})
+        return Response({'contact': serializer.data})
     
     if request.method == 'PATCH':
         # Helper functions
@@ -493,51 +374,31 @@ def client_detail(request, client_id):
         
         # Update personal information fields
         if 'civility' in request.data:
-            client.civility = request.data.get('civility', '') or ''
+            contact.civility = request.data.get('civility', '') or ''
         if 'firstName' in request.data:
-            client.fname = request.data.get('firstName', '') or ''
+            contact.fname = request.data.get('firstName', '') or ''
         if 'lastName' in request.data:
-            client.lname = request.data.get('lastName', '') or ''
-        if 'template' in request.data:
-            client.template = request.data.get('template', '') or ''
-        if 'support' in request.data:
-            client.support = request.data.get('support', '') or ''
-        if 'password' in request.data:
-            client.password = request.data.get('password', '') or ''
+            contact.lname = request.data.get('lastName', '') or ''
         if 'phone' in request.data:
-            client.phone = request.data.get('phone', '') or ''
+            contact.phone = request.data.get('phone', '') or ''
         if 'mobile' in request.data:
-            client.mobile = request.data.get('mobile', '') or ''
+            contact.mobile = request.data.get('mobile', '') or ''
         if 'email' in request.data:
-            client.email = request.data.get('email', '') or ''
+            contact.email = request.data.get('email', '') or ''
         if 'birthDate' in request.data:
-            client.birth_date = get_date(request.data.get('birthDate'))
+            contact.birth_date = get_date(request.data.get('birthDate'))
         if 'birthPlace' in request.data:
-            client.birth_place = request.data.get('birthPlace', '') or ''
+            contact.birth_place = request.data.get('birthPlace', '') or ''
         if 'address' in request.data:
-            client.address = request.data.get('address', '') or ''
+            contact.address = request.data.get('address', '') or ''
         if 'postalCode' in request.data:
-            client.postal_code = request.data.get('postalCode', '') or ''
+            contact.postal_code = request.data.get('postalCode', '') or ''
         if 'city' in request.data:
-            client.city = request.data.get('city', '') or ''
+            contact.city = request.data.get('city', '') or ''
         if 'nationality' in request.data:
-            client.nationality = request.data.get('nationality', '') or ''
+            contact.nationality = request.data.get('nationality', '') or ''
         if 'successor' in request.data:
-            client.successor = request.data.get('successor', '') or ''
-        
-        # Handle profile photo upload or removal
-        if 'profilePhoto' in request.FILES:
-            client.profile_photo = request.FILES['profilePhoto']
-        elif 'removeProfilePhoto' in request.data:
-            # Handle both string and boolean values
-            remove_photo = request.data.get('removeProfilePhoto')
-            if isinstance(remove_photo, str):
-                remove_photo = remove_photo.lower() == 'true'
-            if remove_photo:
-                # Delete the file if it exists
-                if client.profile_photo:
-                    client.profile_photo.delete(save=False)
-                client.profile_photo = None
+            contact.successor = request.data.get('successor', '') or ''
         
         # Update managed_by if provided (should be user ID)
         # The frontend may send UserDetails.id (string) or DjangoUser.id
@@ -548,14 +409,14 @@ def client_detail(request, client_id):
                 user_details = UserDetails.objects.filter(id=managed_by_value).first()
                 if user_details and user_details.django_user:
                     # Use DjangoUser.id for managed_by
-                    client.managed_by = str(user_details.django_user.id)
+                    contact.managed_by = str(user_details.django_user.id)
                 else:
                     # Fallback: try to find DjangoUser directly by ID (for backward compatibility)
                     try:
                         user_id = int(managed_by_value)
                         from django.contrib.auth.models import User as DjangoUser
                         if DjangoUser.objects.filter(id=user_id).exists():
-                            client.managed_by = str(user_id)
+                            contact.managed_by = str(user_id)
                         else:
                             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
                     except (ValueError, TypeError):
@@ -563,15 +424,15 @@ def client_detail(request, client_id):
                         from django.contrib.auth.models import User as DjangoUser
                         user = DjangoUser.objects.filter(username=managed_by_value).first()
                         if user:
-                            client.managed_by = str(user.id)
+                            contact.managed_by = str(user.id)
                         else:
                             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
             else:
-                client.managed_by = ''
+                contact.managed_by = ''
         
         # Update source if provided
         if 'source' in request.data:
-            client.source = request.data.get('source', '') or ''
+            contact.source = request.data.get('source', '') or ''
         
         # Update team if provided
         if 'team' in request.data:
@@ -579,126 +440,35 @@ def client_detail(request, client_id):
             if team_id and team_id != 'none' and team_id != '':
                 try:
                     team = Team.objects.get(id=team_id)
-                    client.team = team
+                    contact.team = team
                 except Team.DoesNotExist:
                     return Response({'error': 'Team not found'}, status=status.HTTP_404_NOT_FOUND)
             else:
                 # Si team est 'none' ou vide, supprimer l'équipe
-                client.team = None
+                contact.team = None
         elif 'teamId' in request.data:
             team_id = request.data.get('teamId')
             if team_id and team_id != 'none':
                 try:
                     team = Team.objects.get(id=team_id)
-                    client.team = team
+                    contact.team = team
                 except Team.DoesNotExist:
                     return Response({'error': 'Team not found'}, status=status.HTTP_404_NOT_FOUND)
             else:
                 # Si teamId est 'none' ou vide, supprimer l'équipe
-                client.team = None
+                contact.team = None
         
-        # Update platform_access if provided
-        if 'platformAccess' in request.data:
-            platform_access = request.data.get('platformAccess')
-            # Handle both boolean and string values
-            if isinstance(platform_access, str):
-                client.platform_access = platform_access.lower() == 'true'
-            else:
-                client.platform_access = bool(platform_access)
-        
-        # Helper functions for patrimonial data
-        def to_decimal(value, default=0):
-            if value is None or value == '':
-                return default
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                return default
-        
-        def get_list(value, default=None):
-            if default is None:
-                default = []
-            if value is None:
-                return default
-            if isinstance(value, list):
-                return value
-            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
-                return list(value)
-            return default
-        
-        # Update patrimonial fields
-        if 'professionalActivityStatus' in request.data:
-            client.professional_activity_status = request.data.get('professionalActivityStatus', '') or ''
-        if 'professionalActivityComment' in request.data:
-            client.professional_activity_comment = request.data.get('professionalActivityComment', '') or ''
-        if 'professions' in request.data:
-            professions = get_list(request.data.get('professions'))
-            client.professions = professions
-        if 'professionsComment' in request.data:
-            client.professions_comment = request.data.get('professionsComment', '') or ''
-        if 'bankName' in request.data:
-            client.bank_name = request.data.get('bankName', '') or ''
-        if 'currentAccount' in request.data:
-            client.current_account = to_decimal(request.data.get('currentAccount'))
-        if 'livretAB' in request.data:
-            client.livret_ab = to_decimal(request.data.get('livretAB'))
-        if 'pea' in request.data:
-            client.pea = to_decimal(request.data.get('pea'))
-        if 'pel' in request.data:
-            client.pel = to_decimal(request.data.get('pel'))
-        if 'ldd' in request.data:
-            client.ldd = to_decimal(request.data.get('ldd'))
-        if 'cel' in request.data:
-            client.cel = to_decimal(request.data.get('cel'))
-        if 'csl' in request.data:
-            client.csl = to_decimal(request.data.get('csl'))
-        if 'securitiesAccount' in request.data:
-            client.securities_account = to_decimal(request.data.get('securitiesAccount'))
-        if 'lifeInsurance' in request.data:
-            client.life_insurance = to_decimal(request.data.get('lifeInsurance'))
-        if 'savingsComment' in request.data:
-            client.savings_comment = request.data.get('savingsComment', '') or ''
-        if 'totalWealth' in request.data:
-            client.total_wealth = to_decimal(request.data.get('totalWealth'))
-        if 'objectives' in request.data:
-            objectives = get_list(request.data.get('objectives'))
-            client.objectives = objectives
-        if 'objectivesComment' in request.data:
-            client.objectives_comment = request.data.get('objectivesComment', '') or ''
-        if 'experience' in request.data:
-            experience = get_list(request.data.get('experience'))
-            client.experience = experience
-        if 'experienceComment' in request.data:
-            client.experience_comment = request.data.get('experienceComment', '') or ''
-        if 'taxOptimization' in request.data:
-            tax_opt = request.data.get('taxOptimization')
-            if isinstance(tax_opt, str):
-                client.tax_optimization = tax_opt.lower() == 'true'
-            else:
-                client.tax_optimization = bool(tax_opt)
-        if 'taxOptimizationComment' in request.data:
-            client.tax_optimization_comment = request.data.get('taxOptimizationComment', '') or ''
-        if 'annualHouseholdIncome' in request.data:
-            client.annual_household_income = to_decimal(request.data.get('annualHouseholdIncome'))
-        
-        client.save()
-        serializer = ClientSerializer(client, context={'request': request})
-        return Response({'client': serializer.data})
+        contact.save()
+        serializer = ContactSerializer(contact, context={'request': request})
+        return Response({'contact': serializer.data})
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def client_toggle_active(request, client_id):
-    client = get_object_or_404(Client, id=client_id)
-    client.active = not client.active
-    client.save()
-    return Response({'active': client.active})
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def client_delete(request, client_id):
-    client = get_object_or_404(Client, id=client_id)
-    client.delete()
-    return Response({'message': 'Client supprimé avec succès'}, status=status.HTTP_200_OK)
+def contact_delete(request, contact_id):
+    contact = get_object_or_404(Contact, id=contact_id)
+    contact.delete()
+    return Response({'message': 'Contact supprimé avec succès'}, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -719,9 +489,11 @@ def get_current_user(request):
             'email': django_user.email or '',
             'firstName': django_user.first_name or '',
             'lastName': django_user.last_name or '',
-            'role': '0',  # Default role
+            'role': None,
+            'roleName': None,
             'phone': '',
             'active': True,
+            'permissions': [],  # No permissions if no role
         })
 
 # Teams endpoints
@@ -923,8 +695,16 @@ def user_update(request, user_id):
     django_user.save()
     
     # Update UserDetails fields
-    if 'role' in request.data:
-        user_details.role = request.data['role']
+    if 'roleId' in request.data or 'role' in request.data:
+        role_id = request.data.get('roleId') or request.data.get('role')
+        if role_id:
+            try:
+                role = Role.objects.get(id=role_id)
+                user_details.role = role
+            except Role.DoesNotExist:
+                return Response({'error': 'Role not found'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            user_details.role = None
     if 'phone' in request.data:
         user_details.phone = request.data['phone'] or ''
     
@@ -990,18 +770,19 @@ def event_create(request):
         while Event.objects.filter(id=event_id).exists():
             event_id = uuid.uuid4().hex[:12]
         
-        # Get client if clientId provided
-        client = None
-        if request.data.get('clientId'):
+        # Get contact if contactId provided
+        contact = None
+        contact_id = request.data.get('contactId')
+        if contact_id:
             try:
-                client = Client.objects.get(id=request.data['clientId'])
-            except Client.DoesNotExist:
+                contact = Contact.objects.get(id=contact_id)
+            except Contact.DoesNotExist:
                 pass
         
         event = serializer.save(
             id=event_id,
             userId=request.user,
-            clientId=client
+            contactId=contact
         )
         return Response(EventSerializer(event).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1012,18 +793,19 @@ def event_update(request, event_id):
     event = get_object_or_404(Event, id=event_id, userId=request.user)
     serializer = EventSerializer(event, data=request.data, partial=True)
     if serializer.is_valid():
-        # Get client if clientId provided
-        client = None
-        if request.data.get('clientId'):
+        # Get contact if contactId provided
+        contact = None
+        contact_id = request.data.get('contactId')
+        if contact_id:
             try:
-                client = Client.objects.get(id=request.data['clientId'])
-            except Client.DoesNotExist:
+                contact = Contact.objects.get(id=contact_id)
+            except Contact.DoesNotExist:
                 pass
-        elif request.data.get('clientId') == '' or request.data.get('clientId') is None:
-            client = None
+        elif contact_id == '' or contact_id is None:
+            contact = None
         
         # Update event with new data
-        event = serializer.save(clientId=client)
+        event = serializer.save(contactId=contact)
         return Response(EventSerializer(event).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1083,9 +865,13 @@ def team_remove_member(request, team_id):
         team_member = TeamMember.objects.get(user=user_details, team=team)
         
         # If user is teamleader, change role to something else (e.g., 'gestionnaire')
-        if user_details.role == 'teamleader':
-            user_details.role = 'gestionnaire'
-            user_details.save()
+        if user_details.role and user_details.role.name.lower() == 'teamleader':
+            try:
+                gestionnaire_role = Role.objects.get(name__iexact='gestionnaire')
+                user_details.role = gestionnaire_role
+                user_details.save()
+            except Role.DoesNotExist:
+                pass  # If gestionnaire role doesn't exist, just remove from team
         
         # Remove TeamMember relationship
         team_member.delete()
@@ -1112,7 +898,15 @@ def team_set_leader(request, team_id):
         user_ids_in_team = [tm.user.id for tm in team_members]
         
         # Remove leader status from all team members (change role from teamleader to gestionnaire)
-        UserDetails.objects.filter(id__in=user_ids_in_team, role='teamleader').update(role='gestionnaire')
+        try:
+            teamleader_role = Role.objects.get(name__iexact='teamleader')
+            gestionnaire_role = Role.objects.get(name__iexact='gestionnaire')
+            UserDetails.objects.filter(
+                id__in=user_ids_in_team, 
+                role=teamleader_role
+            ).update(role=gestionnaire_role)
+        except Role.DoesNotExist:
+            pass  # If roles don't exist, skip
         
         # Set new leader (change role to teamleader)
         user_details = UserDetails.objects.get(id=user_id)
@@ -1121,462 +915,248 @@ def team_set_leader(request, team_id):
         if not TeamMember.objects.filter(user=user_details, team=team).exists():
             return Response({'error': 'User not found in this team'}, status=status.HTTP_404_NOT_FOUND)
         
-        user_details.role = 'teamleader'
-        user_details.save()
+        try:
+            teamleader_role = Role.objects.get(name__iexact='teamleader')
+            user_details.role = teamleader_role
+            user_details.save()
+        except Role.DoesNotExist:
+            return Response({'error': 'Teamleader role not found'}, status=status.HTTP_400_BAD_REQUEST)
         
         serializer = UserDetailsSerializer(user_details)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except UserDetails.DoesNotExist:
         return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-# Assets endpoints
+# Roles endpoints
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def asset_list(request):
-    """Liste tous les assets disponibles"""
-    assets = Asset.objects.all().order_by('type', 'name')
-    serializer = AssetSerializer(assets, many=True)
-    return Response({'assets': serializer.data})
+def role_list(request):
+    """List all roles"""
+    roles = Role.objects.all().order_by('name')
+    serializer = RoleSerializer(roles, many=True)
+    return Response({'roles': serializer.data})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def asset_create(request):
-    """Créer un nouvel asset"""
-    serializer = AssetSerializer(data=request.data)
+def role_create(request):
+    """Create a new role"""
+    serializer = RoleSerializer(data=request.data)
     if serializer.is_valid():
-        # Generate asset ID
-        asset_id = uuid.uuid4().hex[:12]
-        while Asset.objects.filter(id=asset_id).exists():
-            asset_id = uuid.uuid4().hex[:12]
-        asset = serializer.save(id=asset_id)
-        return Response(AssetSerializer(asset).data, status=status.HTTP_201_CREATED)
+        # Generate role ID
+        role_id = uuid.uuid4().hex[:12]
+        while Role.objects.filter(id=role_id).exists():
+            role_id = uuid.uuid4().hex[:12]
+        role = serializer.save(id=role_id)
+        return Response(RoleSerializer(role).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
-def asset_update(request, asset_id):
-    """Modifier un asset"""
-    asset = get_object_or_404(Asset, id=asset_id)
-    serializer = AssetSerializer(asset, data=request.data, partial=True)
+def role_update(request, role_id):
+    """Update a role"""
+    role = get_object_or_404(Role, id=role_id)
+    serializer = RoleSerializer(role, data=request.data, partial=True)
     if serializer.is_valid():
         serializer.save()
-        return Response(AssetSerializer(asset).data, status=status.HTTP_200_OK)
+        return Response(RoleSerializer(role).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def asset_delete(request, asset_id):
-    """Supprimer un asset"""
-    asset = get_object_or_404(Asset, id=asset_id)
-    asset.delete()
+def role_delete(request, role_id):
+    """Delete a role"""
+    role = get_object_or_404(Role, id=role_id)
+    role.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+# Permissions endpoints
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def client_assets(request, client_id):
-    """Liste les assets d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    client_assets = ClientAsset.objects.filter(client=client).select_related('asset')
-    serializer = ClientAssetSerializer(client_assets, many=True)
-    return Response({'assets': serializer.data})
+def permission_list(request):
+    """List all permissions"""
+    permissions = Permission.objects.all().order_by('component', 'field_name')
+    serializer = PermissionSerializer(permissions, many=True)
+    return Response({'permissions': serializer.data})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def client_asset_add(request, client_id):
-    """Ajouter un asset à un client"""
-    client = get_object_or_404(Client, id=client_id)
-    asset_id = request.data.get('assetId')
+def permission_create(request):
+    """Create a new permission"""
+    serializer = PermissionSerializer(data=request.data)
+    if serializer.is_valid():
+        # Generate permission ID
+        permission_id = uuid.uuid4().hex[:12]
+        while Permission.objects.filter(id=permission_id).exists():
+            permission_id = uuid.uuid4().hex[:12]
+        
+        # Ensure action is provided, default to 'view'
+        action = request.data.get('action', 'view')
+        if action not in ['view', 'create', 'edit', 'delete']:
+            action = 'view'
+        
+        # The serializer will handle statusId conversion to status
+        permission = serializer.save(id=permission_id, action=action)
+        return Response(PermissionSerializer(permission).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def permission_update(request, permission_id):
+    """Update a permission"""
+    permission = get_object_or_404(Permission, id=permission_id)
     
-    if not asset_id:
-        return Response({'error': 'assetId is required'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        asset = Asset.objects.get(id=asset_id)
-        
-        # Check if client already has this asset
-        if ClientAsset.objects.filter(client=client, asset=asset).exists():
-            return Response({'error': 'Client already has this asset'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Generate ClientAsset ID
-        client_asset_id = uuid.uuid4().hex[:12]
-        while ClientAsset.objects.filter(id=client_asset_id).exists():
-            client_asset_id = uuid.uuid4().hex[:12]
-        
-        # Create ClientAsset relationship
-        client_asset = ClientAsset.objects.create(
-            id=client_asset_id,
-            client=client,
-            asset=asset
-        )
-        
-        serializer = ClientAssetSerializer(client_asset)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    except Asset.DoesNotExist:
-        return Response({'error': 'Asset not found'}, status=status.HTTP_404_NOT_FOUND)
+    # The serializer will handle statusId conversion to status
+    serializer = PermissionSerializer(permission, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(PermissionSerializer(permission).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def client_asset_remove(request, client_id, asset_id):
-    """Retirer un asset d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    asset = get_object_or_404(Asset, id=asset_id)
-    
-    try:
-        client_asset = ClientAsset.objects.get(client=client, asset=asset)
-        client_asset.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    except ClientAsset.DoesNotExist:
-        return Response({'error': 'Client asset relationship not found'}, status=status.HTTP_404_NOT_FOUND)
+def permission_delete(request, permission_id):
+    """Delete a permission"""
+    permission = get_object_or_404(Permission, id=permission_id)
+    permission.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
-@api_view(['PATCH'])
+# Permission-Role endpoints
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def client_asset_toggle_featured(request, client_id, asset_id):
-    """Basculer le statut 'mis en avant' d'un asset pour un client"""
-    client = get_object_or_404(Client, id=client_id)
-    asset = get_object_or_404(Asset, id=asset_id)
-    
-    try:
-        client_asset = ClientAsset.objects.get(client=client, asset=asset)
-        client_asset.featured = not client_asset.featured
-        client_asset.save()
-        serializer = ClientAssetSerializer(client_asset)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    except ClientAsset.DoesNotExist:
-        return Response({'error': 'Client asset relationship not found'}, status=status.HTTP_404_NOT_FOUND)
+def permission_role_list(request):
+    """List all permission-role relationships"""
+    permission_roles = PermissionRole.objects.all().select_related('role', 'permission')
+    serializer = PermissionRoleSerializer(permission_roles, many=True)
+    return Response({'permissionRoles': serializer.data})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def client_assets_reset(request, client_id):
-    """Réinitialiser les assets d'un client : retirer ceux qui ne sont pas default=True, ajouter ceux qui sont default=True"""
-    client = get_object_or_404(Client, id=client_id)
+def permission_role_create(request):
+    """Assign a permission to a role"""
+    role_id = request.data.get('roleId')
+    permission_id = request.data.get('permissionId')
     
-    # Get all current client assets (convert to list to avoid query issues after deletion)
-    current_client_assets = list(ClientAsset.objects.filter(client=client).select_related('asset'))
-    current_asset_ids = {ca.asset.id for ca in current_client_assets}
+    if not role_id or not permission_id:
+        return Response({'error': 'roleId and permissionId are required'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # Get all default assets
-    default_assets = Asset.objects.filter(default=True)
-    
-    # Remove assets that are not default=True
-    removed_count = 0
-    for client_asset in current_client_assets:
-        if not client_asset.asset.default:
-            client_asset.delete()
-            removed_count += 1
-    
-    # Add assets that are default=True and not already assigned
-    added_count = 0
-    for asset in default_assets:
-        if asset.id not in current_asset_ids:
-            # Generate ClientAsset ID
-            client_asset_id = uuid.uuid4().hex[:12]
-            while ClientAsset.objects.filter(id=client_asset_id).exists():
-                client_asset_id = uuid.uuid4().hex[:12]
-            
-            # Create ClientAsset relationship
-            ClientAsset.objects.create(
-                id=client_asset_id,
-                client=client,
-                asset=asset
+    try:
+        role = Role.objects.get(id=role_id)
+        permission = Permission.objects.get(id=permission_id)
+        
+        # Check if relationship already exists
+        if PermissionRole.objects.filter(role=role, permission=permission).exists():
+            return Response({'error': 'Permission already assigned to this role'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Generate permission role ID
+        permission_role_id = uuid.uuid4().hex[:12]
+        while PermissionRole.objects.filter(id=permission_role_id).exists():
+            permission_role_id = uuid.uuid4().hex[:12]
+        
+        permission_role = PermissionRole.objects.create(
+            id=permission_role_id,
+            role=role,
+            permission=permission
+        )
+        
+        serializer = PermissionRoleSerializer(permission_role)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    except Role.DoesNotExist:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Permission.DoesNotExist:
+        return Response({'error': 'Permission not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def permission_role_delete(request, permission_role_id):
+    """Remove a permission from a role"""
+    permission_role = get_object_or_404(PermissionRole, id=permission_role_id)
+    permission_role.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+# Statuses endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def status_list(request):
+    """List all statuses"""
+    status_type = request.query_params.get('type', None)
+    statuses = Status.objects.all()
+    if status_type:
+        statuses = statuses.filter(type=status_type)
+    statuses = statuses.order_by('order_index', 'name')
+    serializer = StatusSerializer(statuses, many=True)
+    return Response({'statuses': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def status_create(request):
+    """Create a new status"""
+    serializer = StatusSerializer(data=request.data)
+    if serializer.is_valid():
+        # Generate status ID
+        status_id = uuid.uuid4().hex[:12]
+        while Status.objects.filter(id=status_id).exists():
+            status_id = uuid.uuid4().hex[:12]
+        
+        # Auto-assign orderIndex: get the max orderIndex for the same type and add 1
+        status_type = serializer.validated_data.get('type', 'lead')
+        max_order = Status.objects.filter(type=status_type).aggregate(
+            max_order=models.Max('order_index')
+        )['max_order'] or -1
+        order_index = max_order + 1
+        
+        status_obj = serializer.save(id=status_id, order_index=order_index)
+        return Response(StatusSerializer(status_obj).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def status_update(request, status_id):
+    """Update a status"""
+    status_obj = get_object_or_404(Status, id=status_id)
+    serializer = StatusSerializer(status_obj, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(StatusSerializer(status_obj).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def status_delete(request, status_id):
+    """Delete a status"""
+    status_obj = get_object_or_404(Status, id=status_id)
+    status_obj.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def status_reorder(request):
+    """Update orderIndex for multiple statuses"""
+    try:
+        statuses_data = request.data.get('statuses', [])
+        if not isinstance(statuses_data, list):
+            return Response(
+                {'error': 'statuses must be a list'}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
-            added_count += 1
-    
-    return Response({
-        'message': 'Assets réinitialisés avec succès',
-        'removed': removed_count,
-        'added': added_count
-    }, status=status.HTTP_200_OK)
-
-# RIBs endpoints
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def rib_list(request):
-    """Liste tous les RIBs disponibles"""
-    ribs = RIB.objects.all().order_by('name')
-    serializer = RIBSerializer(ribs, many=True)
-    return Response({'ribs': serializer.data})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def rib_create(request):
-    """Créer un nouveau RIB"""
-    serializer = RIBSerializer(data=request.data)
-    if serializer.is_valid():
-        # Generate RIB ID
-        rib_id = uuid.uuid4().hex[:12]
-        while RIB.objects.filter(id=rib_id).exists():
-            rib_id = uuid.uuid4().hex[:12]
-        rib = serializer.save(id=rib_id)
-        return Response(RIBSerializer(rib).data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['PUT', 'PATCH'])
-@permission_classes([IsAuthenticated])
-def rib_update(request, rib_id):
-    """Modifier un RIB"""
-    rib = get_object_or_404(RIB, id=rib_id)
-    serializer = RIBSerializer(rib, data=request.data, partial=True)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(RIBSerializer(rib).data, status=status.HTTP_200_OK)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def rib_delete(request, rib_id):
-    """Supprimer un RIB"""
-    rib = get_object_or_404(RIB, id=rib_id)
-    rib.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def client_ribs(request, client_id):
-    """Liste les RIBs d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    client_ribs = ClientRIB.objects.filter(client=client).select_related('rib')
-    serializer = ClientRIBSerializer(client_ribs, many=True)
-    return Response({'ribs': serializer.data})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def client_rib_add(request, client_id):
-    """Ajouter un RIB à un client"""
-    client = get_object_or_404(Client, id=client_id)
-    rib_id = request.data.get('ribId')
-    
-    if not rib_id:
-        return Response({'error': 'ribId is required'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        rib = RIB.objects.get(id=rib_id)
         
-        # Check if client already has this RIB
-        if ClientRIB.objects.filter(client=client, rib=rib).exists():
-            return Response({'error': 'Client already has this RIB'}, status=status.HTTP_400_BAD_REQUEST)
+        for item in statuses_data:
+            status_id = item.get('id')
+            order_index = item.get('orderIndex')
+            
+            if not status_id or order_index is None:
+                continue
+                
+            try:
+                status_obj = Status.objects.get(id=status_id)
+                status_obj.order_index = order_index
+                status_obj.save()
+            except Status.DoesNotExist:
+                continue
         
-        # Generate ClientRIB ID
-        client_rib_id = uuid.uuid4().hex[:12]
-        while ClientRIB.objects.filter(id=client_rib_id).exists():
-            client_rib_id = uuid.uuid4().hex[:12]
-        
-        # Create ClientRIB relationship
-        client_rib = ClientRIB.objects.create(
-            id=client_rib_id,
-            client=client,
-            rib=rib
+        return Response({'success': True}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response(
+            {'error': str(e)}, 
+            status=status.HTTP_400_BAD_REQUEST
         )
-        
-        serializer = ClientRIBSerializer(client_rib)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    except RIB.DoesNotExist:
-        return Response({'error': 'RIB not found'}, status=status.HTTP_404_NOT_FOUND)
 
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def client_rib_remove(request, client_id, rib_id):
-    """Retirer un RIB d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    rib = get_object_or_404(RIB, id=rib_id)
-    
-    try:
-        client_rib = ClientRIB.objects.get(client=client, rib=rib)
-        client_rib.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    except ClientRIB.DoesNotExist:
-        return Response({'error': 'Client RIB relationship not found'}, status=status.HTTP_404_NOT_FOUND)
-
-# Useful Links endpoints
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def useful_link_list(request):
-    """Liste tous les liens utiles disponibles"""
-    useful_links = UsefulLink.objects.all().order_by('name')
-    serializer = UsefulLinkSerializer(useful_links, many=True, context={'request': request})
-    return Response({'usefulLinks': serializer.data})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def useful_link_create(request):
-    """Créer un nouveau lien utile"""
-    serializer = UsefulLinkSerializer(data=request.data, context={'request': request})
-    if serializer.is_valid():
-        # Generate UsefulLink ID
-        useful_link_id = uuid.uuid4().hex[:12]
-        while UsefulLink.objects.filter(id=useful_link_id).exists():
-            useful_link_id = uuid.uuid4().hex[:12]
-        useful_link = serializer.save(id=useful_link_id)
-        return Response(UsefulLinkSerializer(useful_link, context={'request': request}).data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['PUT', 'PATCH'])
-@permission_classes([IsAuthenticated])
-def useful_link_update(request, useful_link_id):
-    """Modifier un lien utile"""
-    useful_link = get_object_or_404(UsefulLink, id=useful_link_id)
-    
-    # Check if image should be removed
-    remove_image = request.data.get('removeImage', '').lower() == 'true'
-    if remove_image and useful_link.image:
-        useful_link.image.delete(save=False)
-    
-    serializer = UsefulLinkSerializer(useful_link, data=request.data, partial=True, context={'request': request})
-    if serializer.is_valid():
-        useful_link = serializer.save()
-        # If removeImage flag was set, ensure image is None
-        if remove_image:
-            useful_link.image = None
-            useful_link.save()
-        return Response(UsefulLinkSerializer(useful_link, context={'request': request}).data, status=status.HTTP_200_OK)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def useful_link_delete(request, useful_link_id):
-    """Supprimer un lien utile"""
-    useful_link = get_object_or_404(UsefulLink, id=useful_link_id)
-    useful_link.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def client_useful_links(request, client_id):
-    """Liste les liens utiles d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    client_useful_links = ClientUsefulLink.objects.filter(client=client).select_related('useful_link')
-    serializer = ClientUsefulLinkSerializer(client_useful_links, many=True, context={'request': request})
-    return Response({'usefulLinks': serializer.data})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def client_useful_link_add(request, client_id):
-    """Ajouter un lien utile à un client"""
-    client = get_object_or_404(Client, id=client_id)
-    useful_link_id = request.data.get('usefulLinkId')
-    
-    if not useful_link_id:
-        return Response({'error': 'usefulLinkId is required'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        useful_link = UsefulLink.objects.get(id=useful_link_id)
-        
-        # Check if client already has this useful link
-        if ClientUsefulLink.objects.filter(client=client, useful_link=useful_link).exists():
-            return Response({'error': 'Client already has this useful link'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Generate ClientUsefulLink ID
-        client_useful_link_id = uuid.uuid4().hex[:12]
-        while ClientUsefulLink.objects.filter(id=client_useful_link_id).exists():
-            client_useful_link_id = uuid.uuid4().hex[:12]
-        
-        # Create ClientUsefulLink relationship
-        client_useful_link = ClientUsefulLink.objects.create(
-            id=client_useful_link_id,
-            client=client,
-            useful_link=useful_link
-        )
-        
-        serializer = ClientUsefulLinkSerializer(client_useful_link, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    except UsefulLink.DoesNotExist:
-        return Response({'error': 'Useful link not found'}, status=status.HTTP_404_NOT_FOUND)
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def client_useful_link_remove(request, client_id, useful_link_id):
-    """Retirer un lien utile d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    useful_link = get_object_or_404(UsefulLink, id=useful_link_id)
-    
-    try:
-        client_useful_link = ClientUsefulLink.objects.get(client=client, useful_link=useful_link)
-        client_useful_link.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    except ClientUsefulLink.DoesNotExist:
-        return Response({'error': 'Client useful link relationship not found'}, status=status.HTTP_404_NOT_FOUND)
-
-# Transaction endpoints
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def client_transactions(request, client_id):
-    """Liste les transactions d'un client"""
-    client = get_object_or_404(Client, id=client_id)
-    transactions = Transaction.objects.filter(client=client).order_by('-datetime', '-created_at')
-    serializer = TransactionSerializer(transactions, many=True)
-    return Response({'transactions': serializer.data})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def client_transaction_create(request, client_id):
-    """Créer une transaction pour un client"""
-    client = get_object_or_404(Client, id=client_id)
-    
-    # Validate required fields
-    if not request.data.get('type'):
-        return Response({'error': 'Le type de transaction est requis'}, status=status.HTTP_400_BAD_REQUEST)
-    if not request.data.get('amount'):
-        return Response({'error': 'Le montant est requis'}, status=status.HTTP_400_BAD_REQUEST)
-    if not request.data.get('datetime'):
-        return Response({'error': 'La date et heure sont requises'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Generate transaction ID
-    transaction_id = uuid.uuid4().hex[:12]
-    while Transaction.objects.filter(id=transaction_id).exists():
-        transaction_id = uuid.uuid4().hex[:12]
-    
-    # Parse datetime
-    from django.utils.dateparse import parse_datetime
-    datetime_str = request.data.get('datetime')
-    transaction_datetime = parse_datetime(datetime_str)
-    if not transaction_datetime:
-        return Response({'error': 'Format de date invalide'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Create transaction
-    transaction = Transaction.objects.create(
-        id=transaction_id,
-        client=client,
-        type=request.data.get('type'),
-        amount=request.data.get('amount'),
-        description=request.data.get('description', ''),
-        status=request.data.get('status', 'en_cours'),
-        datetime=transaction_datetime
-    )
-    
-    serializer = TransactionSerializer(transaction)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-@api_view(['PUT', 'PATCH'])
-@permission_classes([IsAuthenticated])
-def client_transaction_update(request, client_id, transaction_id):
-    """Mettre à jour une transaction"""
-    client = get_object_or_404(Client, id=client_id)
-    transaction = get_object_or_404(Transaction, id=transaction_id, client=client)
-    
-    # Update fields
-    if 'type' in request.data:
-        transaction.type = request.data.get('type')
-    if 'amount' in request.data:
-        transaction.amount = request.data.get('amount')
-    if 'description' in request.data:
-        transaction.description = request.data.get('description', '')
-    if 'status' in request.data:
-        transaction.status = request.data.get('status')
-    if 'datetime' in request.data:
-        from django.utils.dateparse import parse_datetime
-        datetime_str = request.data.get('datetime')
-        transaction_datetime = parse_datetime(datetime_str)
-        if transaction_datetime:
-            transaction.datetime = transaction_datetime
-    
-    transaction.save()
-    serializer = TransactionSerializer(transaction)
-    return Response(serializer.data)
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def client_transaction_delete(request, client_id, transaction_id):
-    """Supprimer une transaction"""
-    client = get_object_or_404(Client, id=client_id)
-    transaction = get_object_or_404(Transaction, id=transaction_id, client=client)
-    transaction.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)

@@ -14,6 +14,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { User } from '../types';
 import { useTeams } from '../hooks/useTeams';
+import { useRoles } from '../hooks/useRoles';
 import LoadingIndicator from './LoadingIndicator';
 import { Team } from '../types';
 import '../styles/Modal.css';
@@ -27,6 +28,7 @@ interface EditUserModalProps {
 
 export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUserModalProps) {
   const { teams = [] as Team[], loading: teamsLoading } = useTeams();
+  const { roles = [], loading: rolesLoading } = useRoles();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
@@ -68,7 +70,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           last_name: formData.lastName,
           email: formData.email,
           phone: formData.phone,
-          role: formData.role,
+          roleId: formData.role,
           teamId: formData.teamId || null,
         }),
       });
@@ -166,14 +168,20 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder="Sélectionner un rôle" />
+                <SelectValue placeholder={rolesLoading ? "Chargement..." : "Sélectionner un rôle"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admin">
-                  Administrateur
-                </SelectItem>
-                <SelectItem value="teamleader">Chef d'équipe</SelectItem>
-                <SelectItem value="gestionnaire">Gestionnaire</SelectItem>
+                {roles.length > 0 ? (
+                  roles.map((role) => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {role.name}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1.5 text-sm text-slate-500">
+                    {rolesLoading ? "Chargement..." : "Aucun rôle disponible"}
+                  </div>
+                )}
               </SelectContent>
             </Select>
           </div>

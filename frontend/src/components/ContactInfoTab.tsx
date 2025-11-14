@@ -4,20 +4,20 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Pencil, ChevronDown } from 'lucide-react';
-import { ClientWallet } from './ClientWallet';
-import { ClientManagementInfo } from './ClientManagementInfo';
-import { EditClientManagementModal } from './EditClientManagementModal';
+import { ContactWallet } from './ContactWallet';
+import { ContactManagementInfo } from './ContactManagementInfo';
+import { EditContactManagementModal } from './EditContactManagementModal';
 
-import '../styles/Clients.css';
+import '../styles/Contacts.css';
 
-interface ClientInfoTabProps {
-  client: any;
+interface ContactInfoTabProps {
+  contact: any;
   onOpenEditPersonalInfo: () => void;
   onOpenEditPatrimonialInfo: () => void;
-  onClientUpdated?: () => void;
+  onContactUpdated?: () => void;
 }
 
-export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrimonialInfo, onClientUpdated }: ClientInfoTabProps) {
+export function ContactInfoTab({ contact, onOpenEditPersonalInfo, onOpenEditPatrimonialInfo, onContactUpdated }: ContactInfoTabProps) {
   const [isPatrimonialOpen, setIsPatrimonialOpen] = useState(false);
   const [isEditManagementOpen, setIsEditManagementOpen] = useState(false);
 
@@ -41,41 +41,41 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Civilité</Label>
-              <p>{client.civility || '-'}</p>
+              <p>{contact.civility || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Prénom / Nom</Label>
-              <p>{client.firstName} {client.lastName}</p>
+              <p>{contact.firstName} {contact.lastName}</p>
             </div>
             <div>
               <Label className="text-slate-600">Template</Label>
-              <p>{client.template || '-'}</p>
+              <p>{contact.template || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Support</Label>
-              <p>{client.support || '-'}</p>
+              <p>{contact.support || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Mot de passe</Label>
-              <p className="font-mono text-sm">{client.password || '-'}</p>
+              <p className="font-mono text-sm">{contact.password || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Téléphone</Label>
-              <p>{client.phone || '-'}</p>
+              <p>{contact.phone || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Portable</Label>
-              <p>{client.mobile || '-'}</p>
+              <p>{contact.mobile || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">E-mail</Label>
-              <p>{client.email || '-'}</p>
+              <p>{contact.email || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Date de naissance</Label>
               <p>{(() => {
-                if (!client.birthDate) return '-';
-                const date = new Date(client.birthDate);
+                if (!contact.birthDate) return '-';
+                const date = new Date(contact.birthDate);
                 if (isNaN(date.getTime())) return '-';
                 return date.toLocaleDateString('fr-FR', { 
                   day: '2-digit', 
@@ -86,31 +86,31 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
             </div>
             <div>
               <Label className="text-slate-600">Lieu de naissance</Label>
-              <p>{client.birthPlace || '-'}</p>
+              <p>{contact.birthPlace || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Adresse</Label>
-              <p>{client.address || '-'}</p>
+              <p>{contact.address || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Code postal</Label>
-              <p>{client.postalCode || '-'}</p>
+              <p>{contact.postalCode || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Ville</Label>
-              <p>{client.city || '-'}</p>
+              <p>{contact.city || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Nationalité</Label>
-              <p>{client.nationality || '-'}</p>
+              <p>{contact.nationality || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Successeur</Label>
-              <p>{client.successor || '-'}</p>
+              <p>{contact.successor || '-'}</p>
             </div>
             <div>
               <Label className="text-slate-600">Date d'inscription</Label>
-              <p>{new Date(client.createdAt).toLocaleDateString('fr-FR', { 
+              <p>{new Date(contact.createdAt).toLocaleDateString('fr-FR', { 
                 day: '2-digit', 
                 month: '2-digit', 
                 year: 'numeric'
@@ -121,14 +121,14 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
       </Card>
 
         {/* Wallet Container */}
-        <ClientWallet client={client} />
+        <ContactWallet contact={contact} />
       </div>
 
       
-      {/* Client Management Info */}
-      {client && (
-        <ClientManagementInfo 
-          client={client}
+      {/* Contact Management Info */}
+      {contact && (
+        <ContactManagementInfo 
+          contact={contact}
           onEdit={() => setIsEditManagementOpen(true)}
         />
       )}
@@ -152,7 +152,7 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                     <Pencil className="w-4 h-4 mr-2" />
                     Éditer
                   </Button>
-                  <ChevronDown className={`client-chevron ${isPatrimonialOpen ? 'open' : ''}`} />
+                  <ChevronDown className={`contact-chevron ${isPatrimonialOpen ? 'open' : ''}`} />
                 </div>
               </div>
             </CardHeader>
@@ -164,11 +164,11 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 <h3 className="text-lg font-semibold">Activité professionnelle</h3>
                 <div>
                   <Label className="text-slate-600">Statut</Label>
-                  <p>{client.professionalActivityStatus || '-'}</p>
+                  <p>{contact.professionalActivityStatus || '-'}</p>
                 </div>
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.professionalActivityComment || '-'}</p>
+                  <p>{contact.professionalActivityComment || '-'}</p>
                 </div>
               </div>
 
@@ -178,9 +178,9 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 <div>
                   <Label className="text-slate-600">Métier(s)</Label>
                   <div className="flex flex-wrap gap-2 mt-2">
-                    {client.professions && client.professions.length > 0 ? (
-                      client.professions.map((profession: string, index: number) => (
-                        <div key={index} className="client-profession-badge">
+                    {contact.professions && contact.professions.length > 0 ? (
+                      contact.professions.map((profession: string, index: number) => (
+                        <div key={index} className="contact-profession-badge">
                           <span>{profession}</span>
                         </div>
                       ))
@@ -191,7 +191,7 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 </div>
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.professionsComment || '-'}</p>
+                  <p>{contact.professionsComment || '-'}</p>
                 </div>
               </div>
 
@@ -200,29 +200,29 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 <h3 className="text-lg font-semibold">Patrimoine</h3>
                 <div>
                   <Label className="text-slate-600">Banque</Label>
-                  <p>{client.bankName || '-'}</p>
+                  <p>{contact.bankName || '-'}</p>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label className="text-slate-600">Compte courant (€)</Label>
-                    <p>{(client.currentAccount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>{(contact.currentAccount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div>
                     <Label className="text-slate-600">Livret A/B (€)</Label>
-                    <p>{(client.livretAB || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>{(contact.livretAB || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div>
                     <Label className="text-slate-600">PEA (€)</Label>
-                    <p>{(client.pea || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>{(contact.pea || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div>
                     <Label className="text-slate-600">PEL (€)</Label>
-                    <p>{(client.pel || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>{(contact.pel || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div>
                     <Label className="text-slate-600">LDD (€)</Label>
-                    <p>{(client.ldd || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>{(contact.ldd || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                 </div>
 
@@ -231,31 +231,31 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-slate-600">CEL (€)</Label>
-                      <p>{(client.cel || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p>{(contact.cel || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                     <div>
                       <Label className="text-slate-600">CSL (€)</Label>
-                      <p>{(client.csl || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p>{(contact.csl || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                     <div>
                       <Label className="text-slate-600">Compte titre (€)</Label>
-                      <p>{(client.securitiesAccount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p>{(contact.securitiesAccount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                     <div>
                       <Label className="text-slate-600">Assurance-vie (€)</Label>
-                      <p>{(client.lifeInsurance || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p>{(contact.lifeInsurance || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                   </div>
                 </div>
 
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.savingsComment || '-'}</p>
+                  <p>{contact.savingsComment || '-'}</p>
                 </div>
 
                 <div>
                   <Label className="font-semibold">Total du patrimoine (€)</Label>
-                  <p className="text-lg font-bold">{(client.totalWealth || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="text-lg font-bold">{(contact.totalWealth || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 </div>
               </div>
 
@@ -265,9 +265,9 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 <div>
                   <Label className="text-slate-600">Objectifs</Label>
                   <div className="flex flex-wrap gap-2 mt-2">
-                    {client.objectives && client.objectives.length > 0 ? (
-                      client.objectives.map((obj: string, index: number) => (
-                        <div key={index} className="client-badge">
+                    {contact.objectives && contact.objectives.length > 0 ? (
+                      contact.objectives.map((obj: string, index: number) => (
+                        <div key={index} className="contact-badge">
                           {obj}
                         </div>
                       ))
@@ -278,14 +278,14 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 </div>
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.objectivesComment || '-'}</p>
+                  <p>{contact.objectivesComment || '-'}</p>
                 </div>
                 <div>
                   <Label className="text-slate-600">Expérience</Label>
                   <div className="flex flex-wrap gap-2 mt-2">
-                    {client.experience && client.experience.length > 0 ? (
-                      client.experience.map((exp: string, index: number) => (
-                        <div key={index} className="client-badge">
+                    {contact.experience && contact.experience.length > 0 ? (
+                      contact.experience.map((exp: string, index: number) => (
+                        <div key={index} className="contact-badge">
                           {exp}
                         </div>
                       ))
@@ -296,7 +296,7 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 </div>
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.experienceComment || '-'}</p>
+                  <p>{contact.experienceComment || '-'}</p>
                 </div>
               </div>
 
@@ -305,15 +305,15 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
                 <h3 className="text-lg font-semibold">Informations financières</h3>
                 <div>
                   <Label className="text-slate-600">Défiscalisation</Label>
-                  <p>{client.taxOptimization !== undefined ? (client.taxOptimization ? 'Oui' : 'Non') : '-'}</p>
+                  <p>{contact.taxOptimization !== undefined ? (contact.taxOptimization ? 'Oui' : 'Non') : '-'}</p>
                 </div>
                 <div>
                   <Label className="text-slate-600">Commentaire</Label>
-                  <p>{client.taxOptimizationComment || '-'}</p>
+                  <p>{contact.taxOptimizationComment || '-'}</p>
                 </div>
                 <div>
                   <Label className="text-slate-600">Revenu annuel du foyer (€)</Label>
-                  <p>{(client.annualHouseholdIncome || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p>{(contact.annualHouseholdIncome || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 </div>
               </div>
             </CardContent>
@@ -322,14 +322,14 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
       </Collapsible>
       
       {/* Edit Management Modal */}
-      <EditClientManagementModal
+      <EditContactManagementModal
         isOpen={isEditManagementOpen}
         onClose={() => setIsEditManagementOpen(false)}
-        client={client}
-        onClientUpdated={() => {
+        contact={contact}
+        onContactUpdated={() => {
           setIsEditManagementOpen(false);
-          if (onClientUpdated) {
-            onClientUpdated();
+          if (onContactUpdated) {
+            onContactUpdated();
           }
         }}
       />
@@ -337,4 +337,5 @@ export function ClientInfoTab({ client, onOpenEditPersonalInfo, onOpenEditPatrim
     
   );
 }
+
 

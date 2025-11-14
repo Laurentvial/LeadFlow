@@ -4,12 +4,12 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { User, Users, Edit } from 'lucide-react';
 
-interface ClientManagementInfoProps {
-  client: any;
+interface ContactManagementInfoProps {
+  contact: any;
   onEdit: () => void;
 }
 
-export function ClientManagementInfo({ client, onEdit }: ClientManagementInfoProps) {
+export function ContactManagementInfo({ contact, onEdit }: ContactManagementInfoProps) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -35,14 +35,14 @@ export function ClientManagementInfo({ client, onEdit }: ClientManagementInfoPro
               <Label className="text-slate-600 font-semibold">Gestionnaire</Label>
             </div>
             <p className="text-slate-900">
-              {client?.managerName || client?.manager || '-'}
+              {contact?.managerName || contact?.manager || '-'}
             </p>
-            {client?.managerEmail && (
-              <p className="text-sm text-slate-500">{client.managerEmail}</p>
+            {contact?.managerEmail && (
+              <p className="text-sm text-slate-500">{contact.managerEmail}</p>
             )}
-            {client?.managerTeamName && (
+            {contact?.managerTeamName && (
               <p className="text-sm text-slate-500">
-                {client.managerTeamName}
+                {contact.managerTeamName}
               </p>
             )}
           </div>
@@ -50,7 +50,7 @@ export function ClientManagementInfo({ client, onEdit }: ClientManagementInfoPro
           <div className="space-y-2">
             <Label className="text-slate-600 font-semibold">Source</Label>
             <p className="text-slate-900">
-              {client?.source || '-'}
+              {contact?.source || '-'}
             </p>
           </div>
         </div>
@@ -58,4 +58,5 @@ export function ClientManagementInfo({ client, onEdit }: ClientManagementInfoPro
     </Card>
   );
 }
+
 

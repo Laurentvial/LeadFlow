@@ -48,7 +48,7 @@ export function Header({ user }: HeaderProps) {
             </div>
             <div className="header-title-section">
               <img src="../static/images/logo.png" alt="Logo" className="header-logo-img" style={{ maxHeight: 100, maxWidth: 140 }} />
-              <p className="header-subtitle">Protected Asset Network Offering Robust All‑class Market Access</p>
+              <p className="header-subtitle">Outil de prospecting et de gestion de clients</p>
             </div>
           </div>
           
@@ -91,7 +91,7 @@ export function Header({ user }: HeaderProps) {
                     {fullName && user?.email && (
                       <p className="header-user-email">{user?.email}</p>
                     )}
-                    {user?.role && <p className="header-user-role">{user?.role}</p>}
+                    {user?.roleName && <p className="header-user-role">{user?.roleName}</p>}
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

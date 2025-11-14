@@ -8,21 +8,21 @@ import { Plus, Trash2, X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import '../styles/Modal.css';
-import '../styles/Clients.css';
+import '../styles/Contacts.css';
 
 interface EditPatrimonialInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  client: any;
-  clientId: string;
-  onUpdate: (updatedClient: any) => void;
+  contact: any;
+  contactId: string;
+  onUpdate: (updatedContact: any) => void;
 }
 
 export function EditPatrimonialInfoModal({
   isOpen,
   onClose,
-  client,
-  clientId,
+  contact,
+  contactId,
   onUpdate
 }: EditPatrimonialInfoModalProps) {
   const [newProfession, setNewProfession] = useState('');
@@ -52,37 +52,37 @@ export function EditPatrimonialInfoModal({
     annualHouseholdIncome: 0
   });
 
-  // Initialize form when modal opens or client changes
+  // Initialize form when modal opens or contact changes
   React.useEffect(() => {
-    if (isOpen && client) {
+    if (isOpen && contact) {
       setFormData({
-        professionalActivityStatus: client.professionalActivityStatus || '',
-        professionalActivityComment: client.professionalActivityComment || '',
-        professions: client.professions || [],
-        professionsComment: client.professionsComment || '',
-        bankName: client.bankName || '',
-        currentAccount: client.currentAccount || 0,
-        livretAB: client.livretAB || 0,
-        pea: client.pea || 0,
-        pel: client.pel || 0,
-        ldd: client.ldd || 0,
-        cel: client.cel || 0,
-        csl: client.csl || 0,
-        securitiesAccount: client.securitiesAccount || 0,
-        lifeInsurance: client.lifeInsurance || 0,
-        savingsComment: client.savingsComment || '',
-        totalWealth: client.totalWealth || 0,
-        objectives: client.objectives || [],
-        objectivesComment: client.objectivesComment || '',
-        experience: client.experience || [],
-        experienceComment: client.experienceComment || '',
-        taxOptimization: client.taxOptimization || false,
-        taxOptimizationComment: client.taxOptimizationComment || '',
-        annualHouseholdIncome: client.annualHouseholdIncome || 0
+        professionalActivityStatus: contact.professionalActivityStatus || '',
+        professionalActivityComment: contact.professionalActivityComment || '',
+        professions: contact.professions || [],
+        professionsComment: contact.professionsComment || '',
+        bankName: contact.bankName || '',
+        currentAccount: contact.currentAccount || 0,
+        livretAB: contact.livretAB || 0,
+        pea: contact.pea || 0,
+        pel: contact.pel || 0,
+        ldd: contact.ldd || 0,
+        cel: contact.cel || 0,
+        csl: contact.csl || 0,
+        securitiesAccount: contact.securitiesAccount || 0,
+        lifeInsurance: contact.lifeInsurance || 0,
+        savingsComment: contact.savingsComment || '',
+        totalWealth: contact.totalWealth || 0,
+        objectives: contact.objectives || [],
+        objectivesComment: contact.objectivesComment || '',
+        experience: contact.experience || [],
+        experienceComment: contact.experienceComment || '',
+        taxOptimization: contact.taxOptimization || false,
+        taxOptimizationComment: contact.taxOptimizationComment || '',
+        annualHouseholdIncome: contact.annualHouseholdIncome || 0
       });
       setNewProfession('');
     }
-  }, [isOpen, client]);
+  }, [isOpen, contact]);
 
   function addProfession() {
     if (newProfession.trim() && !formData.professions.includes(newProfession.trim())) {
@@ -165,7 +165,7 @@ export function EditPatrimonialInfoModal({
         annualHouseholdIncome: formData.annualHouseholdIncome || 0
       };
 
-      const response = await apiCall(`/api/clients/${clientId}/`, {
+      const response = await apiCall(`/api/contacts/${contactId}/`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json'
@@ -173,8 +173,8 @@ export function EditPatrimonialInfoModal({
         body: JSON.stringify(payload)
       });
 
-      if (response?.client) {
-        onUpdate(response.client);
+      if (response?.contact) {
+        onUpdate(response.contact);
         onClose();
         toast.success('Fiche patrimoniale mise à jour avec succès');
       }
@@ -254,7 +254,7 @@ export function EditPatrimonialInfoModal({
               </div>
               <div className="flex flex-wrap gap-2 mt-2">
                 {formData.professions.map((profession, index) => (
-                  <div key={index} className="client-profession-badge">
+                  <div key={index} className="contact-profession-badge">
                     <span>{profession}</span>
                     <button
                       type="button"
@@ -413,7 +413,7 @@ export function EditPatrimonialInfoModal({
                     key={obj}
                     type="button"
                     onClick={() => toggleObjective(obj)}
-                    className={`client-badge ${formData.objectives.includes(obj) ? 'active' : ''}`}
+                    className={`contact-badge ${formData.objectives.includes(obj) ? 'active' : ''}`}
                   >
                     {obj}
                   </button>
@@ -436,7 +436,7 @@ export function EditPatrimonialInfoModal({
                     key={exp}
                     type="button"
                     onClick={() => toggleExperience(exp)}
-                    className={`client-badge ${formData.experience.includes(exp) ? 'active' : ''}`}
+                    className={`contact-badge ${formData.experience.includes(exp) ? 'active' : ''}`}
                   >
                     {exp}
                   </button>

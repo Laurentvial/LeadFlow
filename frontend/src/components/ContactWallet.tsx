@@ -4,8 +4,8 @@ import { Label } from './ui/label';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Wallet } from 'lucide-react';
 
-interface ClientWalletProps {
-  client: any;
+interface ContactWalletProps {
+  contact: any;
 }
 
 // Mock data for wallet evolution - in production, this would come from the API
@@ -23,11 +23,11 @@ const generateMockEvolutionData = (): { date: string; value: number }[] => {
   return data;
 };
 
-export function ClientWallet({ client }: ClientWalletProps) {
-  // Get wallet data from client object or use defaults
-  const investedCapital = client?.investedCapital || 0;
-  const tradingPortfolio = client?.tradingPortfolio || 0;
-  const bonus = client?.bonus || 0;
+export function ContactWallet({ contact }: ContactWalletProps) {
+  // Get wallet data from contact object or use defaults
+  const investedCapital = contact?.investedCapital || 0;
+  const tradingPortfolio = contact?.tradingPortfolio || 0;
+  const bonus = contact?.bonus || 0;
   
   // Calculate available funds on frontend
   const availableFunds = investedCapital - tradingPortfolio - bonus;
@@ -131,4 +131,5 @@ export function ClientWallet({ client }: ClientWalletProps) {
     </Card>
   );
 }
+
 

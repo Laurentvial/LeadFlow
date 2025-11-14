@@ -53,7 +53,7 @@ export function LoginPage() {
       <Card className="login-card">
         <CardHeader className="login-card-header">
 
-          <CardTitle>Panorama</CardTitle>
+          <CardTitle>LeadFlow</CardTitle>
           <CardDescription>
             Connectez-vous à votre compte
           </CardDescription>

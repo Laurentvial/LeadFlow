@@ -12,10 +12,10 @@ import { ArrowLeft, Save, Key, Upload, ChevronDown, Plus, Trash2, User } from 'l
 import { apiCall } from '../utils/api';
 import { useUsers } from '../hooks/useUsers';
 import { toast } from 'sonner';
-import '../styles/Clients.css';
+import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 
-export function AddClient() {
+export function AddContact() {
   const navigate = useNavigate();
   const { users, loading: usersLoading } = useUsers();
   const [loading, setLoading] = useState(false);
@@ -76,7 +76,7 @@ export function AddClient() {
     const firstName = formData.firstName.trim().toLowerCase();
     const lastName = formData.lastName.trim().toLowerCase();
     
-    let easyPassword = 'Client123!';
+    let easyPassword = 'Contact123!';
     
     if (firstName && lastName) {
       // Utilise les 2 premières lettres du prénom et nom + un nombre + un caractère spécial
@@ -93,7 +93,7 @@ export function AddClient() {
     
     // Vérification de sécurité : garantit au moins 6 caractères
     if (easyPassword.length < 6) {
-      easyPassword = 'Client123!';
+      easyPassword = 'Contact123!';
     }
     
     setFormData({
@@ -232,7 +232,7 @@ export function AddClient() {
         formDataToSend.append('taxOptimizationComment', formData.taxOptimizationComment || '');
         formDataToSend.append('annualHouseholdIncome', formData.annualHouseholdIncome.toString());
 
-        const response = await apiCall('/api/clients/create/', {
+        const response = await apiCall('/api/contacts/create/', {
           method: 'POST',
           body: formDataToSend
         });
@@ -286,17 +286,17 @@ export function AddClient() {
         };
 
         // Utilise apiCall (fetch-based) et non axios
-        const response = await apiCall('/api/clients/create/', {
+        const response = await apiCall('/api/contacts/create/', {
           method: 'POST',
           body: JSON.stringify(payload)
         });
       }
 
-      toast.success('Client créé avec succès');
-      navigate('/clients');
+      toast.success('Contact créé avec succès');
+      navigate('/contacts');
     } catch (error: any) {
-      console.error('Error creating client:', error);
-      let errorMessage = 'Erreur lors de la création du client';
+      console.error('Error creating contact:', error);
+      let errorMessage = 'Erreur lors de la création du contact';
       
       // apiCall throws Error with response property attached
       if (error.response) {
@@ -334,14 +334,14 @@ export function AddClient() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/clients')}
+          onClick={() => navigate('/contacts')}
           className="h-10 w-10"
         >
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div className="page-title-section">
-          <h1 className="page-title">Nouveau client</h1>
-          <p className="page-subtitle">Remplissez le formulaire pour créer un nouveau client</p>
+          <h1 className="page-title">Nouveau contact</h1>
+          <p className="page-subtitle">Remplissez le formulaire pour créer un nouveau contact</p>
         </div>
       </div>
 
@@ -358,11 +358,11 @@ export function AddClient() {
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-4">
                   {profilePhotoPreview ? (
-                    <div className="client-profile-photo-container">
+                    <div className="contact-profile-photo-container">
                       <img 
                         src={profilePhotoPreview} 
                         alt="Preview" 
-                        className="client-profile-photo-preview"
+                        className="contact-profile-photo-preview"
                       />
                       <button
                         type="button"
@@ -370,7 +370,7 @@ export function AddClient() {
                           setProfilePhoto(null);
                           setProfilePhotoPreview(null);
                         }}
-                        className="client-profile-photo-remove-btn"
+                        className="contact-profile-photo-remove-btn"
                       >
                         ×
                       </button>
@@ -425,7 +425,7 @@ export function AddClient() {
                   value={formData.firstName}
                   onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                   required
-                  placeholder="Prénom du client"
+                  placeholder="Prénom du contact"
                 />
               </div>
 
@@ -436,7 +436,7 @@ export function AddClient() {
                   value={formData.lastName}
                   onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                   required
-                  placeholder="Nom du client"
+                  placeholder="Nom du contact"
                 />
               </div>
 
@@ -510,7 +510,7 @@ export function AddClient() {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   required
-                  placeholder="client@example.com"
+                  placeholder="contact@example.com"
                 />
               </div>
               <div className="space-y-2">
@@ -650,7 +650,7 @@ export function AddClient() {
                 id="platformAccess"
                 checked={formData.platformAccess}
                 onChange={(e) => setFormData({ ...formData, platformAccess: e.target.checked })}
-                className="client-checkbox"
+                className="contact-checkbox"
               />
               <Label htmlFor="platformAccess" className="cursor-pointer">
                 Connexion à la plateforme
@@ -663,7 +663,7 @@ export function AddClient() {
                 id="active"
                 checked={formData.active}
                 onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
-                className="client-checkbox"
+                className="contact-checkbox"
               />
               <Label htmlFor="active" className="cursor-pointer">
                 Actif
@@ -701,7 +701,7 @@ export function AddClient() {
               <CardHeader className="cursor-pointer hover:bg-slate-50 transition-colors">
                 <div className="flex items-center justify-between pb-6">
             <CardTitle>Fiche patrimoniale</CardTitle>
-                    <ChevronDown className={`client-chevron ${isPatrimonialOpen ? 'open' : ''}`} />
+                    <ChevronDown className={`contact-chevron ${isPatrimonialOpen ? 'open' : ''}`} />
                 </div>
           </CardHeader>
             </CollapsibleTrigger>
@@ -756,7 +756,7 @@ export function AddClient() {
                     </div>
                     <div className="flex flex-wrap gap-2 mt-2">
                       {formData.professions.map((profession, index) => (
-                        <div key={index} className="client-profession-badge">
+                        <div key={index} className="contact-profession-badge">
                           <span>{profession}</span>
                           <button
                             type="button"
@@ -917,7 +917,7 @@ export function AddClient() {
                           key={obj}
                           type="button"
                           onClick={() => toggleObjective(obj)}
-                          className={`client-badge ${
+                          className={`contact-badge ${
                             formData.objectives.includes(obj) ? 'active' : ''
                           }`}
                         >
@@ -942,7 +942,7 @@ export function AddClient() {
                           key={exp}
                           type="button"
                           onClick={() => toggleExperience(exp)}
-                          className={`client-badge ${
+                          className={`contact-badge ${
                             formData.experience.includes(exp) ? 'active' : ''
                           }`}
                         >
@@ -1007,7 +1007,7 @@ export function AddClient() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => navigate('/clients')}
+            onClick={() => navigate('/contacts')}
             disabled={loading}
           >
             Annuler
@@ -1018,7 +1018,7 @@ export function AddClient() {
             ) : (
               <>
                 <Save className="w-4 h-4 mr-2" />
-                Créer le client
+                Créer le contact
               </>
             )}
           </Button>
@@ -1028,5 +1028,5 @@ export function AddClient() {
   );
 }
 
-export default AddClient;
+export default AddContact;
 

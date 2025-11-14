@@ -1,11 +1,11 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
-interface ClientAppointmentsTabProps {
+interface ContactAppointmentsTabProps {
   appointments: any[];
 }
 
-export function ClientAppointmentsTab({ appointments }: ClientAppointmentsTabProps) {
+export function ContactAppointmentsTab({ appointments }: ContactAppointmentsTabProps) {
   return (
     <Card>
       <CardHeader>
@@ -44,4 +44,5 @@ export function ClientAppointmentsTab({ appointments }: ClientAppointmentsTabPro
     </Card>
   );
 }
+
 
