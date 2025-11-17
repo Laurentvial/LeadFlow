@@ -7,6 +7,13 @@
   padding: 1rem;
 }
 
+.login-logo-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
 .login-card {
   width: 100%;
   max-width: 28rem;

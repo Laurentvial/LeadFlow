@@ -5,6 +5,8 @@ export interface Role {
   id: string;
   name: string;
   dataAccess: 'all' | 'team_only' | 'own_only';
+  isTeleoperateur?: boolean;
+  isConfirmateur?: boolean;
   createdAt: string;
   updatedAt?: string;
 }
@@ -50,6 +52,8 @@ export function useRoles(options: UseRolesOptions = { autoLoad: true }) {
         id: role.id,
         name: role.name || '',
         dataAccess: role.dataAccess || role.data_access || 'own_only',
+        isTeleoperateur: role.isTeleoperateur ?? role.is_teleoperateur ?? false,
+        isConfirmateur: role.isConfirmateur ?? role.is_confirmateur ?? false,
         createdAt: role.createdAt || role.created_at || '',
         updatedAt: role.updatedAt || role.updated_at,
       })).filter(role => role.id && role.name); // Filter roles without ID or name

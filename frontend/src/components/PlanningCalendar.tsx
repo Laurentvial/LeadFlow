@@ -18,7 +18,7 @@ import LoadingIndicator from './LoadingIndicator';
 export function PlanningCalendar() {
   const { currentUser } = useUser();
   const [events, setEvents] = useState<any[]>([]);
-  const [clients, setClients] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -46,13 +46,13 @@ export function PlanningCalendar() {
   async function loadData() {
     setLoading(true);
     try {
-      const [eventsData, clientsData] = await Promise.all([
+      const [eventsData, contactsData] = await Promise.all([
         apiCall('/api/events/'),
         apiCall('/api/contacts/')
       ]);
       
       setEvents(eventsData?.events || eventsData || []);
-      setClients(clientsData?.clients || clientsData || []);
+      setContacts(contactsData?.contacts || contactsData || []);
     } catch (error) {
       console.error('Error loading planning data:', error);
     } finally {
@@ -272,7 +272,7 @@ export function PlanningCalendar() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Aucun client</SelectItem>
-                      {clients.map((client) => (
+                      {contacts.map((client) => (
                         <SelectItem key={client.id} value={client.id}>
                           {client.fname} {client.lname}
                         </SelectItem>
@@ -385,7 +385,7 @@ export function PlanningCalendar() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Aucun client</SelectItem>
-                      {clients.map((client) => (
+                      {contacts.map((client) => (
                         <SelectItem key={client.id} value={client.id}>
                           {client.fname} {client.lname}
                         </SelectItem>

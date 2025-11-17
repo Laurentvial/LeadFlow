@@ -1,14 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Upload, X } from 'lucide-react';
+import { X, Plus } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { useUsers } from '../hooks/useUsers';
 import { toast } from 'sonner';
 import '../styles/Modal.css';
 import '../styles/Contacts.css';
+
+interface Source {
+  id: string;
+  name: string;
+}
 
 interface EditPersonalInfoModalProps {
   isOpen: boolean;
@@ -25,137 +31,137 @@ export function EditPersonalInfoModal({
   contactId,
   onUpdate
 }: EditPersonalInfoModalProps) {
+  const { users, loading: usersLoading } = useUsers();
+  const [statuses, setStatuses] = useState<any[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
+  const [newSourceName, setNewSourceName] = useState('');
+  
   const [editPersonalInfoForm, setEditPersonalInfoForm] = useState({
+    statusId: '',
     civility: '',
     firstName: '',
     lastName: '',
-    template: '',
-    support: '',
-    password: '',
-    phone: '',
-    mobile: '',
     email: '',
+    mobile: '',
+    phone: '',
     birthDate: '',
-    birthPlace: '',
+    nationality: '',
     address: '',
+    addressComplement: '',
     postalCode: '',
     city: '',
-    nationality: '',
-    successor: '',
-    profilePhoto: null as File | null,
-    profilePhotoPreview: '' as string | null,
-    removeProfilePhoto: false
+    sourceId: '',
+    campaign: '',
+    teleoperatorId: '',
+    confirmateurId: ''
   });
+
+  useEffect(() => {
+    if (isOpen) {
+      loadStatuses();
+      loadSources();
+    }
+  }, [isOpen]);
+
+  async function loadStatuses() {
+    try {
+      const data = await apiCall('/api/statuses/');
+      const loadedStatuses = data.statuses || [];
+      setStatuses(loadedStatuses);
+    } catch (error) {
+      console.error('Error loading statuses:', error);
+    }
+  }
+
+  async function loadSources() {
+    try {
+      const data = await apiCall('/api/sources/');
+      setSources(data.sources || []);
+    } catch (error) {
+      console.error('Error loading sources:', error);
+    }
+  }
+
+  async function handleCreateSource() {
+    if (!newSourceName.trim()) {
+      toast.error('Le nom de la source est requis');
+      return;
+    }
+
+    try {
+      const response = await apiCall('/api/sources/create/', {
+        method: 'POST',
+        body: JSON.stringify({ name: newSourceName.trim() }),
+      });
+      
+      toast.success('Source créée avec succès');
+      setNewSourceName('');
+      setIsSourceDialogOpen(false);
+      await loadSources();
+      setEditPersonalInfoForm({ ...editPersonalInfoForm, sourceId: response.id });
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la création de la source');
+    }
+  }
 
   // Initialize form when modal opens or contact changes
   React.useEffect(() => {
     if (isOpen && contact) {
       setEditPersonalInfoForm({
+        statusId: contact.statusId || '',
         civility: contact.civility || '',
         firstName: contact.firstName || '',
         lastName: contact.lastName || '',
-        template: contact.template || '',
-        support: contact.support || '',
-        password: contact.password || '',
-        phone: contact.phone || '',
-        mobile: contact.mobile || '',
         email: contact.email || '',
+        mobile: contact.mobile || '',
+        phone: contact.phone || '',
         birthDate: contact.birthDate || '',
-        birthPlace: contact.birthPlace || '',
+        nationality: contact.nationality || '',
         address: contact.address || '',
+        addressComplement: contact.addressComplement || '',
         postalCode: contact.postalCode || '',
         city: contact.city || '',
-        nationality: contact.nationality || '',
-        successor: contact.successor || '',
-        profilePhoto: null,
-        profilePhotoPreview: contact.profilePhoto || null,
-        removeProfilePhoto: false
+        sourceId: contact.sourceId || '',
+        campaign: contact.campaign || '',
+        teleoperatorId: contact.teleoperatorId || '',
+        confirmateurId: contact.confirmateurId || ''
       });
     }
   }, [isOpen, contact]);
-
-  function handlePhotoChangeEdit(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        toast.error('Veuillez sélectionner un fichier image');
-        return;
-      }
-      
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('La taille du fichier ne doit pas dépasser 5MB');
-        return;
-      }
-      
-      setEditPersonalInfoForm({
-        ...editPersonalInfoForm,
-        profilePhoto: file,
-        profilePhotoPreview: URL.createObjectURL(file),
-        removeProfilePhoto: false // Reset remove flag when new photo is selected
-      });
-    }
-  }
 
   async function handleUpdatePersonalInfo(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     
     try {
       const payload: any = {
+        statusId: editPersonalInfoForm.statusId || '',
         civility: editPersonalInfoForm.civility || '',
         firstName: editPersonalInfoForm.firstName || '',
         lastName: editPersonalInfoForm.lastName || '',
-        template: editPersonalInfoForm.template || '',
-        support: editPersonalInfoForm.support || '',
-        password: editPersonalInfoForm.password || '',
-        phone: editPersonalInfoForm.phone || '',
-        mobile: editPersonalInfoForm.mobile || '',
         email: editPersonalInfoForm.email || '',
+        mobile: editPersonalInfoForm.mobile || '',
+        phone: editPersonalInfoForm.phone || '',
         birthDate: editPersonalInfoForm.birthDate || '',
-        birthPlace: editPersonalInfoForm.birthPlace || '',
+        nationality: editPersonalInfoForm.nationality || '',
         address: editPersonalInfoForm.address || '',
+        addressComplement: editPersonalInfoForm.addressComplement || '',
         postalCode: editPersonalInfoForm.postalCode || '',
         city: editPersonalInfoForm.city || '',
-        nationality: editPersonalInfoForm.nationality || '',
-        successor: editPersonalInfoForm.successor || ''
+        sourceId: editPersonalInfoForm.sourceId || '',
+        campaign: editPersonalInfoForm.campaign || '',
+        teleoperatorId: editPersonalInfoForm.teleoperatorId || '',
+        confirmateurId: editPersonalInfoForm.confirmateurId || ''
       };
 
-      let response;
-      if (editPersonalInfoForm.profilePhoto) {
-        // Use FormData for file upload
-        const formDataToSend = new FormData();
-        Object.keys(payload).forEach(key => {
-          formDataToSend.append(key, payload[key]);
-        });
-        formDataToSend.append('profilePhoto', editPersonalInfoForm.profilePhoto);
-        
-        response = await apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          body: formDataToSend
-        });
-      } else if (editPersonalInfoForm.removeProfilePhoto) {
-        // Use FormData to send removeProfilePhoto flag
-        const formDataToSend = new FormData();
-        Object.keys(payload).forEach(key => {
-          formDataToSend.append(key, payload[key]);
-        });
-        formDataToSend.append('removeProfilePhoto', 'true');
-        
-        response = await apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          body: formDataToSend
-        });
-      } else {
-        // Use JSON for regular update
-        response = await apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-      }
+      // Use JSON for update
+      const response = await apiCall(`/api/contacts/${contactId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
 
       if (response?.contact) {
         onUpdate(response.contact);
@@ -186,230 +192,281 @@ export function EditPersonalInfoModal({
           </Button>
         </div>
         <form onSubmit={handleUpdatePersonalInfo} className="modal-form">
-          {/* Photo de profil */}
-          <div className="modal-form-field">
-            <Label>Photo de profil</Label>
-            <div className="flex items-center gap-4">
-              {(editPersonalInfoForm.profilePhotoPreview || (contact?.profilePhoto && !editPersonalInfoForm.removeProfilePhoto)) ? (
-                <div className="contact-profile-photo-container">
-                  <img 
-                    src={editPersonalInfoForm.profilePhotoPreview || contact?.profilePhoto} 
-                    alt="Preview" 
-                    className="contact-profile-photo-preview"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditPersonalInfoForm({
-                        ...editPersonalInfoForm,
-                        profilePhoto: null,
-                        profilePhotoPreview: null,
-                        removeProfilePhoto: true
-                      });
-                    }}
-                    className="contact-profile-photo-remove-btn"
-                  >
-                    ×
-                  </button>
-                </div>
-              ) : null}
-              <div>
-                <input
-                  type="file"
-                  id="editProfilePhoto"
-                  accept="image/*"
-                  onChange={handlePhotoChangeEdit}
-                  className="hidden"
-                />
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => document.getElementById('editProfilePhoto')?.click()}
+          {/* 1. Informations générales */}
+          <div style={{ marginTop: '1.5rem', marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '1rem' }}>1. Informations générales</h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+              <div className="modal-form-field">
+                <Label htmlFor="editStatusId">Statut *</Label>
+                <Select
+                  value={editPersonalInfoForm.statusId}
+                  onValueChange={(value) => {
+                    if (value !== 'no-status-disabled') {
+                      setEditPersonalInfoForm({ ...editPersonalInfoForm, statusId: value });
+                    }
+                  }}
+                  required
                 >
-                  <Upload className="w-4 h-4 mr-2" />
-                  {editPersonalInfoForm.profilePhoto ? 'Changer la photo' : 'Télécharger une photo'}
-                </Button>
+                  <SelectTrigger id="editStatusId">
+                    <SelectValue placeholder="Sélectionner un statut" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.length === 0 ? (
+                      <SelectItem value="no-status-disabled" disabled>
+                        Aucun statut disponible
+                      </SelectItem>
+                    ) : (
+                      statuses
+                        .filter((status) => status.id && status.id.trim() !== '')
+                        .map((status) => (
+                          <SelectItem key={status.id} value={status.id}>
+                            {status.name}
+                          </SelectItem>
+                        ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editCivility">Civilité</Label>
+                <Select
+                  value={editPersonalInfoForm.civility || 'none'}
+                  onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, civility: value === 'none' ? '' : value })}
+                >
+                  <SelectTrigger id="editCivility">
+                    <SelectValue placeholder="Sélectionner" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucune</SelectItem>
+                    <SelectItem value="Monsieur">Monsieur</SelectItem>
+                    <SelectItem value="Madame">Madame</SelectItem>
+                    <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editFirstName">Prénom *</Label>
+                <Input
+                  id="editFirstName"
+                  value={editPersonalInfoForm.firstName}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, firstName: e.target.value })}
+                  placeholder="Prénom"
+                  required
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editLastName">Nom *</Label>
+                <Input
+                  id="editLastName"
+                  value={editPersonalInfoForm.lastName}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, lastName: e.target.value })}
+                  placeholder="Nom"
+                  required
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editEmail">Email</Label>
+                <Input
+                  id="editEmail"
+                  type="email"
+                  value={editPersonalInfoForm.email}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, email: e.target.value })}
+                  placeholder="Email"
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editMobile">Portable *</Label>
+                <Input
+                  id="editMobile"
+                  value={editPersonalInfoForm.mobile}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, mobile: e.target.value })}
+                  placeholder="Portable"
+                  required
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editPhone">Téléphone</Label>
+                <Input
+                  id="editPhone"
+                  value={editPersonalInfoForm.phone}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, phone: e.target.value })}
+                  placeholder="Téléphone"
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editBirthDate">Date de naissance</Label>
+                <DateInput
+                  id="editBirthDate"
+                  value={editPersonalInfoForm.birthDate}
+                  onChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, birthDate: value })}
+                />
+              </div>
+
+              <div className="modal-form-field">
+                <Label htmlFor="editNationality">Nationalité</Label>
+                <Input
+                  id="editNationality"
+                  value={editPersonalInfoForm.nationality}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, nationality: e.target.value })}
+                  placeholder="Nationalité"
+                />
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editCivility">Civilité</Label>
-              <Select
-                value={editPersonalInfoForm.civility}
-                onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, civility: value })}
-              >
-                <SelectTrigger id="editCivility">
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Monsieur">Monsieur</SelectItem>
-                  <SelectItem value="Madame">Madame</SelectItem>
-                  <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* 2. Adresse */}
+          <div style={{ marginTop: '1.5rem', marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '1rem' }}>2. Adresse</h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+              <div className="modal-form-field">
+                <Label htmlFor="editAddress">Adresse</Label>
+                <Input
+                  id="editAddress"
+                  value={editPersonalInfoForm.address}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, address: e.target.value })}
+                  placeholder="Adresse"
+                />
+              </div>
 
-            <div className="modal-form-field">
-              <Label htmlFor="editFirstName">Prénom</Label>
-              <Input
-                id="editFirstName"
-                value={editPersonalInfoForm.firstName}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, firstName: e.target.value })}
-                placeholder="Prénom du contact"
-              />
-            </div>
+              <div className="modal-form-field">
+                <Label htmlFor="editAddressComplement">Complément d'adresse</Label>
+                <Input
+                  id="editAddressComplement"
+                  value={editPersonalInfoForm.addressComplement}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, addressComplement: e.target.value })}
+                  placeholder="Complément d'adresse"
+                />
+              </div>
 
-            <div className="modal-form-field">
-              <Label htmlFor="editLastName">Nom</Label>
-              <Input
-                id="editLastName"
-                value={editPersonalInfoForm.lastName}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, lastName: e.target.value })}
-                placeholder="Nom du contact"
-              />
-            </div>
-          </div>
+              <div className="modal-form-field">
+                <Label htmlFor="editPostalCode">Code postal</Label>
+                <Input
+                  id="editPostalCode"
+                  value={editPersonalInfoForm.postalCode}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, postalCode: e.target.value })}
+                  placeholder="Code postal"
+                />
+              </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editTemplate">Template</Label>
-              <Input
-                id="editTemplate"
-                value={editPersonalInfoForm.template}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, template: e.target.value })}
-                placeholder="Template"
-              />
-            </div>
-
-            <div className="modal-form-field">
-              <Label htmlFor="editSupport">Support</Label>
-              <Input
-                id="editSupport"
-                value={editPersonalInfoForm.support}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, support: e.target.value })}
-                placeholder="Support"
-              />
+              <div className="modal-form-field">
+                <Label htmlFor="editCity">Ville</Label>
+                <Input
+                  id="editCity"
+                  value={editPersonalInfoForm.city}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, city: e.target.value })}
+                  placeholder="Ville"
+                />
+              </div>
             </div>
           </div>
 
-          <div className="modal-form-field">
-            <Label htmlFor="editPassword">Mot de passe</Label>
-            <Input
-              id="editPassword"
-              value={editPersonalInfoForm.password}
-              onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, password: e.target.value })}
-              placeholder="Mot de passe"
-            />
-          </div>
+          {/* 3. Gestion */}
+          <div style={{ marginTop: '1.5rem', marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '1rem' }}>3. Gestion</h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+              <div className="modal-form-field">
+                <Label htmlFor="editSourceId">Source</Label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <Select
+                    value={editPersonalInfoForm.sourceId || 'none'}
+                    onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, sourceId: value === 'none' ? '' : value })}
+                  >
+                    <SelectTrigger id="editSourceId" style={{ flex: 1 }}>
+                      <SelectValue placeholder="Sélectionner une source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucune</SelectItem>
+                      {sources
+                        .filter((source) => source.id && source.id.trim() !== '')
+                        .map((source) => (
+                          <SelectItem key={source.id} value={source.id}>
+                            {source.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsSourceDialogOpen(true)}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editPhone">Téléphone</Label>
-              <Input
-                id="editPhone"
-                value={editPersonalInfoForm.phone}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, phone: e.target.value })}
-                placeholder="Téléphone"
-              />
-            </div>
+              <div className="modal-form-field">
+                <Label htmlFor="editCampaign">Campagne</Label>
+                <Input
+                  id="editCampaign"
+                  value={editPersonalInfoForm.campaign}
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, campaign: e.target.value })}
+                  placeholder="Nom de la campagne"
+                />
+              </div>
 
-            <div className="modal-form-field">
-              <Label htmlFor="editMobile">Portable</Label>
-              <Input
-                id="editMobile"
-                value={editPersonalInfoForm.mobile}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, mobile: e.target.value })}
-                placeholder="Portable"
-              />
-            </div>
-          </div>
+              <div className="modal-form-field">
+                <Label htmlFor="editTeleoperatorId">Téléopérateur</Label>
+                <Select
+                  value={editPersonalInfoForm.teleoperatorId || 'none'}
+                  onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: value === 'none' ? '' : value })}
+                >
+                  <SelectTrigger id="editTeleoperatorId">
+                    <SelectValue placeholder="Sélectionner un téléopérateur" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun</SelectItem>
+                    {usersLoading ? (
+                      <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                    ) : (
+                      users
+                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                        .map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.firstName} {user.lastName}
+                          </SelectItem>
+                        ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <div className="modal-form-field">
-            <Label htmlFor="editEmail">E-mail</Label>
-            <Input
-              id="editEmail"
-              type="email"
-              value={editPersonalInfoForm.email}
-              onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, email: e.target.value })}
-              placeholder="E-mail"
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editBirthDate">Date de naissance</Label>
-              <DateInput
-                id="editBirthDate"
-                value={editPersonalInfoForm.birthDate}
-                onChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, birthDate: value })}
-              />
-            </div>
-
-            <div className="modal-form-field">
-              <Label htmlFor="editBirthPlace">Lieu de naissance</Label>
-              <Input
-                id="editBirthPlace"
-                value={editPersonalInfoForm.birthPlace}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, birthPlace: e.target.value })}
-                placeholder="Lieu de naissance"
-              />
-            </div>
-          </div>
-
-          <div className="modal-form-field">
-            <Label htmlFor="editAddress">Adresse</Label>
-            <Input
-              id="editAddress"
-              value={editPersonalInfoForm.address}
-              onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, address: e.target.value })}
-              placeholder="Adresse"
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editPostalCode">Code postal</Label>
-              <Input
-                id="editPostalCode"
-                value={editPersonalInfoForm.postalCode}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, postalCode: e.target.value })}
-                placeholder="Code postal"
-              />
-            </div>
-
-            <div className="modal-form-field">
-              <Label htmlFor="editCity">Ville</Label>
-              <Input
-                id="editCity"
-                value={editPersonalInfoForm.city}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, city: e.target.value })}
-                placeholder="Ville"
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <div className="modal-form-field">
-              <Label htmlFor="editNationality">Nationalité</Label>
-              <Input
-                id="editNationality"
-                value={editPersonalInfoForm.nationality}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, nationality: e.target.value })}
-                placeholder="Nationalité"
-              />
-            </div>
-
-            <div className="modal-form-field">
-              <Label htmlFor="editSuccessor">Successeur</Label>
-              <Input
-                id="editSuccessor"
-                value={editPersonalInfoForm.successor}
-                onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, successor: e.target.value })}
-                placeholder="Successeur"
-              />
+              <div className="modal-form-field">
+                <Label htmlFor="editConfirmateurId">Confirmateur</Label>
+                <Select
+                  value={editPersonalInfoForm.confirmateurId || 'none'}
+                  onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, confirmateurId: value === 'none' ? '' : value })}
+                >
+                  <SelectTrigger id="editConfirmateurId">
+                    <SelectValue placeholder="Sélectionner un confirmateur" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun</SelectItem>
+                    {usersLoading ? (
+                      <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                    ) : (
+                      users
+                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
+                        .map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.firstName} {user.lastName}
+                          </SelectItem>
+                        ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
@@ -422,6 +479,51 @@ export function EditPersonalInfoModal({
             </Button>
           </div>
         </form>
+
+        {/* Source Add Dialog */}
+        {isSourceDialogOpen && (
+          <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setIsSourceDialogOpen(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+              <div className="modal-header">
+                <h2 className="modal-title">Ajouter une source</h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="modal-close"
+                  onClick={() => setIsSourceDialogOpen(false)}
+                >
+                  <X className="planning-icon-md" />
+                </Button>
+              </div>
+              <div className="modal-form">
+                <div className="modal-form-field">
+                  <Label htmlFor="newSourceName">Nom de la source</Label>
+                  <Input
+                    id="newSourceName"
+                    value={newSourceName}
+                    onChange={(e) => setNewSourceName(e.target.value)}
+                    placeholder="Nom de la source"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCreateSource();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="modal-form-actions">
+                  <Button type="button" variant="outline" onClick={() => setIsSourceDialogOpen(false)}>
+                    Annuler
+                  </Button>
+                  <Button type="button" onClick={handleCreateSource}>
+                    Créer
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

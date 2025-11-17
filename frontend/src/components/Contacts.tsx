@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Plus, Search, Eye, Calendar, FileText, LogIn, Trash2, MoreVertical, Users, UserCheck, X } from 'lucide-react';
+import { Plus, Search, Eye, Calendar, FileText, Trash2, MoreVertical, Users, UserCheck, X } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,8 +14,10 @@ import {
 import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
+import { toast } from 'sonner';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
+import '../styles/Modal.css';
 
 interface ContactsProps {
   onSelectContact: (contactId: string) => void;
@@ -26,13 +28,24 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const [contacts, setContacts] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
+  const [statuses, setStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('all');
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
-  const [bulkTeamId, setBulkTeamId] = useState('');
-  const [bulkManagerId, setBulkManagerId] = useState('');
+  const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
+  const [bulkConfirmateurId, setBulkConfirmateurId] = useState('');
+  const [lastOpenedContactId, setLastOpenedContactId] = useState<string | null>(null);
+  
+  // Modals state
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isTeleoperatorModalOpen, setIsTeleoperatorModalOpen] = useState(false);
+  const [isConfirmateurModalOpen, setIsConfirmateurModalOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
+  const [selectedStatusId, setSelectedStatusId] = useState('');
+  const [selectedTeleoperatorId, setSelectedTeleoperatorId] = useState('');
+  const [selectedConfirmateurId, setSelectedConfirmateurId] = useState('');
 
   useEffect(() => {
     if (usersError) {
@@ -47,6 +60,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   useEffect(() => {
     loadData();
+    loadStatuses();
   }, []);
 
   async function loadData() {
@@ -63,14 +77,15 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     }
   }
 
-  async function handleToggleActive(contactId: string) {
+  async function loadStatuses() {
     try {
-      await apiCall(`/api/contacts/${contactId}/toggle-active/`, { method: 'POST' });
-      loadData();
+      const data = await apiCall('/api/statuses/');
+      setStatuses(data.statuses || []);
     } catch (error) {
-      console.error('Error toggling contact status:', error);
+      console.error('Error loading statuses:', error);
     }
   }
+
 
   const filteredContacts = contacts.filter(contact => {
     const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.toLowerCase();
@@ -78,7 +93,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       fullName.includes(searchTerm.toLowerCase()) ||
       contact.email?.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesTeam = selectedTeam === 'all' || contact.teamId === selectedTeam;
+    const matchesTeam = selectedTeam === 'all'; // Team field removed from Contact model
     
     return matchesSearch && matchesTeam;
   });
@@ -110,68 +125,60 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   function handleClearSelection() {
     setSelectedContacts(new Set());
     setShowBulkActions(false);
+    setBulkTeleoperatorId('');
+    setBulkConfirmateurId('');
   }
 
   const allSelected = displayedContacts.length > 0 && selectedContacts.size === displayedContacts.length;
   const someSelected = selectedContacts.size > 0 && selectedContacts.size < displayedContacts.length;
 
   // Actions multiples
-  async function handleBulkChangeTeam(teamId: string) {
-    if (!teamId) return;
+  async function handleBulkAssignTeleoperator(teleoperatorId: string) {
+    if (!teleoperatorId) return;
     
     try {
-      const promises = Array.from(selectedContacts).map(contactId =>
-        apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          body: JSON.stringify({ teamId: teamId === 'none' ? null : teamId })
-        })
-      );
-      await Promise.all(promises);
-      loadData();
-      handleClearSelection();
-      setBulkTeamId('');
-    } catch (error) {
-      alert('Erreur lors du changement d\'équipe');
-    }
-  }
-
-  async function handleBulkAssignManager(managerId: string) {
-    if (!managerId) return;
-    
-    try {
-      const managerIdValue = managerId !== 'none' ? managerId : '';
+      const teleoperatorIdValue = teleoperatorId !== 'none' ? teleoperatorId : '';
       
       const promises = Array.from(selectedContacts).map(contactId =>
         apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
-          body: JSON.stringify({ managed_by: managerIdValue })
+          body: JSON.stringify({ teleoperatorId: teleoperatorIdValue })
         })
       );
       await Promise.all(promises);
+      toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
       loadData();
       handleClearSelection();
-      setBulkManagerId('');
+      setBulkTeleoperatorId('');
     } catch (error) {
-      console.error('Error assigning manager:', error);
-      alert('Erreur lors de l\'attribution du gestionnaire');
+      console.error('Error assigning teleoperator:', error);
+      toast.error('Erreur lors de l\'attribution du téléopérateur');
     }
   }
 
-  async function handleBulkToggleActive() {
-    if (!confirm(`Êtes-vous sûr de vouloir ${displayedContacts.filter(c => selectedContacts.has(c.id)).some(c => c.active) ? 'désactiver' : 'activer'} ${selectedContacts.size} contact(s) ?`)) return;
+  async function handleBulkAssignConfirmateur(confirmateurId: string) {
+    if (!confirmateurId) return;
     
     try {
+      const confirmateurIdValue = confirmateurId !== 'none' ? confirmateurId : '';
+      
       const promises = Array.from(selectedContacts).map(contactId =>
-        apiCall(`/api/contacts/${contactId}/toggle-active/`, { method: 'POST' })
+        apiCall(`/api/contacts/${contactId}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ confirmateurId: confirmateurIdValue })
+        })
       );
       await Promise.all(promises);
+      toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
       loadData();
       handleClearSelection();
+      setBulkConfirmateurId('');
     } catch (error) {
-      console.error('Error toggling active status:', error);
-      alert('Erreur lors de la modification du statut');
+      console.error('Error assigning confirmateur:', error);
+      toast.error('Erreur lors de l\'attribution du confirmateur');
     }
   }
+
 
   async function handleBulkDelete() {
     if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedContacts.size} contact(s) ? Cette action est irréversible.`)) return;
@@ -199,10 +206,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     console.log('Ajouter note pour contact:', contactId);
   }
 
-  function handlePlatformAccess(contactId: string) {
-    // TODO: Implémenter la fonctionnalité de connexion à la plateforme
-    console.log('Connexion plateforme pour contact:', contactId);
-  }
 
   async function handleDeleteContact(contactId: string) {
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce contact ?')) return;
@@ -216,6 +219,85 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       console.error('Error deleting contact:', error);
     }
   }
+
+  // Modal handlers
+  function handleOpenStatusModal(contact: any) {
+    setSelectedContact(contact);
+    setSelectedStatusId(contact.statusId || '');
+    setIsStatusModalOpen(true);
+  }
+
+  function handleOpenTeleoperatorModal(contact: any) {
+    setSelectedContact(contact);
+    // Prefill with current teleoperator ID if exists
+    const teleoperatorId = contact.teleoperatorId || contact.managerId || '';
+    setSelectedTeleoperatorId(teleoperatorId);
+    setIsTeleoperatorModalOpen(true);
+  }
+
+  function handleOpenConfirmateurModal(contact: any) {
+    setSelectedContact(contact);
+    setSelectedConfirmateurId(contact.confirmateurId || '');
+    setIsConfirmateurModalOpen(true);
+  }
+
+  async function handleUpdateStatus() {
+    if (!selectedContact) return;
+    
+    try {
+      await apiCall(`/api/contacts/${selectedContact.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statusId: selectedStatusId || '' })
+      });
+      toast.success('Statut mis à jour avec succès');
+      setIsStatusModalOpen(false);
+      setSelectedContact(null);
+      loadData();
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la mise à jour du statut');
+    }
+  }
+
+  async function handleUpdateTeleoperator() {
+    if (!selectedContact) return;
+    
+    try {
+      await apiCall(`/api/contacts/${selectedContact.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teleoperatorId: selectedTeleoperatorId || '' })
+      });
+      toast.success('Téléopérateur mis à jour avec succès');
+      setIsTeleoperatorModalOpen(false);
+      setSelectedContact(null);
+      loadData();
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la mise à jour du téléopérateur');
+    }
+  }
+
+  async function handleUpdateConfirmateur() {
+    if (!selectedContact) return;
+    
+    try {
+      await apiCall(`/api/contacts/${selectedContact.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmateurId: selectedConfirmateurId || '' })
+      });
+      toast.success('Confirmateur mis à jour avec succès');
+      setIsConfirmateurModalOpen(false);
+      setSelectedContact(null);
+      loadData();
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la mise à jour du confirmateur');
+    }
+  }
+
+  // Filter users for teleoperator and confirmateur
+  const teleoperateurs = users.filter(user => user.isTeleoperateur === true);
+  const confirmateurs = users.filter(user => user.isConfirmateur === true);
 
   return (
     <div className="contacts-container">
@@ -297,40 +379,22 @@ export function Contacts({ onSelectContact }: ContactsProps) {
               </div>
               <div className="contacts-bulk-actions-buttons">
                 <div className="contacts-bulk-action-select">
-                  <Label className="sr-only">Changer d'équipe</Label>
-                  <Select value={bulkTeamId} onValueChange={handleBulkChangeTeam}>
-                    <SelectTrigger className="w-[180px]">
-                      <Users className="w-4 h-4 mr-2" />
-                      <SelectValue placeholder="Changer d'équipe" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucune équipe</SelectItem>
-                      {teams.map((team) => (
-                        <SelectItem key={team.id} value={team.id}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="contacts-bulk-action-select">
-                  <Label className="sr-only">Attribuer un gestionnaire</Label>
-                  <Select value={bulkManagerId} onValueChange={handleBulkAssignManager}>
+                  <Label className="sr-only">Attribuer un téléopérateur</Label>
+                  <Select value={bulkTeleoperatorId} onValueChange={handleBulkAssignTeleoperator}>
                     <SelectTrigger className="w-[200px]">
                       <UserCheck className="w-4 h-4 mr-2" />
-                      <SelectValue placeholder="Attribuer un gestionnaire" />
+                      <SelectValue placeholder="Attribuer un téléopérateur" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Aucun gestionnaire</SelectItem>
+                      <SelectItem value="none">Aucun téléopérateur</SelectItem>
                       {usersLoading ? (
                         <SelectItem value="loading" disabled>Chargement...</SelectItem>
                       ) : usersError ? (
                         <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
-                      ) : users.length === 0 ? (
-                        <SelectItem value="empty" disabled>Aucun utilisateur disponible</SelectItem>
+                      ) : teleoperateurs.length === 0 ? (
+                        <SelectItem value="empty" disabled>Aucun téléopérateur disponible</SelectItem>
                       ) : (
-                        users.map((user) => {
+                        teleoperateurs.map((user) => {
                           const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                           return (
                             <SelectItem key={user.id} value={user.id}>
@@ -343,9 +407,34 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   </Select>
                 </div>
 
-                <Button variant="outline" size="sm" onClick={handleBulkToggleActive}>
-                  Activer/Désactiver
-                </Button>
+                <div className="contacts-bulk-action-select">
+                  <Label className="sr-only">Attribuer un confirmateur</Label>
+                  <Select value={bulkConfirmateurId} onValueChange={handleBulkAssignConfirmateur}>
+                    <SelectTrigger className="w-[200px]">
+                      <UserCheck className="w-4 h-4 mr-2" />
+                      <SelectValue placeholder="Attribuer un confirmateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun confirmateur</SelectItem>
+                      {usersLoading ? (
+                        <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                      ) : usersError ? (
+                        <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
+                      ) : confirmateurs.length === 0 ? (
+                        <SelectItem value="empty" disabled>Aucun confirmateur disponible</SelectItem>
+                      ) : (
+                        confirmateurs.map((user) => {
+                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                          return (
+                            <SelectItem key={user.id} value={user.id}>
+                              {displayName}
+                            </SelectItem>
+                          );
+                        })
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
                   <Trash2 className="w-4 h-4 mr-2" />
@@ -384,19 +473,22 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                     <th>Téléphone</th>
                     <th>E-Mail</th>
                     <th>Créé le</th>
-                    <th>Support</th>
-                    <th>Gestionnaire</th>
+                    <th>Téléopérateur</th>
                     <th>Source</th>
-                    <th>Capital</th>
                     <th>Statut</th>
-                    <th>Équipe</th>
-                    <th>Actif</th>
+                    <th>Confirmateur</th>
                     <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayedContacts.map((contact) => (
-                    <tr key={contact.id}>
+                    <tr 
+                      key={contact.id}
+                      style={{
+                        backgroundColor: lastOpenedContactId === contact.id ? '#eff6ff' : 'transparent',
+                        borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none'
+                      }}
+                    >
                       <td>
                         <input
                           type="checkbox"
@@ -409,12 +501,32 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                         {contact.id.substring(0, 8)}
                       </td>
                       <td>
-                        <button
-                          onClick={() => navigate(`/contacts/${contact.id}`)}
-                          className="contacts-name-link"
-                        >
-                          {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <button
+                            onClick={() => {
+                              setLastOpenedContactId(contact.id);
+                              window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                            }}
+                            className="contacts-name-link"
+                          >
+                            {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                          </button>
+                          {lastOpenedContactId === contact.id && (
+                            <span 
+                              style={{
+                                fontSize: '0.75rem',
+                                color: '#3b82f6',
+                                fontWeight: '600',
+                                backgroundColor: '#dbeafe',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              Dernier ouvert
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td>{contact.phone || contact.mobile || '-'}</td>
                       <td className="contacts-table-email">{contact.email || '-'}</td>
@@ -427,38 +539,46 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                           : '-'
                         }
                       </td>
-                      <td>{contact.support || '-'}</td>
-                      <td>{contact.managerName || contact.manager || '-'}</td>
+                      <td>
+                        <button
+                          onClick={() => handleOpenTeleoperatorModal(contact)}
+                          className="contacts-clickable-cell"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                        >
+                          {contact.managerName || contact.teleoperatorName || '-'}
+                        </button>
+                      </td>
                       <td>{contact.source || '-'}</td>
                       <td>
-                        {contact.capital 
-                          ? new Intl.NumberFormat('fr-FR', {
-                              style: 'currency',
-                              currency: 'EUR'
-                            }).format(contact.capital)
-                          : '0,00 €'
-                        }
-                      </td>
-                      <td>
-                        <span className={contact.active ? 'contacts-status-active' : 'contacts-status-inactive'}>
-                          {contact.active ? 'Actif' : 'Inactif'}
-                        </span>
-                      </td>
-                      <td>
-                        {(() => {
-                          const team = teams.find(t => t.id === contact.teamId);
-                          return team ? team.name : '-';
-                        })()}
-                      </td>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleToggleActive(contact.id)}
-                          className={contact.active ? 'contacts-status-active' : 'contacts-status-inactive'}
+                        <button
+                          onClick={() => handleOpenStatusModal(contact)}
+                          className="contacts-clickable-cell"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                         >
-                          {contact.active ? 'Désactiver' : 'Activer'}
-                        </Button>
+                          <span 
+                            className="contacts-status-badge"
+                            style={{
+                              backgroundColor: contact.statusColor || '#e5e7eb',
+                              color: contact.statusColor ? '#000000' : '#374151',
+                              padding: '4px 12px',
+                              borderRadius: '5px',
+                              fontSize: '0.875rem',
+                              fontWeight: '500',
+                              display: 'inline-block'
+                            }}
+                          >
+                            {contact.statusName || '-'}
+                          </span>
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          onClick={() => handleOpenConfirmateurModal(contact)}
+                          className="contacts-clickable-cell"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                        >
+                          {contact.confirmateurName || '-'}
+                        </button>
                       </td>
                       <td>
                         <div className="contacts-actions">
@@ -476,10 +596,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                               <DropdownMenuItem onClick={() => handleAddNote(contact.id)}>
                                 <FileText className="w-4 h-4 mr-2" />
                                 Ajouter une note
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handlePlatformAccess(contact.id)}>
-                                <LogIn className="w-4 h-4 mr-2" />
-                                Connexion à la plateforme contact
                               </DropdownMenuItem>
                               <DropdownMenuItem 
                                 onClick={() => handleDeleteContact(contact.id)}
@@ -502,6 +618,165 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Status Modal */}
+      {isStatusModalOpen && selectedContact && (
+        <div className="modal-overlay" onClick={() => setIsStatusModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Modifier le statut</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => setIsStatusModalOpen(false)}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <div className="modal-form">
+              <div className="modal-form-field">
+                <Label htmlFor="statusSelect">Statut</Label>
+                <Select
+                  value={selectedStatusId ? selectedStatusId.toString() : undefined}
+                  onValueChange={(value) => setSelectedStatusId(value === 'none' ? '' : value)}
+                >
+                  <SelectTrigger id="statusSelect">
+                    <SelectValue placeholder="Sélectionner un statut" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun statut</SelectItem>
+                    {statuses
+                      .filter((status) => status.id && status.id.trim() !== '')
+                      .map((status) => (
+                        <SelectItem key={status.id} value={status.id.toString()}>
+                          {status.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-actions">
+                <Button type="button" variant="outline" onClick={() => setIsStatusModalOpen(false)}>
+                  Annuler
+                </Button>
+                <Button type="button" onClick={handleUpdateStatus}>
+                  Enregistrer
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Teleoperator Modal */}
+      {isTeleoperatorModalOpen && selectedContact && (
+        <div className="modal-overlay" onClick={() => setIsTeleoperatorModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Modifier le téléopérateur</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => setIsTeleoperatorModalOpen(false)}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <div className="modal-form">
+              <div className="modal-form-field">
+                <Label htmlFor="teleoperatorSelect">Téléopérateur</Label>
+                <Select
+                  value={selectedTeleoperatorId ? selectedTeleoperatorId.toString() : undefined}
+                  onValueChange={(value) => setSelectedTeleoperatorId(value === 'none' ? '' : value)}
+                >
+                  <SelectTrigger id="teleoperatorSelect">
+                    <SelectValue placeholder="Sélectionner un téléopérateur" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                    {teleoperateurs
+                      .filter((user) => user.id && user.id.trim() !== '')
+                      .map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-actions">
+                <Button type="button" variant="outline" onClick={() => setIsTeleoperatorModalOpen(false)}>
+                  Annuler
+                </Button>
+                <Button type="button" onClick={handleUpdateTeleoperator}>
+                  Enregistrer
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmateur Modal */}
+      {isConfirmateurModalOpen && selectedContact && (
+        <div className="modal-overlay" onClick={() => setIsConfirmateurModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Modifier le confirmateur</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => setIsConfirmateurModalOpen(false)}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <div className="modal-form">
+              <div className="modal-form-field">
+                <Label htmlFor="confirmateurSelect">Confirmateur</Label>
+                <Select
+                  value={selectedConfirmateurId ? selectedConfirmateurId.toString() : undefined}
+                  onValueChange={(value) => setSelectedConfirmateurId(value === 'none' ? '' : value)}
+                >
+                  <SelectTrigger id="confirmateurSelect">
+                    <SelectValue placeholder="Sélectionner un confirmateur" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun confirmateur</SelectItem>
+                    {confirmateurs
+                      .filter((user) => user.id && user.id.trim() !== '')
+                      .map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-actions">
+                <Button type="button" variant="outline" onClick={() => setIsConfirmateurModalOpen(false)}>
+                  Annuler
+                </Button>
+                <Button type="button" onClick={handleUpdateConfirmateur}>
+                  Enregistrer
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

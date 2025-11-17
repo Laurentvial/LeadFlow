@@ -10,6 +10,9 @@ export interface User {
   roleName?: string; // Role name for display
   teamId: string | null;
   active: boolean;
+  isTeleoperateur?: boolean;
+  isConfirmateur?: boolean;
+  dataAccess?: 'all' | 'team_only' | 'own_only'; // Data access level from role
 }
 
 // Team types

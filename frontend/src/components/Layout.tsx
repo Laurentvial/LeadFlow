@@ -12,6 +12,9 @@ export function Layout({ children }: LayoutProps) {
   const { currentUser, loading } = useUser();
   const location = useLocation();
 
+  // Check if current route is a contact detail page
+  const isContactDetailPage = /^\/contacts\/[^/]+$/.test(location.pathname);
+
   // Map route paths to sidebar page IDs
   const getCurrentPage = () => {
     const path = location.pathname;
@@ -38,6 +41,15 @@ export function Layout({ children }: LayoutProps) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
         <div>Chargement...</div>
+      </div>
+    );
+  }
+
+  // For contact detail pages, render without Header and Sidebar
+  if (isContactDetailPage) {
+    return (
+      <div style={{ display: 'block', minHeight: '100vh' }}>
+        {children}
       </div>
     );
   }

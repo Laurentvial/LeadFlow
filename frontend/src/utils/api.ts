@@ -68,13 +68,23 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
   });
 
   // If 401, try to refresh token and retry once
-  if (response.status === 401 && token) {
+  if (response.status === 401) {
+    if (!token) {
+      // No token available, user needs to log in
+      const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
+      const errorMessage = error.detail || error.error || error.message || 'Authentication required. Please log in.';
+      const errorObj = new Error(errorMessage);
+      (errorObj as any).response = error;
+      (errorObj as any).status = 401;
+      throw errorObj;
+    }
+    
     const newToken = await refreshAccessToken();
     if (newToken) {
       // Retry the request with the new token
       const retryHeaders: HeadersInit = {
-        'Authorization': `Bearer ${newToken}`,
         ...options.headers,
+        'Authorization': `Bearer ${newToken}`,
       };
       if (!isFormData) {
         retryHeaders['Content-Type'] = 'application/json';
@@ -82,7 +92,30 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
       response = await fetch(`${apiUrl}${endpoint}`, {
         ...options,
         headers: retryHeaders,
+        body: options.body, // Ensure body is preserved
       });
+      
+      // If retry still fails with 401, throw error
+      if (response.status === 401) {
+        localStorage.removeItem(ACCESS_TOKEN);
+        localStorage.removeItem(REFRESH_TOKEN);
+        const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
+        const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
+        const errorObj = new Error(errorMessage);
+        (errorObj as any).response = error;
+        (errorObj as any).status = 401;
+        throw errorObj;
+      }
+    } else {
+      // Token refresh failed, clear tokens and throw authentication error
+      localStorage.removeItem(ACCESS_TOKEN);
+      localStorage.removeItem(REFRESH_TOKEN);
+      const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
+      const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
+      const errorObj = new Error(errorMessage);
+      (errorObj as any).response = error;
+      (errorObj as any).status = 401;
+      throw errorObj;
     }
   }
 

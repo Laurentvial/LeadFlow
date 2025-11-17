@@ -53,7 +53,11 @@ export function LoginPage() {
       <Card className="login-card">
         <CardHeader className="login-card-header">
 
-          <CardTitle>LeadFlow</CardTitle>
+          <CardTitle>
+            <div className="login-logo-container">
+              <img src="../static/images/logo-w.png" alt="Logo" className="" style={{ maxHeight: 100, maxWidth: 140 }} />
+            </div>
+          </CardTitle>
           <CardDescription>
             Connectez-vous à votre compte
           </CardDescription>

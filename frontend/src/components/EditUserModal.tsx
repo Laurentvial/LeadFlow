@@ -28,7 +28,7 @@ interface EditUserModalProps {
 
 export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUserModalProps) {
   const { teams = [] as Team[], loading: teamsLoading } = useTeams();
-  const { roles = [], loading: rolesLoading } = useRoles();
+  const { roles = [], loading: rolesLoading, refetch: refetchRoles } = useRoles();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
@@ -52,6 +52,14 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
       });
     }
   }, [user, isOpen]);
+  
+  // Ensure roles are loaded from the roles table when modal opens
+  useEffect(() => {
+    if (isOpen && refetchRoles) {
+      // Force refresh roles when modal opens to ensure we have the latest roles from the table
+      refetchRoles();
+    }
+  }, [isOpen, refetchRoles]);
 
   if (!isOpen || !user) return null;
 
@@ -162,24 +170,29 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           <div className="modal-form-field">
             <Label htmlFor="edit-role">Rôle</Label>
             <Select
-              value={formData.role}
+              value={formData.role || undefined}
               onValueChange={(value) =>
                 setFormData({ ...formData, role: value })
               }
+              disabled={rolesLoading}
             >
               <SelectTrigger>
                 <SelectValue placeholder={rolesLoading ? "Chargement..." : "Sélectionner un rôle"} />
               </SelectTrigger>
               <SelectContent>
-                {roles.length > 0 ? (
+                {rolesLoading ? (
+                  <div className="px-2 py-1.5 text-sm text-slate-500">
+                    Chargement...
+                  </div>
+                ) : roles.length > 0 ? (
                   roles.map((role) => (
-                    <SelectItem key={role.id} value={role.id}>
+                    <SelectItem key={role.id} value={String(role.id)}>
                       {role.name}
                     </SelectItem>
                   ))
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-slate-500">
-                    {rolesLoading ? "Chargement..." : "Aucun rôle disponible"}
+                    Aucun rôle disponible
                   </div>
                 )}
               </SelectContent>

@@ -2,6 +2,16 @@ from django.db import models
 from django.contrib.auth.models import User as DjangoUser
 
 # Create your models here.
+class Source(models.Model):
+    """Sources for contacts"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    name = models.CharField(max_length=100, unique=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return self.name
+
 class Contact(models.Model):
     # Identifiant
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
@@ -12,19 +22,22 @@ class Contact(models.Model):
     lname = models.CharField(max_length=50, default="")
     phone = models.CharField(max_length=20, default="", blank=True)
     mobile = models.CharField(max_length=20, default="", blank=True)
-    email = models.EmailField(max_length=100, default="", unique=True)
+    email = models.EmailField(max_length=100, default="", blank=True)
     birth_date = models.DateField(null=True, blank=True)
     birth_place = models.CharField(max_length=100, default="", blank=True)
     address = models.CharField(max_length=200, default="", blank=True)
+    address_complement = models.CharField(max_length=200, default="", blank=True)
     postal_code = models.CharField(max_length=20, default="", blank=True)
     city = models.CharField(max_length=100, default="", blank=True)
     nationality = models.CharField(max_length=100, default="", blank=True)
-    successor = models.CharField(max_length=200, default="", blank=True)
     
     # Relations
-    managed_by = models.CharField(max_length=50, default="", blank=True)  # ID ou username du gestionnaire
-    source = models.CharField(max_length=100, default="", blank=True)  # Source du contact
-    team = models.ForeignKey('Team', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
+    status = models.ForeignKey('Status', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
+    source = models.ForeignKey('Source', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
+    campaign = models.CharField(max_length=200, default="", blank=True)
+    teleoperator = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='teleoperator_contacts')
+    confirmateur = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmateur_contacts')
+    creator = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_contacts')
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -32,7 +45,7 @@ class Contact(models.Model):
 
 class Note(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
-    contactId = models.ForeignKey(Contact, on_delete=models.CASCADE, null=True, blank=True)
+    contactId = models.ForeignKey(Contact, on_delete=models.CASCADE, null=True, blank=True, related_name='contact_notes')
     userId = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='notes')
     text = models.TextField(default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -104,6 +117,8 @@ class Role(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     name = models.CharField(max_length=100, unique=True, default="")
     data_access = models.CharField(max_length=20, choices=DATA_ACCESS_CHOICES, default='own_only')
+    is_teleoperateur = models.BooleanField(default=False)
+    is_confirmateur = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -183,6 +198,8 @@ class Log(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     event_type = models.CharField(max_length=100, default="")  # createUser, editUser, createContact, etc.
     user_id = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='activity_logs')
+    contact_id = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='contact_logs')
+    creator_id = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_logs')
     created_at = models.DateTimeField(auto_now_add=True)
     details = models.JSONField(default=dict, blank=True)  # IP, browser info, and other metadata
     old_value = models.JSONField(default=dict, null=True, blank=True)  # Previous state
@@ -190,3 +207,28 @@ class Log(models.Model):
 
     def __str__(self):
         return f"Log {self.id} - {self.event_type} - {self.created_at}"
+
+class Document(models.Model):
+    """Table for storing contact documents"""
+    DOCUMENT_TYPES = [
+        ('CNI', 'CNI'),
+        ('JUSTIFICATIF_DOMICILE', 'Justificatif de domicile'),
+        ('SELFIE', 'Selfie'),
+        ('RIB', 'RIB'),
+    ]
+    
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    contact_id = models.ForeignKey(Contact, on_delete=models.CASCADE, related_name='documents')
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPES)
+    has_document = models.BooleanField(default=False)  # Oui/Non
+    file_url = models.URLField(max_length=500, blank=True, default="")  # URL du fichier dans Impossible Cloud
+    file_name = models.CharField(max_length=255, blank=True, default="")  # Nom du fichier
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    uploaded_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='uploaded_documents')
+
+    class Meta:
+        unique_together = ['contact_id', 'document_type']  # Un seul document de chaque type par contact
+
+    def __str__(self):
+        return f"Document {self.document_type} - Contact {self.contact_id.id}"

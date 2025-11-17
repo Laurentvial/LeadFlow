@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { ArrowLeft, User, Power, Calendar, FileText, Mail } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import LoadingIndicator from './LoadingIndicator';
 import { toast } from 'sonner';
 import { EditPersonalInfoModal } from './EditPersonalInfoModal';
-import { EditPatrimonialInfoModal } from './EditPatrimonialInfoModal';
 import { ContactInfoTab } from './ContactInfoTab';
 import { ContactAppointmentsTab } from './ContactAppointmentsTab';
 import { ContactNotesTab } from './ContactNotesTab';
+import { ContactHistoryTab } from './ContactHistoryTab';
+import { ContactDocumentsTab } from './ContactDocumentsTab';
 import '../styles/Contacts.css';
 import '../styles/PlanningCalendar.css';
 
@@ -26,7 +25,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   
   // Dialogs
   const [isEditPersonalInfoOpen, setIsEditPersonalInfoOpen] = useState(false);
-  const [isEditPatrimonialInfoOpen, setIsEditPatrimonialInfoOpen] = useState(false);
   
 
   useEffect(() => {
@@ -70,16 +68,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
     setContact(updatedContact);
   }
 
-  function handlePatrimonialInfoUpdated(updatedContact: any) {
-    setContact(updatedContact);
-  }
-
-
-  function handlePlatformAccess() {
-    // TODO: Redirection vers la plateforme contact (à implémenter plus tard)
-    toast.info('Redirection vers la plateforme contact - Fonctionnalité à venir');
-  }
-
   if (loading) {
     return <LoadingIndicator />;
   }
@@ -87,48 +75,21 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   if (!contact) {
     return (
       <div className="contact-detail-container">
-        <Button onClick={onBack} variant="ghost" className="mb-4">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Retour
-        </Button>
         <p>Contact non trouvé</p>
       </div>
     );
   }
 
   return (
-    <div className="contact-detail-container">
+    <div className="contact-detail-container" style={{ padding: '30px' }}>
       {/* Header */}
       <div className="contact-detail-header">
-        <Button onClick={onBack} variant="ghost">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Retour
-        </Button>
-        
         <div className="contact-detail-title-section">
-          <div className="contact-detail-avatar">
-            <User className="w-8 h-8" />
-          </div>
           <div>
-            <h1 className="contact-detail-name">
+            <h1 className="contact-detail-name page-title ">
               {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Contact sans nom'}
             </h1>
-            <div className="contact-detail-meta">
-              {contact.email && (
-                <div className="contact-detail-meta-item">
-                  <Mail className="w-4 h-4 mr-2" />
-                  {contact.email}
-                </div>
-              )}
-            </div>
           </div>
-        </div>
-
-        <div className="contact-detail-actions">
-          <Button onClick={handlePlatformAccess} variant="outline">
-            <Power className="w-4 h-4 mr-2" />
-            Accès plateforme
-          </Button>
         </div>
       </div>
 
@@ -138,6 +99,8 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
           <TabsTrigger value="info">Informations</TabsTrigger>
           <TabsTrigger value="appointments">RDV</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
+          <TabsTrigger value="documents">Documents & conformité</TabsTrigger>
+          <TabsTrigger value="history">Historique</TabsTrigger>
         </TabsList>
 
         {/* Info Tab */}
@@ -145,7 +108,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
           <ContactInfoTab 
             contact={contact}
             onOpenEditPersonalInfo={handleOpenEditModal}
-            onOpenEditPatrimonialInfo={() => setIsEditPatrimonialInfoOpen(true)}
             onContactUpdated={loadContactData}
           />
         </TabsContent>
@@ -163,6 +125,16 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
             onRefresh={loadContactData}
           />
         </TabsContent>
+
+        {/* Documents Tab */}
+        <TabsContent value="documents">
+          <ContactDocumentsTab contactId={contactId} />
+        </TabsContent>
+
+        {/* History Tab */}
+        <TabsContent value="history">
+          <ContactHistoryTab contactId={contactId} />
+        </TabsContent>
       </Tabs>
 
       {/* Edit Personal Info Modal */}
@@ -172,15 +144,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
         contact={contact}
         contactId={contactId}
         onUpdate={handlePersonalInfoUpdated}
-      />
-
-      {/* Edit Patrimonial Info Modal */}
-      <EditPatrimonialInfoModal
-        isOpen={isEditPatrimonialInfoOpen}
-        onClose={() => setIsEditPatrimonialInfoOpen(false)}
-        contact={contact}
-        contactId={contactId}
-        onUpdate={handlePatrimonialInfoUpdated}
       />
 
     </div>

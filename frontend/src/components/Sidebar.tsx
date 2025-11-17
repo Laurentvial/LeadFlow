@@ -103,33 +103,32 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     return true; // Default to true if permission check not implemented
   };
   
-  // Filter menu items based on role and permissions
-  let visibleItems = menuItems.filter(item => {
-    // First check if item requires permission and user has it
+  // Filter menu items based on permissions - permissions are the primary security mechanism
+  // Items are only shown if user has the required permission
+  // Role check is kept as a secondary filter for additional security
+  const visibleItems = menuItems.filter(item => {
+    // Primary check: if item requires permission, user must have it
+    // If user doesn't have permission, hide the item regardless of role
     if ((item as any).requiresPermission) {
       if (!checkPermission(item)) {
-        return false;
+        return false; // Hide item if no permission - this is the primary security check
       }
     }
     
-    // Then check role-based access
-    if (!isValidRole) return false;
-    return item.roles.some(role => role.toLowerCase() === normalizedUserRole);
+    // Secondary check: role-based access (only if permission check passed)
+    // This provides an additional layer of security
+    // Only check role if it's a valid role and item has role requirements
+    if (isValidRole && item.roles.length > 0) {
+      // Check if user's role matches one of the required roles for this item
+      const hasRequiredRole = item.roles.some(role => role.toLowerCase() === normalizedUserRole);
+      if (!hasRequiredRole) {
+        return false; // Hide item if role doesn't match
+      }
+    }
+    
+    // Show item if permission check passed (and role check passed if applicable)
+    return true;
   });
-  
-  // Fallback: if no items match and we have a valid role, show all items for debugging
-  // This helps identify role matching issues
-  if (visibleItems.length === 0 && isValidRole) {
-    console.warn('Aucun élément de menu visible pour le rôle:', userRole);
-    console.warn('Affichage de tous les éléments pour débogage');
-    // Show all items if role doesn't match (for debugging)
-    visibleItems = menuItems;
-  }
-  
-  // If role is invalid or undefined, show all items as fallback
-  if (!isValidRole) {
-    visibleItems = menuItems;
-  }
 
   const handleNavigation = (item: typeof menuItems[0]) => {
     if (item.path) {
@@ -140,7 +139,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   };
 
   return (
-    <aside className="w-64 bg-white border-r border-slate-200 min-h-[calc(100vh-73px)]">
+    <aside className="w-64 border-r border-slate-200 min-h-[calc(100vh-73px)]">
       <nav className="p-4 space-y-1">
         {visibleItems.map((item) => {
           const Icon = item.icon;

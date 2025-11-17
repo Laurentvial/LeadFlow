@@ -10,18 +10,25 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status
+from .models import Role, Permission, PermissionRole, Status, Source, Document
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
-    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer
+    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 import uuid
-import json
+from datetime import datetime, date
+import boto3
+from botocore.exceptions import ClientError
+import os
+from django.core.files.uploadedfile import InMemoryUploadedFile
+from django.conf import settings
+from django.http import StreamingHttpResponse, HttpResponse
+from io import BytesIO
 
 
 def get_client_ip(request):
@@ -162,7 +169,67 @@ def get_team_data_for_log(team):
     return team_data
 
 
-def create_log_entry(event_type, user_id, request, old_value=None, new_value=None):
+def serialize_for_json(obj):
+    """Convert datetime and date objects to strings for JSON serialization"""
+    if isinstance(obj, dict):
+        return {key: serialize_for_json(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_for_json(item) for item in obj]
+    elif isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    else:
+        return obj
+
+def clean_contact_data_for_log(contact_data, include_created_at=False):
+    """Clean contact data for log storage - keep only relevant fields for users
+    Always includes all fields even if empty to maintain consistent structure
+    """
+    if not isinstance(contact_data, dict):
+        return contact_data
+    
+    # Fields to keep in specific order (only camelCase, user-friendly fields)
+    # Excluded: teleoperatorId, statusColor, fullName, sourceId, statusId
+    # Using statusName instead of statusId
+    field_order = [
+        'firstName',
+        'lastName',
+        'mobile',
+        'source',  # Show source name instead of sourceId
+        'statusName',  # Show status name instead of statusId
+        'teleoperatorName',
+        'creatorName',
+        'confirmateurName',
+        'civility',
+        'email',
+        'phone',
+        'birthDate',
+        'birthPlace',
+        'nationality',
+        'address',
+        'addressComplement',
+        'postalCode',
+        'city',
+        'campaign',
+    ]
+    
+    # Add createdAt only if requested (for old_value, not for new_value)
+    if include_created_at:
+        field_order.append('createdAt')
+    
+    cleaned_data = {}
+    for field in field_order:
+        # Always include field, even if empty, to maintain full structure
+        if field in contact_data:
+            value = contact_data[field]
+            # Convert None to empty string for consistency
+            cleaned_data[field] = value if value is not None else ''
+        else:
+            # Field not present in data, set to empty string
+            cleaned_data[field] = ''
+    
+    return cleaned_data
+
+def create_log_entry(event_type, user_id, request, old_value=None, new_value=None, contact_id=None, creator_id=None):
     """Create a log entry for an activity"""
     # Generate log ID
     log_id = uuid.uuid4().hex[:12]
@@ -175,14 +242,20 @@ def create_log_entry(event_type, user_id, request, old_value=None, new_value=Non
         'browser': get_browser_info(request),
     }
     
+    # Serialize old_value and new_value to handle datetime objects
+    serialized_old_value = serialize_for_json(old_value) if old_value else {}
+    serialized_new_value = serialize_for_json(new_value) if new_value else {}
+    
     # Create log entry
     Log.objects.create(
         id=log_id,
         event_type=event_type,
         user_id=user_id if user_id else None,
+        contact_id=contact_id if contact_id else None,
+        creator_id=creator_id if creator_id else None,
         details=details,
-        old_value=old_value if old_value else {},
-        new_value=new_value if new_value else {}
+        old_value=serialized_old_value,
+        new_value=serialized_new_value
     )
 
 
@@ -252,6 +325,61 @@ class ContactView(generics.ListAPIView):
     serializer_class = ContactSerializer
     permission_classes = [IsAuthenticated]  # Explicitly set permission
     
+    def get_queryset(self):
+        """
+        Filter contacts based on user's role data_access level:
+        - own_only: Only contacts where user is teleoperator, confirmateur, or creator
+        - team_only: Contacts where user is assigned OR contacts from users in the same team
+        - all: All contacts (no filtering)
+        """
+        queryset = Contact.objects.all()
+        user = self.request.user
+        
+        # Get user's role and data_access level
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                
+                if data_access == 'own_only':
+                    # Only show contacts where user is teleoperator, confirmateur, or creator
+                    queryset = queryset.filter(
+                        models.Q(teleoperator=user) |
+                        models.Q(confirmateur=user) |
+                        models.Q(creator=user)
+                    )
+                elif data_access == 'team_only':
+                    # Get user's team members
+                    team_member = user_details.team_memberships.first()
+                    if team_member:
+                        team = team_member.team
+                        # Get all users in the same team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Show contacts where:
+                        # - User is teleoperator, confirmateur, or creator
+                        # - OR contact's teleoperator/confirmateur/creator is in the same team
+                        queryset = queryset.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user) |
+                            models.Q(teleoperator__id__in=team_user_ids) |
+                            models.Q(confirmateur__id__in=team_user_ids) |
+                            models.Q(creator__id__in=team_user_ids)
+                        )
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        queryset = queryset.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        )
+                # If data_access is 'all', show all contacts (no filtering)
+        except UserDetails.DoesNotExist:
+            # If user has no UserDetails, show no contacts (safety default)
+            queryset = Contact.objects.none()
+        
+        return queryset
+    
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
         return Response({'contacts': response.data})
@@ -264,10 +392,12 @@ def contact_create(request):
         return Response({'error': 'Le prénom est requis'}, status=status.HTTP_400_BAD_REQUEST)
     if not request.data.get('lastName'):
         return Response({'error': 'Le nom est requis'}, status=status.HTTP_400_BAD_REQUEST)
-    if not request.data.get('email'):
-        return Response({'error': 'L\'email est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    if not request.data.get('mobile'):
+        return Response({'error': 'Le portable est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    if not request.data.get('statusId'):
+        return Response({'error': 'Le statut est requis'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # Check if email already exists
+    # Check if email already exists (if provided)
     email = request.data.get('email', '').strip()
     if email and Contact.objects.filter(email=email).exists():
         return Response({'error': 'Un contact avec cet email existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
@@ -284,7 +414,6 @@ def contact_create(request):
         return value
     
     # Map frontend field names to model field names
-    # Informations personnelles
     contact_data = {
         'id': contact_id,
         'civility': request.data.get('civility', '') or '',
@@ -296,49 +425,74 @@ def contact_create(request):
         'birth_date': get_date(request.data.get('birthDate')),
         'birth_place': request.data.get('birthPlace', '') or '',
         'address': request.data.get('address', '') or '',
+        'address_complement': request.data.get('addressComplement', '') or '',
         'postal_code': request.data.get('postalCode', '') or '',
         'city': request.data.get('city', '') or '',
         'nationality': request.data.get('nationality', '') or '',
-        'successor': request.data.get('successor', '') or '',
-        # managed_by will be set separately to ensure it's a valid user ID
+        'campaign': request.data.get('campaign', '') or '',
     }
     
-    # Handle managed_by separately to ensure it's a valid user ID
-    # The frontend sends UserDetails.id (string), we need to convert it to DjangoUser.id
-    managed_by_value = request.data.get('managerId', '') or request.data.get('managed_by', '') or ''
-    if managed_by_value:
+    # Set creator to the current user
+    contact_data['creator'] = request.user
+    
+    # Handle status
+    status_id = request.data.get('statusId')
+    if status_id:
         try:
-            # First try to find UserDetails by ID (this is what the frontend sends)
-            user_details = UserDetails.objects.filter(id=managed_by_value).first()
-            if user_details and user_details.django_user:
-                # Use DjangoUser.id for managed_by
-                contact_data['managed_by'] = str(user_details.django_user.id)
-            else:
-                # Fallback: try to find DjangoUser directly by ID (for backward compatibility)
-                try:
-                    user_id = int(managed_by_value)
-                    from django.contrib.auth.models import User as DjangoUser
-                    if DjangoUser.objects.filter(id=user_id).exists():
-                        contact_data['managed_by'] = str(user_id)
-                    else:
-                        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-                except (ValueError, TypeError):
-                    # Try to find by username
-                    from django.contrib.auth.models import User as DjangoUser
-                    user = DjangoUser.objects.filter(username=managed_by_value).first()
-                    if user:
-                        contact_data['managed_by'] = str(user.id)
-                    else:
-                        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({'error': f'Error finding user: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-    else:
-        contact_data['managed_by'] = ''
+            status_obj = Status.objects.filter(id=status_id).first()
+            if status_obj:
+                contact_data['status'] = status_obj
+        except Exception:
+            pass
+    
+    # Handle source
+    source_id = request.data.get('sourceId')
+    if source_id:
+        try:
+            source_obj = Source.objects.filter(id=source_id).first()
+            if source_obj:
+                contact_data['source'] = source_obj
+        except Exception:
+            pass
+    
+    # Handle teleoperator
+    teleoperator_id = request.data.get('teleoperatorId')
+    if teleoperator_id:
+        try:
+            teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
+            if teleoperator_user:
+                contact_data['teleoperator'] = teleoperator_user
+        except Exception:
+            pass
+    
+    # Handle confirmateur
+    confirmateur_id = request.data.get('confirmateurId')
+    if confirmateur_id:
+        try:
+            confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
+            if confirmateur_user:
+                contact_data['confirmateur'] = confirmateur_user
+        except Exception:
+            pass
     
     try:
         contact = Contact.objects.create(**contact_data)
         
+        # Create log entry for contact creation
         serializer = ContactSerializer(contact, context={'request': request})
+        contact_data_raw = serializer.data
+        contact_data_for_log = clean_contact_data_for_log(contact_data_raw, include_created_at=False)
+        
+        create_log_entry(
+            event_type='addContact',
+            user_id=request.user if request.user.is_authenticated else None,
+            request=request,
+            old_value={},  # No old value for creation
+            new_value=contact_data_for_log,
+            contact_id=contact,
+            creator_id=request.user if request.user.is_authenticated else None
+        )
+        
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     except Exception as e:
         import traceback
@@ -349,13 +503,68 @@ def contact_create(request):
 @api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def contact_detail(request, contact_id):
+    """
+    Get or update a contact, respecting data_access restrictions.
+    Users with own_only can only access contacts they are assigned to.
+    Users with team_only can access contacts from their team.
+    Users with all can access any contact.
+    """
     contact = get_object_or_404(Contact, id=contact_id)
+    user = request.user
+    
+    # Check data access restrictions
+    try:
+        user_details = UserDetails.objects.get(django_user=user)
+        if user_details.role:
+            data_access = user_details.role.data_access
+            
+            if data_access == 'own_only':
+                # Only allow if user is teleoperator, confirmateur, or creator
+                if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
+                    return Response(
+                        {'error': 'Vous n\'avez pas accès à ce contact'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            elif data_access == 'team_only':
+                # Check if user has access (either assigned to them or from their team)
+                team_member = user_details.team_memberships.first()
+                if team_member:
+                    team = team_member.team
+                    team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                    # Allow if user is assigned OR if contact's assignees are in the same team
+                    if (contact.teleoperator != user and contact.confirmateur != user and contact.creator != user and
+                        (not contact.teleoperator or contact.teleoperator.id not in team_user_ids) and
+                        (not contact.confirmateur or contact.confirmateur.id not in team_user_ids) and
+                        (not contact.creator or contact.creator.id not in team_user_ids)):
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                else:
+                    # User has no team, fall back to own_only behavior
+                    if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+            # If data_access is 'all', allow access (no check needed)
+    except UserDetails.DoesNotExist:
+        # If user has no UserDetails, deny access (safety default)
+        return Response(
+            {'error': 'Vous n\'avez pas accès à ce contact'},
+            status=status.HTTP_403_FORBIDDEN
+        )
     
     if request.method == 'GET':
         serializer = ContactSerializer(contact, context={'request': request})
         return Response({'contact': serializer.data})
     
     if request.method == 'PATCH':
+        # Get old value BEFORE any modifications
+        old_serializer = ContactSerializer(contact, context={'request': request})
+        old_value_raw = old_serializer.data
+        old_value = clean_contact_data_for_log(old_value_raw, include_created_at=False)
+        
         # Helper functions
         def get_date(value):
             if not value:
@@ -397,69 +606,86 @@ def contact_detail(request, contact_id):
             contact.city = request.data.get('city', '') or ''
         if 'nationality' in request.data:
             contact.nationality = request.data.get('nationality', '') or ''
-        if 'successor' in request.data:
-            contact.successor = request.data.get('successor', '') or ''
         
-        # Update managed_by if provided (should be user ID)
-        # The frontend may send UserDetails.id (string) or DjangoUser.id
-        if 'managed_by' in request.data:
-            managed_by_value = request.data.get('managed_by', '') or ''
-            if managed_by_value:
-                # First try to find UserDetails by ID (this is what the frontend sends)
-                user_details = UserDetails.objects.filter(id=managed_by_value).first()
-                if user_details and user_details.django_user:
-                    # Use DjangoUser.id for managed_by
-                    contact.managed_by = str(user_details.django_user.id)
-                else:
-                    # Fallback: try to find DjangoUser directly by ID (for backward compatibility)
-                    try:
-                        user_id = int(managed_by_value)
-                        from django.contrib.auth.models import User as DjangoUser
-                        if DjangoUser.objects.filter(id=user_id).exists():
-                            contact.managed_by = str(user_id)
-                        else:
-                            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-                    except (ValueError, TypeError):
-                        # Try to find by username
-                        from django.contrib.auth.models import User as DjangoUser
-                        user = DjangoUser.objects.filter(username=managed_by_value).first()
-                        if user:
-                            contact.managed_by = str(user.id)
-                        else:
-                            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Update status if provided
+        if 'statusId' in request.data:
+            status_id = request.data.get('statusId')
+            if status_id:
+                try:
+                    status_obj = Status.objects.filter(id=status_id).first()
+                    if status_obj:
+                        contact.status = status_obj
+                except Exception:
+                    pass
             else:
-                contact.managed_by = ''
+                contact.status = None
         
         # Update source if provided
-        if 'source' in request.data:
-            contact.source = request.data.get('source', '') or ''
-        
-        # Update team if provided
-        if 'team' in request.data:
-            team_id = request.data.get('team')
-            if team_id and team_id != 'none' and team_id != '':
+        if 'sourceId' in request.data:
+            source_id = request.data.get('sourceId')
+            if source_id:
                 try:
-                    team = Team.objects.get(id=team_id)
-                    contact.team = team
-                except Team.DoesNotExist:
-                    return Response({'error': 'Team not found'}, status=status.HTTP_404_NOT_FOUND)
+                    source_obj = Source.objects.filter(id=source_id).first()
+                    if source_obj:
+                        contact.source = source_obj
+                except Exception:
+                    pass
             else:
-                # Si team est 'none' ou vide, supprimer l'équipe
-                contact.team = None
-        elif 'teamId' in request.data:
-            team_id = request.data.get('teamId')
-            if team_id and team_id != 'none':
-                try:
-                    team = Team.objects.get(id=team_id)
-                    contact.team = team
-                except Team.DoesNotExist:
-                    return Response({'error': 'Team not found'}, status=status.HTTP_404_NOT_FOUND)
-            else:
-                # Si teamId est 'none' ou vide, supprimer l'équipe
-                contact.team = None
+                contact.source = None
         
+        # Update teleoperator if provided
+        if 'teleoperatorId' in request.data:
+            teleoperator_id = request.data.get('teleoperatorId')
+            if teleoperator_id:
+                try:
+                    teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
+                    if teleoperator_user:
+                        contact.teleoperator = teleoperator_user
+                except Exception:
+                    pass
+            else:
+                contact.teleoperator = None
+        
+        # Update confirmateur if provided
+        if 'confirmateurId' in request.data:
+            confirmateur_id = request.data.get('confirmateurId')
+            if confirmateur_id:
+                try:
+                    confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
+                    if confirmateur_user:
+                        contact.confirmateur = confirmateur_user
+                except Exception:
+                    pass
+            else:
+                contact.confirmateur = None
+        
+        # Update campaign if provided
+        if 'campaign' in request.data:
+            contact.campaign = request.data.get('campaign', '') or ''
+        
+        # Update addressComplement if provided
+        if 'addressComplement' in request.data:
+            contact.address_complement = request.data.get('addressComplement', '') or ''
+        
+        # Save the contact with all modifications
         contact.save()
+        
+        # Get new value after saving
         serializer = ContactSerializer(contact, context={'request': request})
+        new_value_raw = serializer.data
+        new_value = clean_contact_data_for_log(new_value_raw, include_created_at=False)
+        
+        # Create log entry for contact update
+        create_log_entry(
+            event_type='editContact',
+            user_id=request.user if request.user.is_authenticated else None,
+            request=request,
+            old_value=old_value,
+            new_value=new_value,
+            contact_id=contact,
+            creator_id=request.user if request.user.is_authenticated else None
+        )
+        
         return Response({'contact': serializer.data})
 
 
@@ -1126,6 +1352,337 @@ def status_delete(request, status_id):
     status_obj = get_object_or_404(Status, id=status_id)
     status_obj.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+# Sources endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def source_list(request):
+    """List all sources"""
+    sources = Source.objects.all().order_by('name')
+    serializer = SourceSerializer(sources, many=True)
+    return Response({'sources': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def source_create(request):
+    """Create a new source"""
+    source_id = uuid.uuid4().hex[:12]
+    while Source.objects.filter(id=source_id).exists():
+        source_id = uuid.uuid4().hex[:12]
+    
+    # Get name from request data
+    name = request.data.get('name', '').strip()
+    if not name:
+        return Response({'error': 'Le nom de la source est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if source with same name already exists
+    if Source.objects.filter(name=name).exists():
+        return Response({'error': 'Une source avec ce nom existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Create source directly (bypass serializer for creation to avoid issues)
+    try:
+        source = Source.objects.create(id=source_id, name=name)
+        serializer = SourceSerializer(source)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error creating source: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def source_update(request, source_id):
+    """Update a source"""
+    source_obj = get_object_or_404(Source, id=source_id)
+    serializer = SourceSerializer(source_obj, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(SourceSerializer(source_obj).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def source_delete(request, source_id):
+    """Delete a source"""
+    source_obj = get_object_or_404(Source, id=source_id)
+    source_obj.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def contact_logs(request, contact_id):
+    """Get all logs related to a contact"""
+    try:
+        # Verify contact exists
+        contact = get_object_or_404(Contact, id=contact_id)
+        
+        # Get all logs for this contact
+        logs = Log.objects.filter(contact_id=contact).order_by('-created_at')
+        
+        serializer = LogSerializer(logs, many=True)
+        return Response({'logs': serializer.data}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def contact_documents(request, contact_id):
+    """Get all documents for a contact"""
+    try:
+        contact = get_object_or_404(Contact, id=contact_id)
+        documents = Document.objects.filter(contact_id=contact).order_by('document_type')
+        serializer = DocumentSerializer(documents, many=True)
+        return Response({'documents': serializer.data}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def document_upload(request):
+    """Upload a file to Impossible Cloud and return the URL"""
+    try:
+        if 'file' not in request.FILES:
+            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        file = request.FILES['file']
+        contact_id = request.data.get('contactId')
+        document_type = request.data.get('documentType')
+        
+        if not contact_id or not document_type:
+            return Response({'error': 'contactId and documentType are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Configure S3 client for Impossible Cloud
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net'),
+            aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+        )
+        
+        bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+        
+        # Generate unique file path
+        file_extension = os.path.splitext(file.name)[1]
+        file_path = f"contacts/{contact_id}/{document_type}/{uuid.uuid4().hex[:12]}{file_extension}"
+        
+        # Upload file to Impossible Cloud
+        file.seek(0)  # Reset file pointer
+        s3_client.upload_fileobj(
+            file,
+            bucket_name,
+            file_path,
+            ExtraArgs={'ContentType': file.content_type}
+        )
+        
+        # Generate public URL (using the endpoint URL format)
+        endpoint = os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net')
+        # Remove trailing slash if present
+        endpoint = endpoint.rstrip('/')
+        file_url = f"{endpoint}/{bucket_name}/{file_path}"
+        
+        return Response({
+            'fileUrl': file_url,
+            'fileName': file.name,
+            'filePath': file_path
+        }, status=status.HTTP_200_OK)
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error uploading to Impossible Cloud: {error_details}")
+        return Response({'error': f'Failed to upload file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error uploading document: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def document_create(request):
+    """Create or update a document for a contact"""
+    try:
+        contact_id = request.data.get('contactId')
+        document_type = request.data.get('documentType')
+        file_url = request.data.get('fileUrl', '')
+        file_name = request.data.get('fileName', '')
+        
+        if not contact_id or not document_type:
+            return Response({'error': 'contactId and documentType are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        contact = get_object_or_404(Contact, id=contact_id)
+        
+        # Check if document already exists
+        document, created = Document.objects.get_or_create(
+            contact_id=contact,
+            document_type=document_type,
+            defaults={
+                'id': uuid.uuid4().hex[:12],
+                'has_document': bool(file_url),
+                'file_url': file_url,
+                'file_name': file_name,
+                'uploaded_by': request.user if request.user.is_authenticated else None
+            }
+        )
+        
+        if not created:
+            # Update existing document
+            document.has_document = bool(file_url)
+            document.file_url = file_url
+            document.file_name = file_name
+            document.uploaded_by = request.user if request.user.is_authenticated else None
+            document.save()
+        
+        serializer = DocumentSerializer(document)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error creating/updating document: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def document_update(request, document_id):
+    """Update a document"""
+    try:
+        document = get_object_or_404(Document, id=document_id)
+        
+        if 'hasDocument' in request.data:
+            document.has_document = request.data.get('hasDocument', False)
+        if 'fileUrl' in request.data:
+            document.file_url = request.data.get('fileUrl', '')
+        if 'fileName' in request.data:
+            document.file_name = request.data.get('fileName', '')
+        
+        document.uploaded_by = request.user if request.user.is_authenticated else None
+        document.save()
+        
+        serializer = DocumentSerializer(document)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def document_delete(request, document_id):
+    """Delete a document"""
+    try:
+        document = get_object_or_404(Document, id=document_id)
+        document.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+def _get_s3_client_and_path(document):
+    """Helper function to get S3 client and file path from document"""
+    if not document.file_url:
+        return None, None, None
+    
+    file_url = document.file_url
+    endpoint = os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net').rstrip('/')
+    
+    if file_url.startswith(endpoint):
+        path_part = file_url[len(endpoint):].lstrip('/')
+        parts = path_part.split('/', 1)
+        if len(parts) == 2:
+            bucket_name = parts[0]
+            file_path = parts[1]
+            
+            s3_client = boto3.client(
+                's3',
+                endpoint_url=endpoint,
+                aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+                aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+                region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+            )
+            return s3_client, bucket_name, file_path
+    
+    return None, None, None
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def document_download(request, document_id):
+    """Proxy file download from Impossible Cloud"""
+    try:
+        document = get_object_or_404(Document, id=document_id)
+        
+        s3_client, bucket_name, file_path = _get_s3_client_and_path(document)
+        if not s3_client:
+            return Response({'error': 'Invalid file URL format'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get the object from S3
+        s3_object = s3_client.get_object(Bucket=bucket_name, Key=file_path)
+        
+        # Create a streaming response directly from S3
+        def file_iterator():
+            chunk_size = 8192
+            while True:
+                chunk = s3_object['Body'].read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        
+        # Create streaming response
+        response = StreamingHttpResponse(
+            file_iterator(),
+            content_type=s3_object.get('ContentType', 'application/octet-stream')
+        )
+        
+        # Set the filename for download
+        file_name = document.file_name or 'document'
+        response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+        if 'ContentLength' in s3_object:
+            response['Content-Length'] = str(s3_object['ContentLength'])
+        
+        return response
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error downloading from S3: {error_details}")
+        return Response({'error': f'Failed to download file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error downloading document: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def document_view_url(request, document_id):
+    """Generate a presigned URL for viewing a document"""
+    try:
+        document = get_object_or_404(Document, id=document_id)
+        
+        s3_client, bucket_name, file_path = _get_s3_client_and_path(document)
+        if not s3_client:
+            return Response({'error': 'Invalid file URL format'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Generate presigned URL (valid for 1 hour)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket_name, 'Key': file_path},
+            ExpiresIn=3600
+        )
+        
+        return Response({
+            'viewUrl': presigned_url,
+            'fileName': document.file_name
+        }, status=status.HTTP_200_OK)
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error generating presigned URL: {error_details}")
+        return Response({'error': f'Failed to generate view URL: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error getting view URL: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

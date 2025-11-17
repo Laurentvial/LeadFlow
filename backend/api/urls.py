@@ -11,6 +11,15 @@ urlpatterns = [
     path('contacts/create/', api_views.contact_create, name='contact-create'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
     path('contacts/<str:contact_id>/delete/', api_views.contact_delete, name='contact-delete'),
+    path('contacts/<str:contact_id>/logs/', api_views.contact_logs, name='contact-logs'),
+    path('contacts/<str:contact_id>/documents/', api_views.contact_documents, name='contact-documents'),
+    # Documents endpoints
+    path('documents/upload/', api_views.document_upload, name='document-upload'),
+    path('documents/create/', api_views.document_create, name='document-create'),
+    path('documents/<str:document_id>/', api_views.document_update, name='document-update'),
+    path('documents/<str:document_id>/delete/', api_views.document_delete, name='document-delete'),
+    path('documents/<str:document_id>/download/', api_views.document_download, name='document-download'),
+    path('documents/<str:document_id>/view-url/', api_views.document_view_url, name='document-view-url'),
     # Teams endpoints
     path('teams/', api_views.team_list, name='team-list'),
     path('teams/create/', api_views.team_create, name='team-create'),  # POST for create
@@ -52,4 +61,9 @@ urlpatterns = [
     path('statuses/reorder/', api_views.status_reorder, name='status-reorder'),
     path('statuses/<str:status_id>/', api_views.status_update, name='status-update'),
     path('statuses/<str:status_id>/delete/', api_views.status_delete, name='status-delete'),
+    # Sources endpoints
+    path('sources/', api_views.source_list, name='source-list'),
+    path('sources/create/', api_views.source_create, name='source-create'),
+    path('sources/<str:source_id>/', api_views.source_update, name='source-update'),
+    path('sources/<str:source_id>/delete/', api_views.source_delete, name='source-delete'),
 ]

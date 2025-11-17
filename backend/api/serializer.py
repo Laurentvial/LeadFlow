@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status
+from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -155,10 +155,7 @@ class ContactSerializer(serializers.ModelSerializer):
     firstName = serializers.SerializerMethodField()
     lastName = serializers.SerializerMethodField()
     fullName = serializers.SerializerMethodField()
-    teamId = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
-    capital = serializers.SerializerMethodField()
-    manager = serializers.SerializerMethodField()
     source = serializers.SerializerMethodField()
     
     class Meta:
@@ -174,18 +171,10 @@ class ContactSerializer(serializers.ModelSerializer):
     def get_fullName(self, obj):
         return f"{obj.fname} {obj.lname}".strip()
     
-    def get_teamId(self, obj):
-        # Retourner l'ID de l'équipe si elle existe
-        return obj.team.id if obj.team else None
-    
-    def get_capital(self, obj):
-        return 0
-    
-    def get_manager(self, obj):
-        return obj.managed_by or ''
     
     def get_source(self, obj):
-        # Source n'existe pas dans le modèle, retourner vide pour l'instant
+        if obj.source:
+            return obj.source.name
         return ''
     
     def to_representation(self, instance):
@@ -195,43 +184,33 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['lastName'] = instance.lname
         ret['fullName'] = f"{instance.fname} {instance.lname}".strip()
         ret['createdAt'] = instance.created_at
-        ret['capital'] = 0
-        ret['source'] = instance.source or ''
-        ret['teamId'] = instance.team.id if instance.team else None
-        ret['teamName'] = instance.team.name if instance.team else ''
+        ret['source'] = instance.source.name if instance.source else ''
+        ret['sourceId'] = instance.source.id if instance.source else None
+        ret['statusId'] = instance.status.id if instance.status else None
+        ret['statusName'] = instance.status.name if instance.status else ''
+        ret['statusColor'] = instance.status.color if instance.status else ''
+        ret['addressComplement'] = instance.address_complement or ''
+        ret['campaign'] = instance.campaign or ''
+        ret['teleoperatorId'] = instance.teleoperator.id if instance.teleoperator else None
+        ret['teleoperatorName'] = f"{instance.teleoperator.first_name} {instance.teleoperator.last_name}".strip() if instance.teleoperator else ''
+        ret['confirmateurId'] = instance.confirmateur.id if instance.confirmateur else None
+        ret['confirmateurName'] = f"{instance.confirmateur.first_name} {instance.confirmateur.last_name}".strip() if instance.confirmateur else ''
+        ret['creatorId'] = instance.creator.id if instance.creator else None
+        ret['creatorName'] = f"{instance.creator.first_name} {instance.creator.last_name}".strip() if instance.creator else ''
         
-        # Get manager user details if managed_by is set
-        # managed_by should always contain the user ID
-        manager_user = None
-        manager_id = None
-        if instance.managed_by:
+        # Manager is the teleoperator (the one selected in teleoperateur select during creation)
+        if instance.teleoperator:
+            ret['managerId'] = str(instance.teleoperator.id)
+            ret['manager'] = str(instance.teleoperator.id)
+            ret['managerName'] = ret['teleoperatorName']
+            ret['managerEmail'] = instance.teleoperator.email or ''
             try:
-                # Try to find user by ID first (managed_by should be an ID)
-                try:
-                    # Check if managed_by is a numeric ID
-                    manager_id = int(instance.managed_by)
-                    manager_user = DjangoUser.objects.filter(id=manager_id).first()
-                except (ValueError, TypeError):
-                    # If not numeric, try as username (for backward compatibility)
-                    manager_user = DjangoUser.objects.filter(username=instance.managed_by).first()
-                    if manager_user:
-                        manager_id = manager_user.id
-            except Exception:
-                pass
-        
-        if manager_user:
-            ret['managerId'] = str(manager_user.id)  # DjangoUser.id
-            ret['manager'] = str(manager_user.id)  # Always return the ID, not the username
-            ret['managerName'] = f"{manager_user.first_name} {manager_user.last_name}".strip() or manager_user.username
-            ret['managerEmail'] = manager_user.email or ''
-            # Get manager's team and UserDetails ID for frontend compatibility
-            try:
-                manager_user_details = manager_user.user_details
-                ret['managerUserDetailsId'] = manager_user_details.id  # UserDetails.id for Select component
-                manager_team_member = manager_user_details.team_memberships.first()
-                if manager_team_member:
-                    ret['managerTeamId'] = manager_team_member.team.id
-                    ret['managerTeamName'] = manager_team_member.team.name
+                teleoperator_user_details = instance.teleoperator.user_details
+                ret['managerUserDetailsId'] = teleoperator_user_details.id if teleoperator_user_details else None
+                teleoperator_team_member = teleoperator_user_details.team_memberships.first() if teleoperator_user_details else None
+                if teleoperator_team_member:
+                    ret['managerTeamId'] = teleoperator_team_member.team.id
+                    ret['managerTeamName'] = teleoperator_team_member.team.name
                 else:
                     ret['managerTeamId'] = None
                     ret['managerTeamName'] = ''
@@ -241,7 +220,7 @@ class ContactSerializer(serializers.ModelSerializer):
                 ret['managerTeamName'] = ''
         else:
             ret['managerId'] = None
-            ret['manager'] = instance.managed_by or ''  # Keep original value if user not found
+            ret['manager'] = ''
             ret['managerName'] = ''
             ret['managerEmail'] = ''
             ret['managerUserDetailsId'] = None
@@ -256,7 +235,6 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['postalCode'] = ret.get('postal_code', '') or ''
         ret['city'] = ret.get('city', '') or ''
         ret['nationality'] = ret.get('nationality', '') or ''
-        ret['successor'] = ret.get('successor', '') or ''
         
         return ret
 
@@ -337,9 +315,15 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         if instance.role:
             ret['role'] = instance.role.id
             ret['roleName'] = instance.role.name
+            ret['isTeleoperateur'] = instance.role.is_teleoperateur
+            ret['isConfirmateur'] = instance.role.is_confirmateur
+            ret['dataAccess'] = instance.role.data_access  # Include data_access level
         else:
             ret['role'] = None
             ret['roleName'] = None
+            ret['isTeleoperateur'] = False
+            ret['isConfirmateur'] = False
+            ret['dataAccess'] = 'own_only'  # Default to most restrictive
         ret['isLeader'] = instance.role and instance.role.name.lower() == 'teamleader'
         # Get teamId from TeamMember relationship
         team_member = instance.team_memberships.first()
@@ -447,6 +431,9 @@ class EventSerializer(serializers.ModelSerializer):
 
 class LogSerializer(serializers.ModelSerializer):
     userId = serializers.SerializerMethodField()
+    contactId = serializers.SerializerMethodField()
+    creatorId = serializers.SerializerMethodField()
+    creatorName = serializers.SerializerMethodField()
     eventType = serializers.CharField(source='event_type', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     oldValue = serializers.JSONField(source='old_value', read_only=True)
@@ -454,20 +441,86 @@ class LogSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Log
-        fields = ['id', 'eventType', 'userId', 'createdAt', 'details', 'oldValue', 'newValue']
+        fields = ['id', 'eventType', 'userId', 'contactId', 'creatorId', 'creatorName', 'createdAt', 'details', 'oldValue', 'newValue']
         read_only_fields = ['id', 'createdAt']
     
     def get_userId(self, obj):
         return obj.user_id.id if obj.user_id else None
     
+    def get_contactId(self, obj):
+        return obj.contact_id.id if obj.contact_id else None
+    
+    def get_creatorId(self, obj):
+        return obj.creator_id.id if obj.creator_id else None
+    
+    def get_creatorName(self, obj):
+        if obj.creator_id:
+            return f"{obj.creator_id.first_name} {obj.creator_id.last_name}".strip() or obj.creator_id.username
+        return None
+    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['eventType'] = instance.event_type
         ret['userId'] = instance.user_id.id if instance.user_id else None
+        ret['contactId'] = instance.contact_id.id if instance.contact_id else None
+        ret['creatorId'] = instance.creator_id.id if instance.creator_id else None
+        ret['creatorName'] = self.get_creatorName(instance)
         ret['createdAt'] = instance.created_at
         ret['details'] = instance.details if instance.details else {}
         ret['oldValue'] = instance.old_value if instance.old_value else {}
         ret['newValue'] = instance.new_value if instance.new_value else {}
+        return ret
+
+class SourceSerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+
+    class Meta:
+        model = Source
+        fields = ['id', 'name', 'createdAt', 'updatedAt']
+        read_only_fields = ['createdAt', 'updatedAt']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class DocumentSerializer(serializers.ModelSerializer):
+    contactId = serializers.CharField(source='contact_id.id', read_only=True)
+    documentType = serializers.CharField(source='document_type')
+    hasDocument = serializers.BooleanField(source='has_document')
+    fileUrl = serializers.URLField(source='file_url', allow_blank=True)
+    fileName = serializers.CharField(source='file_name', allow_blank=True)
+    uploadedAt = serializers.DateTimeField(source='uploaded_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    uploadedById = serializers.SerializerMethodField()
+    uploadedByName = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Document
+        fields = ['id', 'contactId', 'documentType', 'hasDocument', 'fileUrl', 'fileName', 'uploadedAt', 'updatedAt', 'uploadedById', 'uploadedByName']
+        read_only_fields = ['id', 'uploadedAt', 'updatedAt']
+
+    def get_uploadedById(self, obj):
+        return obj.uploaded_by.id if obj.uploaded_by else None
+
+    def get_uploadedByName(self, obj):
+        if obj.uploaded_by:
+            return f"{obj.uploaded_by.first_name} {obj.uploaded_by.last_name}".strip() or obj.uploaded_by.username
+        return None
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['contactId'] = instance.contact_id.id if instance.contact_id else None
+        ret['documentType'] = instance.document_type
+        ret['hasDocument'] = instance.has_document
+        ret['fileUrl'] = instance.file_url or ''
+        ret['fileName'] = instance.file_name or ''
+        ret['uploadedAt'] = instance.uploaded_at
+        ret['updatedAt'] = instance.updated_at
+        ret['uploadedById'] = instance.uploaded_by.id if instance.uploaded_by else None
+        ret['uploadedByName'] = self.get_uploadedByName(instance)
         return ret
 
 class StatusSerializer(serializers.ModelSerializer):
@@ -491,15 +544,19 @@ class RoleSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
     dataAccess = serializers.CharField(source='data_access', required=False)
+    isTeleoperateur = serializers.BooleanField(source='is_teleoperateur', required=False)
+    isConfirmateur = serializers.BooleanField(source='is_confirmateur', required=False)
     
     class Meta:
         model = Role
-        fields = ['id', 'name', 'dataAccess', 'createdAt', 'updatedAt']
+        fields = ['id', 'name', 'dataAccess', 'isTeleoperateur', 'isConfirmateur', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['dataAccess'] = instance.data_access
+        ret['isTeleoperateur'] = instance.is_teleoperateur
+        ret['isConfirmateur'] = instance.is_confirmateur
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret

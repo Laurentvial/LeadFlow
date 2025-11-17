@@ -20,7 +20,6 @@
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
 }
 
 /* .header-logo {
@@ -70,26 +69,30 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem;
+  padding: 0.7rem;
   background: transparent;
   border: none;
-  background-color: var(--primary);
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  box-shadow: 0 2px 8px rgba(53, 53, 53, 0.1), 4px 4px 5px rgba(58, 58, 58, 0.1);
+  border-radius: var(--radius);
+  transition: box-shadow 1s ease;
+
 }
 
 .header-button:hover {
-  background-color: var(--muted-foreground);
+  box-shadow: 0 2px 8px 0 rgba(83, 83, 83, 0.1) inset, 2px 2px 2px 0 rgba(75, 75, 75, 0.1) inset;
 }
 
 .header-button-notifications {
   position: relative;
+  box-shadow: 0 2px 8px rgba(53, 53, 53, 0.1), 4px 4px 5px rgba(58, 58, 58, 0.1);
+  border-radius: var(--radius);
 }
 
 .header-icon {
   width: 1rem;
   height: 1rem;
-  color: var(--destructive-foreground);
+  color: var(--foreground);
 }
 
 .header-badge {
@@ -100,7 +103,7 @@
   font-size: 0.75rem;
   font-weight: var(--font-weight-medium);
   background-color: var(--destructive);
-  color: var(--destructive-foreground);
+  color: var(--foreground);
   border-radius: 9999px;
   min-width: 1.25rem;
   height: 1.25rem;
@@ -111,7 +114,7 @@
 
 .header-user-name {
   display: none;
-  color: var(--destructive-foreground);
+  color: var(--foreground);
 }
 
 @media (min-width: 768px) {

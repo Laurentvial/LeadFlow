@@ -20,7 +20,7 @@ import '../styles/Modal.css';
 // Mapping database names to user-facing labels (for translation/special character, etc.)
 const componentNameMap: Record<string, string> = {
   dashboard: 'Tableau de bord',
-  clients: 'Contacts',
+  contacts: 'Contacts',
   users: 'Utilisateurs',
   teams: 'Équipes',
   planning: 'Planning',
@@ -36,12 +36,14 @@ interface Role {
   id: string;
   name: string;
   dataAccess: 'all' | 'team_only' | 'own_only';
+  isTeleoperateur?: boolean;
+  isConfirmateur?: boolean;
   createdAt: string;
 }
 
 interface Permission {
   id: string;
-  component: string; // always DB value, e.g., 'clients'
+  component: string; // always DB value, e.g., 'contacts'
   fieldName?: string | null;
   action: 'view' | 'edit' | 'create' | 'delete';
   statusId?: string | null;
@@ -66,6 +68,8 @@ export function PermissionsTab() {
   const [roleForm, setRoleForm] = useState({
     name: '',
     dataAccess: 'own_only' as 'all' | 'team_only' | 'own_only',
+    isTeleoperateur: false,
+    isConfirmateur: false,
   });
   const [roleLoading, setRoleLoading] = useState(false);
   const [roleError, setRoleError] = useState('');
@@ -112,11 +116,13 @@ export function PermissionsTab() {
         body: JSON.stringify({
           name: roleForm.name,
           dataAccess: roleForm.dataAccess,
+          isTeleoperateur: roleForm.isTeleoperateur,
+          isConfirmateur: roleForm.isConfirmateur,
         }),
       });
       toast.success('Rôle créé avec succès');
       setIsRoleModalOpen(false);
-      setRoleForm({ name: '', dataAccess: 'own_only' });
+      setRoleForm({ name: '', dataAccess: 'own_only', isTeleoperateur: false, isConfirmateur: false });
       loadData();
     } catch (error: any) {
       const message = error.message || 'Erreur lors de la création du rôle';
@@ -137,12 +143,14 @@ export function PermissionsTab() {
         body: JSON.stringify({
           name: roleForm.name,
           dataAccess: roleForm.dataAccess,
+          isTeleoperateur: roleForm.isTeleoperateur,
+          isConfirmateur: roleForm.isConfirmateur,
         }),
       });
       toast.success('Rôle mis à jour avec succès');
       setIsEditRoleModalOpen(false);
       setSelectedRole(null);
-      setRoleForm({ name: '', dataAccess: 'own_only' });
+      setRoleForm({ name: '', dataAccess: 'own_only', isTeleoperateur: false, isConfirmateur: false });
       loadData();
     } catch (error: any) {
       const message = error.message || 'Erreur lors de la mise à jour du rôle';
@@ -172,14 +180,19 @@ export function PermissionsTab() {
 
   function handleEditRole(role: Role) {
     setSelectedRole(role);
-    setRoleForm({ name: role.name, dataAccess: role.dataAccess });
+    setRoleForm({ 
+      name: role.name, 
+      dataAccess: role.dataAccess,
+      isTeleoperateur: role.isTeleoperateur ?? false,
+      isConfirmateur: role.isConfirmateur ?? false,
+    });
     setIsEditRoleModalOpen(true);
   }
 
   // Predefined list of components (DB names)
   const predefinedComponents = [
     'dashboard',
-    'clients',
+    'contacts',
     'users',
     'teams',
     'planning',
@@ -391,6 +404,40 @@ export function PermissionsTab() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="modal-form-field">
+                <Label htmlFor="is-teleoperateur">Téléopérateur</Label>
+                <Select
+                  value={roleForm.isTeleoperateur ? 'yes' : 'no'}
+                  onValueChange={(value) =>
+                    setRoleForm({ ...roleForm, isTeleoperateur: value === 'yes' })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Oui</SelectItem>
+                    <SelectItem value="no">Non</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-field">
+                <Label htmlFor="is-confirmateur">Confirmateur</Label>
+                <Select
+                  value={roleForm.isConfirmateur ? 'yes' : 'no'}
+                  onValueChange={(value) =>
+                    setRoleForm({ ...roleForm, isConfirmateur: value === 'yes' })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Oui</SelectItem>
+                    <SelectItem value="no">Non</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               {roleError && (
                 <div className="bg-red-50 text-red-600 px-4 py-2 text-sm">
                   {roleError}
@@ -472,6 +519,40 @@ export function PermissionsTab() {
                     <SelectItem value="all">Tous</SelectItem>
                     <SelectItem value="team_only">Équipe uniquement</SelectItem>
                     <SelectItem value="own_only">Propre uniquement</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-field">
+                <Label htmlFor="edit-is-teleoperateur">Téléopérateur</Label>
+                <Select
+                  value={roleForm.isTeleoperateur ? 'yes' : 'no'}
+                  onValueChange={(value) =>
+                    setRoleForm({ ...roleForm, isTeleoperateur: value === 'yes' })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Oui</SelectItem>
+                    <SelectItem value="no">Non</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="modal-form-field">
+                <Label htmlFor="edit-is-confirmateur">Confirmateur</Label>
+                <Select
+                  value={roleForm.isConfirmateur ? 'yes' : 'no'}
+                  onValueChange={(value) =>
+                    setRoleForm({ ...roleForm, isConfirmateur: value === 'yes' })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Oui</SelectItem>
+                    <SelectItem value="no">Non</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
