@@ -39,20 +39,18 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
         eventsData
       ] = await Promise.all([
         apiCall(`/api/contacts/${contactId}/`),
-        apiCall(`/api/notes/`),
-        apiCall(`/api/events/`)
+        apiCall(`/api/notes/?contactId=${contactId}`),
+        apiCall(`/api/events/?contactId=${contactId}`)
       ]);
       
       setContact((contactData as any).contact);
-      // Filter notes for this contact - notes API returns array directly
+      // Notes API now returns array filtered by contactId
       const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).notes || notesData || []);
-      const contactNotes = notesArray.filter((note: any) => note.contactId === contactId);
-      setNotes(contactNotes);
+      setNotes(notesArray);
       
-      // Filter events (appointments) for this contact - events API returns {events: [...]}
+      // Events API now returns array filtered by contactId
       const eventsArray = (eventsData as any).events || [];
-      const contactAppointments = eventsArray.filter((event: any) => event.contactId === contactId);
-      setAppointments(contactAppointments);
+      setAppointments(eventsArray);
     } catch (error) {
       console.error('Error loading contact data:', error);
     } finally {
@@ -114,7 +112,11 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
 
         {/* Appointments Tab */}
         <TabsContent value="appointments">
-          <ContactAppointmentsTab appointments={appointments} />
+          <ContactAppointmentsTab 
+            appointments={appointments} 
+            contactId={contactId}
+            onRefresh={loadContactData}
+          />
         </TabsContent>
 
         {/* Notes Tab */}

@@ -3,7 +3,11 @@ from datetime import timedelta
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+# Try loading .env file, but don't fail if it doesn't exist
+try:
+    load_dotenv()
+except Exception as e:
+    print(f"Warning: Could not load .env file: {e}")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -90,16 +94,38 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv("DB_NAME"),
-        'USER': os.getenv("DB_USER"),
-        'PASSWORD': os.getenv("DB_PASSWORD"),
-        'HOST': os.getenv("DB_HOST"),
-        'PORT': os.getenv("DB_PORT")
+# Database configuration
+# For local development, use local PostgreSQL
+# Set USE_LOCAL_DB=1 to force local database, or leave unset to use remote
+USE_LOCAL_DB = os.getenv("USE_LOCAL_DB", "1")  # Default to local for development
+
+if USE_LOCAL_DB == "1" or not os.getenv("DB_HOST"):
+    # Use local database for development
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': 'leadflow',
+            'USER': 'postgres',
+            'PASSWORD': 'yourpassword',
+            'HOST': 'localhost',
+            'PORT': '5432',
+        }
     }
-}
+else:
+    # Use remote database from environment variables
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv("DB_NAME"),
+            'USER': os.getenv("DB_USER"),
+            'PASSWORD': os.getenv("DB_PASSWORD"),
+            'HOST': os.getenv("DB_HOST"),
+            'PORT': os.getenv("DB_PORT"),
+            'OPTIONS': {
+                'connect_timeout': 5,  # 5 second timeout
+            },
+        }
+    }
 
 
 # Password validation

@@ -9,6 +9,8 @@ urlpatterns = [
     # Contacts endpoints
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),
     path('contacts/create/', api_views.contact_create, name='contact-create'),
+    path('contacts/csv-import-preview/', api_views.csv_import_preview, name='csv-import-preview'),
+    path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
     path('contacts/<str:contact_id>/delete/', api_views.contact_delete, name='contact-delete'),
     path('contacts/<str:contact_id>/logs/', api_views.contact_logs, name='contact-logs'),

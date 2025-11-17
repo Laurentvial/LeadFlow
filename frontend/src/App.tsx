@@ -7,6 +7,7 @@ import UsersAndTeams from './components/UsersTeams';
 import Planning from './components/PlanningCalendar';
 import Contacts from './components/Contacts';
 import AddContact from './components/AddContact';
+import { CsvImport } from './components/CsvImport';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import { UserProvider } from './contexts/UserContext';
@@ -90,6 +91,15 @@ function App() {
                             <Layout>
                                 <AddContact />
                             </Layout>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/import" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="view">
+                                <Layout>
+                                    <CsvImport />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/contacts/:id" element={

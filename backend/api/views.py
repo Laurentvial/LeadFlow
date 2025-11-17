@@ -29,6 +29,8 @@ from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.conf import settings
 from django.http import StreamingHttpResponse, HttpResponse
 from io import BytesIO
+import csv
+import io
 
 
 def get_client_ip(request):
@@ -288,8 +290,14 @@ class NoteListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        # Allow filtering by contactId if provided as query parameter
+        contact_id = self.request.query_params.get('contactId', None)
+        if contact_id:
+            # Return all notes for this contact (all users can see notes for contacts they have access to)
+            return Note.objects.filter(contactId=contact_id).select_related('userId').order_by('-created_at')
+        # If no contactId, return current user's notes (for backward compatibility)
         user = self.request.user
-        return Note.objects.filter(userId=user)
+        return Note.objects.filter(userId=user).select_related('userId').order_by('-created_at')
 
     def perform_create(self, serializer):
         # serializer is already validated at this point
@@ -498,6 +506,274 @@ def contact_create(request):
         import traceback
         error_details = traceback.format_exc()
         print(f"Error creating contact: {error_details}")
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def csv_import_preview(request):
+    """Preview CSV file and return headers and sample rows"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    
+    # Check file extension
+    if not csv_file.name.endswith('.csv'):
+        return Response({'error': 'File must be a CSV file'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Read CSV file - accept any CSV format
+        file_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(file_content))
+        
+        # Get headers - accept any header names
+        headers = csv_reader.fieldnames or []
+        
+        # Clean headers (remove whitespace, handle empty headers)
+        cleaned_headers = []
+        for i, header in enumerate(headers):
+            if header and header.strip():
+                cleaned_headers.append(header.strip())
+            else:
+                # If header is empty, create a placeholder
+                cleaned_headers.append(f'Colonne_{i+1}')
+        
+        # Get first 5 rows as preview
+        preview_rows = []
+        csv_reader_preview = csv.DictReader(io.StringIO(file_content))
+        for i, row in enumerate(csv_reader_preview):
+            if i >= 5:
+                break
+            preview_rows.append(row)
+        
+        # Count total rows (excluding header)
+        file_content_for_count = io.StringIO(file_content)
+        total_rows = sum(1 for _ in csv.DictReader(file_content_for_count))
+        
+        return Response({
+            'headers': cleaned_headers if cleaned_headers else headers,
+            'preview': preview_rows,
+            'totalRows': total_rows
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def csv_import_contacts(request):
+    """Import contacts from CSV with column mapping"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    
+    # Parse column mapping JSON string if it's a string
+    column_mapping_str = request.data.get('columnMapping', '{}')
+    if isinstance(column_mapping_str, str):
+        import json
+        try:
+            column_mapping = json.loads(column_mapping_str)
+        except json.JSONDecodeError:
+            column_mapping = {}
+    else:
+        column_mapping = column_mapping_str or {}
+    
+    default_status_id = request.data.get('defaultStatusId')
+    default_source_id = request.data.get('defaultSourceId')
+    
+    # Validate required mappings
+    required_fields = ['firstName', 'lastName', 'mobile']
+    missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
+    if missing_fields:
+        return Response({
+            'error': f'Missing required column mappings: {", ".join(missing_fields)}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if not default_status_id:
+        return Response({'error': 'Default status is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Read CSV file
+        file_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(file_content))
+        
+        # Get status and source objects
+        status_obj = Status.objects.filter(id=default_status_id).first()
+        if not status_obj:
+            return Response({'error': 'Invalid status ID'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        source_obj = None
+        if default_source_id:
+            source_obj = Source.objects.filter(id=default_source_id).first()
+        
+        # Field mapping from frontend names to model field names
+        field_mapping = {
+            'civility': 'civility',
+            'firstName': 'fname',
+            'lastName': 'lname',
+            'phone': 'phone',
+            'mobile': 'mobile',
+            'email': 'email',
+            'birthDate': 'birth_date',
+            'birthPlace': 'birth_place',
+            'address': 'address',
+            'addressComplement': 'address_complement',
+            'postalCode': 'postal_code',
+            'city': 'city',
+            'nationality': 'nationality',
+            'campaign': 'campaign',
+        }
+        
+        results = {
+            'success': [],
+            'errors': [],
+            'total': 0,
+            'imported': 0,
+            'failed': 0
+        }
+        
+        # Helper function to parse date
+        def parse_date(date_str):
+            if not date_str or date_str.strip() == '':
+                return None
+            date_str = date_str.strip()
+            # Try common date formats
+            formats = ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']
+            for fmt in formats:
+                try:
+                    return datetime.strptime(date_str, fmt).date()
+                except ValueError:
+                    continue
+            return None
+        
+        # Process each row
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
+            results['total'] += 1
+            try:
+                # Build contact data from CSV row
+                contact_data = {}
+                
+                # Map CSV columns to contact fields
+                # Accept any column name from the CSV - no restrictions on header names
+                for frontend_field, csv_column in column_mapping.items():
+                    if not csv_column:
+                        continue
+                    
+                    # Try exact match first, then case-insensitive, then trimmed match
+                    csv_value = None
+                    if csv_column in row:
+                        csv_value = row[csv_column]
+                    else:
+                        # Try case-insensitive match
+                        for key in row.keys():
+                            if key and key.strip().lower() == csv_column.strip().lower():
+                                csv_value = row[key]
+                                break
+                    
+                    if csv_value is None:
+                        continue
+                    
+                    value = csv_value.strip() if csv_value else ''
+                    
+                    # Map to model field name
+                    if frontend_field in field_mapping:
+                        model_field = field_mapping[frontend_field]
+                        
+                        # Handle date field
+                        if model_field == 'birth_date':
+                            contact_data[model_field] = parse_date(value)
+                        else:
+                            contact_data[model_field] = value
+                
+                # Validate required fields
+                if not contact_data.get('fname'):
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'First name is required'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                if not contact_data.get('lname'):
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'Last name is required'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                if not contact_data.get('mobile'):
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'Mobile is required'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Check if email already exists (if provided)
+                email = contact_data.get('email', '').strip()
+                if email and Contact.objects.filter(email=email).exists():
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Email {email} already exists',
+                        'data': {'firstName': contact_data.get('fname'), 'lastName': contact_data.get('lname')}
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Generate contact ID
+                contact_id = uuid.uuid4().hex[:12]
+                while Contact.objects.filter(id=contact_id).exists():
+                    contact_id = uuid.uuid4().hex[:12]
+                
+                contact_data['id'] = contact_id
+                contact_data['creator'] = request.user
+                contact_data['status'] = status_obj
+                if source_obj:
+                    contact_data['source'] = source_obj
+                
+                # Create contact
+                contact = Contact.objects.create(**contact_data)
+                
+                # Create log entry
+                serializer = ContactSerializer(contact, context={'request': request})
+                contact_data_raw = serializer.data
+                contact_data_for_log = clean_contact_data_for_log(contact_data_raw, include_created_at=False)
+                
+                create_log_entry(
+                    event_type='addContact',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    request=request,
+                    old_value={},
+                    new_value=contact_data_for_log,
+                    contact_id=contact,
+                    creator_id=request.user if request.user.is_authenticated else None
+                )
+                
+                results['success'].append({
+                    'row': row_num,
+                    'contactId': contact.id,
+                    'name': f"{contact_data.get('fname')} {contact_data.get('lname')}"
+                })
+                results['imported'] += 1
+                
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                results['errors'].append({
+                    'row': row_num,
+                    'error': str(e),
+                    'details': error_details
+                })
+                results['failed'] += 1
+        
+        return Response(results, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET', 'PATCH'])
@@ -982,7 +1258,14 @@ def user_update(request, user_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def event_list(request):
-    events = Event.objects.filter(userId=request.user).order_by('datetime')
+    # Allow filtering by contactId if provided as query parameter
+    contact_id = request.query_params.get('contactId', None)
+    if contact_id:
+        # Return all events for this contact (all users can see events for contacts they have access to)
+        events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId').order_by('datetime')
+    else:
+        # If no contactId, return current user's events (for backward compatibility)
+        events = Event.objects.filter(userId=request.user).select_related('userId', 'contactId').order_by('datetime')
     serializer = EventSerializer(events, many=True)
     return Response({'events': serializer.data})
 
@@ -1005,9 +1288,18 @@ def event_create(request):
             except Contact.DoesNotExist:
                 pass
         
+        # Get user if userId provided, otherwise use current user
+        user = request.user
+        user_id = request.data.get('userId')
+        if user_id:
+            try:
+                user = DjangoUser.objects.get(id=user_id)
+            except DjangoUser.DoesNotExist:
+                pass  # Use current user as fallback
+        
         event = serializer.save(
             id=event_id,
-            userId=request.user,
+            userId=user,
             contactId=contact
         )
         return Response(EventSerializer(event).data, status=status.HTTP_201_CREATED)
@@ -1016,7 +1308,15 @@ def event_create(request):
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def event_update(request, event_id):
-    event = get_object_or_404(Event, id=event_id, userId=request.user)
+    # Allow updating if user owns the event OR if event is linked to a contact (for contact management)
+    try:
+        event = Event.objects.get(id=event_id)
+        # Check if user owns the event OR if event has a contact (allows contact-related edits)
+        if event.userId != request.user and not event.contactId:
+            return Response({'detail': 'You do not have permission to update this event.'}, status=status.HTTP_403_FORBIDDEN)
+    except Event.DoesNotExist:
+        return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
     serializer = EventSerializer(event, data=request.data, partial=True)
     if serializer.is_valid():
         # Get contact if contactId provided
@@ -1030,15 +1330,32 @@ def event_update(request, event_id):
         elif contact_id == '' or contact_id is None:
             contact = None
         
+        # Get user if userId provided, otherwise keep existing user
+        user = event.userId
+        user_id = request.data.get('userId')
+        if user_id:
+            try:
+                user = DjangoUser.objects.get(id=user_id)
+            except DjangoUser.DoesNotExist:
+                pass  # Keep existing user as fallback
+        
         # Update event with new data
-        event = serializer.save(contactId=contact)
+        event = serializer.save(contactId=contact, userId=user)
         return Response(EventSerializer(event).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def event_delete(request, event_id):
-    event = get_object_or_404(Event, id=event_id, userId=request.user)
+    # Allow deleting if user owns the event OR if event is linked to a contact (for contact management)
+    try:
+        event = Event.objects.get(id=event_id)
+        # Check if user owns the event OR if event has a contact (allows contact-related deletes)
+        if event.userId != request.user and not event.contactId:
+            return Response({'detail': 'You do not have permission to delete this event.'}, status=status.HTTP_403_FORBIDDEN)
+    except Event.DoesNotExist:
+        return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
     event.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1316,7 +1633,16 @@ def status_list(request):
 @permission_classes([IsAuthenticated])
 def status_create(request):
     """Create a new status"""
-    serializer = StatusSerializer(data=request.data)
+    # Normalize the data - ensure type has a default value if not provided
+    data = request.data.copy()
+    if 'type' not in data or not data['type']:
+        data['type'] = 'lead'
+    
+    # Ensure color is an empty string if not provided or None
+    if 'color' not in data or data['color'] is None:
+        data['color'] = ''
+    
+    serializer = StatusSerializer(data=data)
     if serializer.is_valid():
         # Generate status ID
         status_id = uuid.uuid4().hex[:12]
@@ -1332,6 +1658,11 @@ def status_create(request):
         
         status_obj = serializer.save(id=status_id, order_index=order_index)
         return Response(StatusSerializer(status_obj).data, status=status.HTTP_201_CREATED)
+    
+    # Log validation errors for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Status creation validation failed: {serializer.errors}, data: {request.data}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT', 'PATCH'])

@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Plus, Search, Eye, Calendar, FileText, Trash2, MoreVertical, Users, UserCheck, X } from 'lucide-react';
+import { Plus, Search, Eye, Calendar, FileText, Trash2, MoreVertical, Users, UserCheck, X, Upload } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -307,10 +307,16 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           <p className="page-subtitle">Gestion de vos contacts</p>
         </div>
         
-        <Button onClick={() => navigate('/contacts/add')}>
-          <Plus className="w-4 h-4 mr-2" />
-          Ajouter un contact
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/contacts/import')}>
+            <Upload className="w-4 h-4 mr-2" />
+            Importer CSV
+          </Button>
+          <Button onClick={() => navigate('/contacts/add')}>
+            <Plus className="w-4 h-4 mr-2" />
+            Ajouter un contact
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

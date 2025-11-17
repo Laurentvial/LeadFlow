@@ -133,19 +133,33 @@ class UserSerializer(serializers.ModelSerializer):
 
 class NoteSerializer(serializers.ModelSerializer):
     contactId = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), required=False, allow_null=True)
+    createdBy = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     
     class Meta:
         model = Note
-        fields = ['id', 'contactId', 'userId', 'text', 'created_at', 'updated_at']
+        fields = ['id', 'contactId', 'userId', 'text', 'created_at', 'updated_at', 'createdBy', 'createdAt']
         extra_kwargs = {
             'userId': {'read_only': True},
             'id': {'required': False}
         }
     
+    def get_createdBy(self, obj):
+        """Get the creator's name (first_name last_name or username)"""
+        if obj.userId:
+            first_name = obj.userId.first_name or ''
+            last_name = obj.userId.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.userId.username or ''
+        return ''
+    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         # Expose contactId as string ID in API response
         ret['contactId'] = instance.contactId.id if instance.contactId else None
+        ret['createdBy'] = self.get_createdBy(instance)
+        ret['createdAt'] = instance.created_at
         return ret
     
     def to_internal_value(self, data):
@@ -361,14 +375,15 @@ class TeamDetailSerializer(serializers.Serializer):
 
 class EventSerializer(serializers.ModelSerializer):
     contactId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    userId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     contactName = serializers.SerializerMethodField()
     createdBy = serializers.SerializerMethodField()
+    assignedTo = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
-        fields = ['id', 'datetime', 'userId', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy']
+        fields = ['id', 'datetime', 'userId', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
         extra_kwargs = {
-            'userId': {'read_only': True},
             'id': {'required': False}
         }
     
@@ -377,11 +392,18 @@ class EventSerializer(serializers.ModelSerializer):
             return f"{obj.contactId.fname} {obj.contactId.lname}"
         return None
     
-    def get_contactName(self, obj):
-        # Backward compatibility alias
-        return self.get_contactName(obj)
-    
     def get_createdBy(self, obj):
+        """Get the creator's name (currently same as userId since we don't track creator separately)"""
+        if obj.userId:
+            first_name = obj.userId.first_name or ''
+            last_name = obj.userId.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.userId.username or ''
+        return ''
+    
+    def get_assignedTo(self, obj):
+        """Get the assigned user's name (userId)"""
         if obj.userId:
             first_name = obj.userId.first_name or ''
             last_name = obj.userId.last_name or ''
@@ -527,11 +549,42 @@ class StatusSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
     orderIndex = serializers.IntegerField(source='order_index', required=False)
+    name = serializers.CharField(required=True, allow_blank=False)
+    type = serializers.ChoiceField(choices=Status.STATUS_TYPE_CHOICES, required=False, default='lead')
+    color = serializers.CharField(required=False, allow_blank=True, max_length=20)
     
     class Meta:
         model = Status
         fields = ['id', 'name', 'type', 'color', 'orderIndex', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def validate_name(self, value):
+        """Validate name field"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Name is required and cannot be blank")
+        return value.strip()
+    
+    def validate(self, data):
+        """Validate that name and type combination is unique"""
+        name = data.get('name', '').strip() if data.get('name') else ''
+        status_type = data.get('type') or 'lead'
+        
+        # Check if name is provided
+        if not name:
+            raise serializers.ValidationError({"name": "Name is required"})
+        
+        # Check for duplicate name + type combination
+        # Exclude current instance if updating
+        queryset = Status.objects.filter(name__iexact=name, type=status_type)
+        if self.instance:
+            queryset = queryset.exclude(id=self.instance.id)
+        
+        if queryset.exists():
+            raise serializers.ValidationError({
+                "name": f"A status with name '{name}' and type '{status_type}' already exists."
+            })
+        
+        return data
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)

@@ -90,6 +90,7 @@ class Status(models.Model):
     STATUS_TYPE_CHOICES = [
         ('lead', 'Lead'),
         ('contact', 'Contact'),
+        ('client', 'Client'),
     ]
     
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)

@@ -5,6 +5,19 @@
   gap: 1.5rem;
 }
 
+/* Content Grid - Calendar and Events List Side by Side */
+.planning-content-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 1024px) {
+  .planning-content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Header styles moved to PageHeader.css */
 
 .planning-icon {
@@ -68,6 +81,12 @@
   border-color: #bfdbfe;
 }
 
+.planning-calendar-day-selected {
+  background-color: #dbeafe;
+  border-color: #3b82f6;
+  border-width: 2px;
+}
+
 .planning-day-number {
   font-size: 0.875rem;
   margin-bottom: 0.25rem;
@@ -112,6 +131,16 @@
   justify-content: space-between;
   padding: 1rem;
   border: 1px solid #e2e8f0;
+}
+
+.planning-event-past {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+  opacity: 0.6;
+}
+
+.planning-icon-slate-light {
+  color: #94a3b8;
 }
 
 .planning-event-content {

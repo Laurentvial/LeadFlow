@@ -26,6 +26,16 @@ body:has(.modal-overlay) {
   margin: 0 1rem;
 }
 
+.modal-content-large {
+  max-width: 56rem;
+}
+
+.modal-body {
+  max-height: calc(90vh - 120px);
+  overflow-y: auto;
+  padding: 1rem 0;
+}
+
 /* Modal Header */
 .modal-header {
   display: flex;

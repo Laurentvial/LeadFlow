@@ -6,9 +6,11 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
+import { useUsers } from '../hooks/useUsers';
+import { AppointmentCard } from './AppointmentCard';
 import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
 import '../styles/PageHeader.css';
@@ -17,9 +19,11 @@ import LoadingIndicator from './LoadingIndicator';
 
 export function PlanningCalendar() {
   const { currentUser } = useUser();
+  const { users } = useUsers();
   const [events, setEvents] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState<number | null>(null); // Selected day for filtering
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
@@ -29,15 +33,27 @@ export function PlanningCalendar() {
     hour: '09',
     minute: '00',
     clientId: '',
-    comment: ''
+    comment: '',
+    userId: ''
   });
   const [editFormData, setEditFormData] = useState({
     date: '',
     hour: '09',
     minute: '00',
     clientId: '',
-    comment: ''
+    comment: '',
+    userId: ''
   });
+
+  // Initialize userId with current user when modal opens
+  useEffect(() => {
+    if (isModalOpen && currentUser?.id && !formData.userId) {
+      setFormData(prev => ({ 
+        ...prev, 
+        userId: prev.userId || currentUser.id 
+      }));
+    }
+  }, [isModalOpen, currentUser]);
 
   useEffect(() => {
     loadData();
@@ -69,13 +85,14 @@ export function PlanningCalendar() {
         method: 'POST',
         body: JSON.stringify({
           datetime: `${formData.date}T${timeString}`,
-          clientId: formData.clientId || null,
+          contactId: formData.clientId || null,
+          userId: formData.userId || currentUser?.id || null,
           comment: formData.comment || ''
         }),
       });
       
       setIsModalOpen(false);
-      setFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '' });
+      setFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
       loadData();
       toast.success('Événement créé avec succès');
     } catch (error) {
@@ -95,8 +112,9 @@ export function PlanningCalendar() {
       date: dateStr,
       hour: hour,
       minute: minute,
-      clientId: event.clientId_read || '',
-      comment: event.comment || ''
+      clientId: event.clientId_read || event.contactId || '',
+      comment: event.comment || '',
+      userId: event.userId || currentUser?.id || ''
     });
     setIsEditModalOpen(true);
   }
@@ -112,14 +130,15 @@ export function PlanningCalendar() {
         method: 'PUT',
         body: JSON.stringify({
           datetime: `${editFormData.date}T${timeString}`,
-          clientId: editFormData.clientId || null,
+          contactId: editFormData.clientId || null,
+          userId: editFormData.userId || currentUser?.id || null,
           comment: editFormData.comment || ''
         }),
       });
       
       setIsEditModalOpen(false);
       setEditingEvent(null);
-      setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '' });
+      setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
       loadData();
       toast.success('Événement modifié avec succès');
     } catch (error) {
@@ -280,6 +299,27 @@ export function PlanningCalendar() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="modal-form-field">
+                  <Label>Utilisateur</Label>
+                  <Select
+                    value={formData.userId || currentUser?.id || ''}
+                    onValueChange={(value) => setFormData({ ...formData, userId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionner un utilisateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={user.id}>
+                          {user.firstName && user.lastName 
+                            ? `${user.firstName} ${user.lastName}` 
+                            : user.email || user.username || `User ${user.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 
                 <div className="modal-form-field">
                   <Label>Commentaire (optionnel)</Label>
@@ -307,6 +347,7 @@ export function PlanningCalendar() {
           <div className="modal-overlay" onClick={() => {
             setIsEditModalOpen(false);
             setEditingEvent(null);
+            setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
           }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
@@ -319,15 +360,17 @@ export function PlanningCalendar() {
                   onClick={() => {
                     setIsEditModalOpen(false);
                     setEditingEvent(null);
+                    setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
                   }}
                 >
-                  <X className="planning-icon-md" />
+                  <X className="w-4 h-4" />
                 </Button>
               </div>
               <form onSubmit={handleUpdateEvent} className="modal-form">
                 <div className="modal-form-field">
-                  <Label>Date</Label>
+                  <Label htmlFor="edit-event-date">Date</Label>
                   <DateInput
+                    id="edit-event-date"
                     value={editFormData.date}
                     onChange={(value) => setEditFormData({ ...editFormData, date: value })}
                     required
@@ -336,32 +379,32 @@ export function PlanningCalendar() {
                 
                 <div className="modal-form-field">
                   <Label>Heure</Label>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div className="flex gap-2 items-center">
                     <Select
                       value={editFormData.hour}
                       onValueChange={(value) => setEditFormData({ ...editFormData, hour: value })}
                     >
-                      <SelectTrigger style={{ flex: 1 }}>
-                        <SelectValue placeholder="Heure" />
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {Array.from({ length: 24 }, (_, i) => {
                           const hour = i.toString().padStart(2, '0');
                           return (
                             <SelectItem key={hour} value={hour}>
-                              {hour}
+                              {hour}h
                             </SelectItem>
                           );
                         })}
                       </SelectContent>
                     </Select>
-                    <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>:</span>
+                    
                     <Select
                       value={editFormData.minute}
                       onValueChange={(value) => setEditFormData({ ...editFormData, minute: value })}
                     >
-                      <SelectTrigger style={{ flex: 1 }}>
-                        <SelectValue placeholder="Minute" />
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {Array.from({ length: 60 }, (_, i) => {
@@ -378,9 +421,12 @@ export function PlanningCalendar() {
                 </div>
                 
                 <div className="modal-form-field">
-                  <Label>Client (optionnel)</Label>
-                  <Select value={editFormData.clientId || "none"} onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value === "none" ? "" : value })}>
-                    <SelectTrigger>
+                  <Label htmlFor="edit-event-client">Client (optionnel)</Label>
+                  <Select 
+                    value={editFormData.clientId || "none"} 
+                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value === "none" ? "" : value })}
+                  >
+                    <SelectTrigger id="edit-event-client">
                       <SelectValue placeholder="Sélectionner un client" />
                     </SelectTrigger>
                     <SelectContent>
@@ -393,24 +439,54 @@ export function PlanningCalendar() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="modal-form-field">
+                  <Label htmlFor="edit-event-user">Utilisateur</Label>
+                  <Select
+                    value={editFormData.userId || currentUser?.id || ''}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, userId: value })}
+                  >
+                    <SelectTrigger id="edit-event-user">
+                      <SelectValue placeholder="Sélectionner un utilisateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={user.id}>
+                          {user.firstName && user.lastName 
+                            ? `${user.firstName} ${user.lastName}` 
+                            : user.email || user.username || `User ${user.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 
                 <div className="modal-form-field">
-                  <Label>Commentaire (optionnel)</Label>
+                  <Label htmlFor="edit-event-comment">Commentaire (optionnel)</Label>
                   <Textarea
+                    id="edit-event-comment"
                     value={editFormData.comment}
                     onChange={(e) => setEditFormData({ ...editFormData, comment: e.target.value })}
-                    placeholder="Notes sur le rendez-vous..."
+                    placeholder="Ajoutez un commentaire..."
+                    rows={3}
+                    className="resize-none"
                   />
                 </div>
                 
                 <div className="modal-form-actions">
-                  <Button type="button" variant="outline" onClick={() => {
-                    setIsEditModalOpen(false);
-                    setEditingEvent(null);
-                  }}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setIsEditModalOpen(false);
+                      setEditingEvent(null);
+                      setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+                    }}
+                  >
                     Annuler
                   </Button>
                   <Button type="submit">
+                    <Send className="w-4 h-4 mr-2" />
                     Enregistrer
                   </Button>
                 </div>
@@ -420,167 +496,168 @@ export function PlanningCalendar() {
         )}
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="planning-calendar-header">
-            <CardTitle>
-              {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
-            </CardTitle>
-            <div className="planning-calendar-nav">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))}
-              >
-                ←
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedDate(new Date())}
-              >
-                Aujourd'hui
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))}
-              >
-                →
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="planning-calendar-grid">
-            {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'].map((day) => (
-              <div key={day} className="planning-weekday">
-                {day}
-              </div>
-            ))}
-            
-            {Array.from({ length: firstDayOfMonth }).map((_, i) => (
-              <div key={`empty-${i}`} className="planning-calendar-empty"></div>
-            ))}
-            
-            {Array.from({ length: daysInMonth }).map((_, i) => {
-              const day = i + 1;
-              const dayEvents = getEventsForDay(day);
-              const isToday = new Date().getDate() === day && 
-                             new Date().getMonth() === selectedDate.getMonth() &&
-                             new Date().getFullYear() === selectedDate.getFullYear();
-              
-              return (
-                <div
-                  key={day}
-                  className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''}`}
+      {/* Calendar and Events List Side by Side */}
+      <div className="planning-content-grid">
+        <Card>
+          <CardHeader>
+            <div className="planning-calendar-header">
+              <CardTitle>
+                {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+              </CardTitle>
+              <div className="planning-calendar-nav">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
+                    setSelectedDay(null); // Reset selection when changing month
+                  }}
                 >
-                  <div className="planning-day-number">{day}</div>
-                  <div className="planning-day-events">
-                    {dayEvents.map((event) => {
-                      const eventDate = new Date(event.datetime);
-                      const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
-                      
-                      return (
-                        <div key={event.id} className="planning-event-badge">
-                          <div className="planning-event-time">
-                            <Clock className="planning-icon-sm" />
-                            {time}
-                          </div>
-                          {event.clientName && (
-                            <div className="planning-event-client">{event.clientName}</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  ←
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedDate(new Date());
+                    setSelectedDay(null); // Reset selection when going to today
+                  }}
+                >
+                  Aujourd'hui
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
+                    setSelectedDay(null); // Reset selection when changing month
+                  }}
+                >
+                  →
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="planning-calendar-grid">
+              {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'].map((day) => (
+                <div key={day} className="planning-weekday">
+                  {day}
                 </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Events List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Liste des rendez-vous</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {events.length > 0 ? (
-            <div className="planning-events-list">
-              {events.map((event) => {
-                const datetime = new Date(event.datetime);
+              ))}
+              
+              {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+                <div key={`empty-${i}`} className="planning-calendar-empty"></div>
+              ))}
+              
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const day = i + 1;
+                const dayEvents = getEventsForDay(day);
+                const isToday = new Date().getDate() === day && 
+                               new Date().getMonth() === selectedDate.getMonth() &&
+                               new Date().getFullYear() === selectedDate.getFullYear();
+                const isSelected = selectedDay === day;
                 
                 return (
-                  <div key={event.id} className="planning-event-item">
-                    <div className="planning-event-content">
-                      <div className="planning-event-meta">
-                        <div className="planning-event-date-time">
-                          <div className="planning-event-date-row">
-                            <CalendarIcon className="planning-icon-md planning-icon-slate" />
-                            <span>{datetime.toLocaleDateString('fr-FR')}</span>
-                          </div>
-                          <div className="planning-event-time-row">
-                            <Clock className="planning-icon-md planning-icon-slate" />
-                            <span>{datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
-                          </div>
-                                                  
-                          {event.clientName && (
-                            <div className="planning-event-client-row">
-                              <User className="planning-icon-md planning-icon-slate" />
-                              <span>{event.clientName}</span>
+                  <div
+                    key={day}
+                    className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
+                    onClick={() => {
+                      // Toggle selection: if same day clicked, deselect; otherwise select new day
+                      setSelectedDay(isSelected ? null : day);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <div className="planning-day-number">{day}</div>
+                    <div className="planning-day-events">
+                      {dayEvents.map((event) => {
+                        const eventDate = new Date(event.datetime);
+                        const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                        
+                        return (
+                          <div key={event.id} className="planning-event-badge">
+                            <div className="planning-event-time">
+                              <Clock className="planning-icon-sm" />
+                              {time}
                             </div>
-                          )}
-                        </div>
-
-                      </div>
-                      
-                      {event.comment && (
-                        <p className="planning-event-comment">{event.comment}</p>
-                      )}
-                      
-                      {event.created_at && event.createdBy && (
-                        <p className="planning-event-created-info">
-                          Créé le {new Date(event.created_at).toLocaleDateString('fr-FR', { 
-                            day: '2-digit', 
-                            month: '2-digit', 
-                            year: 'numeric'
-                          })} à {new Date(event.created_at).toLocaleTimeString('fr-FR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false
-                          })} par {event.createdBy}
-                        </p>
-                      )}
-                    </div>
-                    
-                    <div className="planning-event-actions">
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        onClick={() => handleEditEvent(event)}
-                      >
-                        <Pencil className="planning-icon-md" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => handleDeleteEvent(event.id)}
-                        className="planning-delete-button"
-                      >
-                        <Trash2 className="planning-icon-md" />
-                      </Button>
+                            {event.clientName && (
+                              <div className="planning-event-client">{event.clientName}</div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
               })}
             </div>
-          ) : (
-            <p className="planning-empty-message">Aucun rendez-vous</p>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        {/* Events List */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>
+                Liste des rendez-vous
+                {selectedDay !== null && (
+                  <span className="text-sm font-normal text-slate-500 ml-2">
+                    ({selectedDay}/{selectedDate.getMonth() + 1}/{selectedDate.getFullYear()})
+                  </span>
+                )}
+              </CardTitle>
+              {selectedDay !== null && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedDay(null)}
+                >
+                  Afficher tout
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {(() => {
+              // Filter events by selected day if a day is selected
+              let filteredEvents = events;
+              if (selectedDay !== null) {
+                const selectedDateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
+                filteredEvents = events.filter(event => {
+                  if (!event.datetime) return false;
+                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
+                  return eventDate === selectedDateStr;
+                });
+              }
+
+              return filteredEvents.length > 0 ? (
+                <div className="space-y-3">
+                  {[...filteredEvents]
+                    .sort((a, b) => {
+                      const dateA = new Date(a.datetime).getTime();
+                      const dateB = new Date(b.datetime).getTime();
+                      return dateB - dateA; // Descending order (most recent first)
+                    })
+                    .map((event) => (
+                      <AppointmentCard
+                        key={event.id}
+                        appointment={event}
+                        variant="planning"
+                        showActions={true}
+                        onEdit={handleEditEvent}
+                        onDelete={handleDeleteEvent}
+                      />
+                    ))}
+                </div>
+              ) : (
+                <p className="planning-empty-message">
+                  {selectedDay !== null ? 'Aucun rendez-vous pour cette date' : 'Aucun rendez-vous'}
+                </p>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
