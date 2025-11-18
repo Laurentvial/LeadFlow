@@ -10,6 +10,38 @@ const getEnvVar = (key: string): string | undefined => {
 
 const apiUrl = getEnvVar('VITE_URL') || 'http://127.0.0.1:8000';
 
+// Request deduplication: Track ongoing requests to prevent duplicate calls
+const pendingRequests = new Map<string, Promise<any>>();
+
+// Response cache: Cache GET requests for a short period
+interface CacheEntry {
+  data: any;
+  timestamp: number;
+}
+
+const responseCache = new Map<string, CacheEntry>();
+// Increase cache TTL for production to reduce API calls
+const CACHE_TTL = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' 
+  ? 30000 // 30 seconds for production
+  : 5000; // 5 seconds for development
+
+// Generate a cache key from endpoint and options
+function getCacheKey(endpoint: string, options: RequestInit): string {
+  const method = options.method || 'GET';
+  const body = options.body ? JSON.stringify(options.body) : '';
+  return `${method}:${endpoint}:${body}`;
+}
+
+// Check if a request should be cached (only GET requests)
+function shouldCache(method: string): boolean {
+  return !method || method === 'GET';
+}
+
+// Check if cached data is still valid
+function isCacheValid(entry: CacheEntry): boolean {
+  return Date.now() - entry.timestamp < CACHE_TTL;
+}
+
 // Helper function to refresh access token
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem(REFRESH_TOKEN);
@@ -45,58 +77,126 @@ async function refreshAccessToken(): Promise<string | null> {
 
 // Helper function for API calls that returns data directly
 export async function apiCall(endpoint: string, options: RequestInit = {}) {
-  let token = localStorage.getItem(ACCESS_TOKEN);
+  const method = options.method || 'GET';
+  const cacheKey = getCacheKey(endpoint, options);
   
-  // Don't set Content-Type for FormData, let the browser set it with boundary
-  const isFormData = options.body instanceof FormData;
-  const headers: HeadersInit = {
-    ...options.headers,
-  };
-  
-  // Only add Authorization header if we have a token
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Check cache first for GET requests
+  if (shouldCache(method)) {
+    const cached = responseCache.get(cacheKey);
+    if (cached && isCacheValid(cached)) {
+      return cached.data;
+    }
   }
   
-  if (!isFormData) {
-    headers['Content-Type'] = 'application/json';
+  // Check if there's already a pending request for this endpoint
+  const pendingRequest = pendingRequests.get(cacheKey);
+  if (pendingRequest) {
+    return pendingRequest;
   }
   
-  let response = await fetch(`${apiUrl}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  // If 401, try to refresh token and retry once
-  if (response.status === 401) {
-    if (!token) {
-      // No token available, user needs to log in
-      const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
-      const errorMessage = error.detail || error.error || error.message || 'Authentication required. Please log in.';
-      const errorObj = new Error(errorMessage);
-      (errorObj as any).response = error;
-      (errorObj as any).status = 401;
-      throw errorObj;
+  // Create the actual request function
+  const makeRequest = async () => {
+    let token = localStorage.getItem(ACCESS_TOKEN);
+    
+    // Don't set Content-Type for FormData, let the browser set it with boundary
+    const isFormData = options.body instanceof FormData;
+    const headers: HeadersInit = {
+      ...options.headers,
+    };
+    
+    // Only add Authorization header if we have a token
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
     
-    const newToken = await refreshAccessToken();
-    if (newToken) {
-      // Retry the request with the new token
-      const retryHeaders: HeadersInit = {
-        ...options.headers,
-        'Authorization': `Bearer ${newToken}`,
-      };
-      if (!isFormData) {
-        retryHeaders['Content-Type'] = 'application/json';
-      }
+    if (!isFormData) {
+      headers['Content-Type'] = 'application/json';
+    }
+    
+    // Add keep-alive header for better connection reuse
+    headers['Connection'] = 'keep-alive';
+    
+    // Add timeout for production to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
+    let response;
+    try {
       response = await fetch(`${apiUrl}${endpoint}`, {
         ...options,
-        headers: retryHeaders,
-        body: options.body, // Ensure body is preserved
+        headers,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        const timeoutError = new Error('Request timeout - please check your connection');
+        (timeoutError as any).status = 408;
+        throw timeoutError;
+      }
+      throw error;
+    }
+
+    // If 401, try to refresh token and retry once
+    if (response.status === 401) {
+      if (!token) {
+        // No token available, user needs to log in
+        const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
+        const errorMessage = error.detail || error.error || error.message || 'Authentication required. Please log in.';
+        const errorObj = new Error(errorMessage);
+        (errorObj as any).response = error;
+        (errorObj as any).status = 401;
+        throw errorObj;
+      }
       
-      // If retry still fails with 401, throw error
-      if (response.status === 401) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        // Retry the request with the new token
+        const retryHeaders: HeadersInit = {
+          ...options.headers,
+          'Authorization': `Bearer ${newToken}`,
+          'Connection': 'keep-alive',
+        };
+        if (!isFormData) {
+          retryHeaders['Content-Type'] = 'application/json';
+        }
+        
+        // Add timeout for retry as well
+        const retryController = new AbortController();
+        const retryTimeoutId = setTimeout(() => retryController.abort(), 30000);
+        
+        try {
+          response = await fetch(`${apiUrl}${endpoint}`, {
+            ...options,
+            headers: retryHeaders,
+            body: options.body, // Ensure body is preserved
+            signal: retryController.signal,
+          });
+          clearTimeout(retryTimeoutId);
+        } catch (retryError: any) {
+          clearTimeout(retryTimeoutId);
+          if (retryError.name === 'AbortError') {
+            const timeoutError = new Error('Request timeout - please check your connection');
+            (timeoutError as any).status = 408;
+            throw timeoutError;
+          }
+          throw retryError;
+        }
+        
+        // If retry still fails with 401, throw error
+        if (response.status === 401) {
+          localStorage.removeItem(ACCESS_TOKEN);
+          localStorage.removeItem(REFRESH_TOKEN);
+          const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
+          const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
+          const errorObj = new Error(errorMessage);
+          (errorObj as any).response = error;
+          (errorObj as any).status = 401;
+          throw errorObj;
+        }
+      } else {
+        // Token refresh failed, clear tokens and throw authentication error
         localStorage.removeItem(ACCESS_TOKEN);
         localStorage.removeItem(REFRESH_TOKEN);
         const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
@@ -106,43 +206,68 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         (errorObj as any).status = 401;
         throw errorObj;
       }
-    } else {
-      // Token refresh failed, clear tokens and throw authentication error
-      localStorage.removeItem(ACCESS_TOKEN);
-      localStorage.removeItem(REFRESH_TOKEN);
-      const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
-      const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'API request failed' }));
+      const errorMessage = error.detail || error.error || error.message || 'API request failed';
       const errorObj = new Error(errorMessage);
       (errorObj as any).response = error;
-      (errorObj as any).status = 401;
+      (errorObj as any).status = response.status;
       throw errorObj;
     }
-  }
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'API request failed' }));
-    const errorMessage = error.detail || error.error || error.message || 'API request failed';
-    const errorObj = new Error(errorMessage);
-    (errorObj as any).response = error;
-    (errorObj as any).status = response.status;
-    throw errorObj;
-  }
+    // Handle 204 No Content responses
+    if (response.status === 204) {
+      return null;
+    }
 
-  // Handle 204 No Content responses
-  if (response.status === 204) {
-    return null;
-  }
+    // Check if response has content before parsing JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return null;
+    }
 
-  // Check if response has content before parsing JSON
-  const contentType = response.headers.get('content-type');
-  if (!contentType || !contentType.includes('application/json')) {
-    return null;
-  }
+    const text = await response.text();
+    if (!text) {
+      return null;
+    }
 
-  const text = await response.text();
-  if (!text) {
-    return null;
-  }
+    const data = JSON.parse(text);
+    
+    // Cache GET responses
+    if (shouldCache(method)) {
+      responseCache.set(cacheKey, {
+        data,
+        timestamp: Date.now(),
+      });
+    }
+    
+    return data;
+  };
+  
+  // Store the promise to prevent duplicate requests
+  const requestPromise = makeRequest().finally(() => {
+    // Remove from pending requests when done
+    pendingRequests.delete(cacheKey);
+  });
+  
+  pendingRequests.set(cacheKey, requestPromise);
+  
+  return requestPromise;
+}
 
-  return JSON.parse(text);
+// Clear cache for a specific endpoint (useful after mutations)
+export function clearApiCache(endpoint?: string) {
+  if (endpoint) {
+    // Clear all cache entries matching this endpoint
+    for (const [key] of responseCache) {
+      if (key.includes(endpoint)) {
+        responseCache.delete(key);
+      }
+    }
+  } else {
+    // Clear all cache
+    responseCache.clear();
+  }
 }

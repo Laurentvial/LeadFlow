@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiCall } from '../utils/api';
+import { apiCall, clearApiCache } from '../utils/api';
 import { Team } from '../types';
 
 interface UseTeamsOptions {
@@ -71,6 +71,7 @@ export function useTeams(options: UseTeamsOptions = { autoLoad: true }) {
   }, [autoLoad, loadTeams]);
 
   const refetch = useCallback(() => {
+    clearApiCache('/api/teams/');
     teamsCache = [];
     teamsCacheTime = 0;
     return loadTeams(true);

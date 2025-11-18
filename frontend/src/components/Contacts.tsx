@@ -60,29 +60,22 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   useEffect(() => {
     loadData();
-    loadStatuses();
   }, []);
 
   async function loadData() {
     try {
-      const [contactsData, teamsData] = await Promise.all([
+      // Load all data in parallel for better performance
+      const [contactsData, teamsData, statusesData] = await Promise.all([
         apiCall('/api/contacts/'),
-        apiCall('/api/teams/')
+        apiCall('/api/teams/'),
+        apiCall('/api/statuses/')
       ]);
       
       setContacts(contactsData.contacts || []);
       setTeams(teamsData.teams || []);
+      setStatuses(statusesData.statuses || []);
     } catch (error) {
       console.error('Error loading contacts:', error);
-    }
-  }
-
-  async function loadStatuses() {
-    try {
-      const data = await apiCall('/api/statuses/');
-      setStatuses(data.statuses || []);
-    } catch (error) {
-      console.error('Error loading statuses:', error);
     }
   }
 

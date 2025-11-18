@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiCall } from '../utils/api';
+import { apiCall, clearApiCache } from '../utils/api';
 
 export function useStatuses() {
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -24,6 +24,11 @@ export function useStatuses() {
     }
   }
 
-  return { statuses, loading, error, reload: loadStatuses };
+  const reload = async () => {
+    clearApiCache('/api/statuses/');
+    await loadStatuses();
+  };
+
+  return { statuses, loading, error, reload };
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiCall } from '../utils/api';
+import { apiCall, clearApiCache } from '../utils/api';
 
 export function useSources() {
   const [sources, setSources] = useState<any[]>([]);
@@ -24,6 +24,11 @@ export function useSources() {
     }
   }
 
-  return { sources, loading, error, reload: loadSources };
+  const reload = async () => {
+    clearApiCache('/api/sources/');
+    await loadSources();
+  };
+
+  return { sources, loading, error, reload };
 }
 

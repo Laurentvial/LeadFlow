@@ -56,6 +56,8 @@ export default defineConfig(({ mode }) => ({
       target: 'esnext',
       outDir: 'dist',
       manifest: true,
+      minify: 'esbuild', // esbuild is faster and already included
+      // Note: To remove console.log, use esbuild's drop option or a plugin
       rollupOptions: {
         output: {
           manualChunks: {

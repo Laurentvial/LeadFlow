@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiCall } from '../utils/api';
+import { apiCall, clearApiCache } from '../utils/api';
 import { User } from '../types';
 
 // Shared loading state to prevent duplicate requests
@@ -66,7 +66,8 @@ export function useUsers() {
     
     try {
       await apiCall(`/api/users/${userId}/`, { method: 'DELETE' });
-      // Invalidate cache and force refresh
+      // Clear API cache and invalidate local cache
+      clearApiCache('/api/users/');
       usersCache = [];
       usersCacheTime = 0;
       await loadUsers(true);
@@ -78,7 +79,8 @@ export function useUsers() {
   const toggleUserActive = useCallback(async (userId: string) => {
     try {
       await apiCall(`/api/users/${userId}/toggle-active/`, { method: 'POST' });
-      // Invalidate cache and force refresh
+      // Clear API cache and invalidate local cache
+      clearApiCache('/api/users/');
       usersCache = [];
       usersCacheTime = 0;
       await loadUsers(true);
@@ -88,6 +90,7 @@ export function useUsers() {
   }, [loadUsers]);
 
   const refetch = useCallback(() => {
+    clearApiCache('/api/users/');
     usersCache = [];
     usersCacheTime = 0;
     return loadUsers(true);
