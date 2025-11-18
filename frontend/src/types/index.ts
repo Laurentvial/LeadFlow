@@ -13,6 +13,8 @@ export interface User {
   isTeleoperateur?: boolean;
   isConfirmateur?: boolean;
   dataAccess?: 'all' | 'team_only' | 'own_only'; // Data access level from role
+  createdAt?: string; // Creation date
+  dateCreated?: string; // Alternative creation date field
 }
 
 // Team types

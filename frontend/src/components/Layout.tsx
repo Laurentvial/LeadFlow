@@ -57,13 +57,13 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div style={{ display: 'block', minHeight: '100vh' }}>
       <Header user={currentUser} />
-      <div style={{ display: 'flex' }}>
+      <div style={{ display: 'flex', width: '100%', overflow: 'hidden' }}>
         <Sidebar 
           currentPage={getCurrentPage()} 
           onNavigate={handleNavigate} 
           userRole={currentUser?.roleName || currentUser?.role || 'admin'} 
         />
-        <div style={{ width: '100%', padding: '30px' }}>
+        <div style={{ flex: 1, minWidth: 0, padding: '30px', overflow: 'hidden' }}>
           {children}
         </div>
       </div>

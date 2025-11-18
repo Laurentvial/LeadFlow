@@ -21,7 +21,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from django.utils import timezone
+from django.db.models import Count, Q, Sum
 import boto3
 from botocore.exceptions import ClientError
 import os
@@ -582,9 +584,10 @@ def csv_import_contacts(request):
     
     default_status_id = request.data.get('defaultStatusId')
     default_source_id = request.data.get('defaultSourceId')
+    default_teleoperator_id = request.data.get('defaultTeleoperatorId')
     
-    # Validate required mappings
-    required_fields = ['firstName', 'lastName', 'mobile']
+    # Validate required mappings - only firstName is required
+    required_fields = ['firstName']
     missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
     if missing_fields:
         return Response({
@@ -607,6 +610,12 @@ def csv_import_contacts(request):
         source_obj = None
         if default_source_id:
             source_obj = Source.objects.filter(id=default_source_id).first()
+        
+        teleoperator_obj = None
+        if default_teleoperator_id:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            teleoperator_obj = User.objects.filter(id=default_teleoperator_id).first()
         
         # Field mapping from frontend names to model field names
         field_mapping = {
@@ -687,27 +696,11 @@ def csv_import_contacts(request):
                         else:
                             contact_data[model_field] = value
                 
-                # Validate required fields
+                # Validate required fields - only firstName is required
                 if not contact_data.get('fname'):
                     results['errors'].append({
                         'row': row_num,
                         'error': 'First name is required'
-                    })
-                    results['failed'] += 1
-                    continue
-                
-                if not contact_data.get('lname'):
-                    results['errors'].append({
-                        'row': row_num,
-                        'error': 'Last name is required'
-                    })
-                    results['failed'] += 1
-                    continue
-                
-                if not contact_data.get('mobile'):
-                    results['errors'].append({
-                        'row': row_num,
-                        'error': 'Mobile is required'
                     })
                     results['failed'] += 1
                     continue
@@ -733,6 +726,8 @@ def csv_import_contacts(request):
                 contact_data['status'] = status_obj
                 if source_obj:
                     contact_data['source'] = source_obj
+                if teleoperator_obj:
+                    contact_data['teleoperator'] = teleoperator_obj
                 
                 # Create contact
                 contact = Contact.objects.create(**contact_data)
@@ -752,10 +747,15 @@ def csv_import_contacts(request):
                     creator_id=request.user if request.user.is_authenticated else None
                 )
                 
+                # Build name for display (only firstName is required)
+                contact_name = contact_data.get('fname', '')
+                if contact_data.get('lname'):
+                    contact_name = f"{contact_data.get('fname')} {contact_data.get('lname')}"
+                
                 results['success'].append({
                     'row': row_num,
                     'contactId': contact.id,
-                    'name': f"{contact_data.get('fname')} {contact_data.get('lname')}"
+                    'name': contact_name
                 })
                 results['imported'] += 1
                 
@@ -2046,5 +2046,156 @@ def status_reorder(request):
         return Response(
             {'error': str(e)}, 
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_stats(request):
+    """Get dashboard statistics"""
+    try:
+        # Get filter parameters
+        date_from = request.GET.get('dateFrom')
+        date_to = request.GET.get('dateTo')
+        team_id = request.GET.get('teamId')
+        
+        # Base querysets
+        contacts_qs = Contact.objects.all()
+        notes_qs = Note.objects.all()
+        events_qs = Event.objects.all()
+        users_qs = UserDetails.objects.filter(active=True)
+        
+        # Apply date filters
+        if date_from:
+            try:
+                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                contacts_qs = contacts_qs.filter(created_at__date__gte=date_from_obj)
+                notes_qs = notes_qs.filter(created_at__date__gte=date_from_obj)
+                events_qs = events_qs.filter(created_at__date__gte=date_from_obj)
+            except ValueError:
+                pass
+        
+        if date_to:
+            try:
+                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                contacts_qs = contacts_qs.filter(created_at__date__lte=date_to_obj)
+                notes_qs = notes_qs.filter(created_at__date__lte=date_to_obj)
+                events_qs = events_qs.filter(created_at__date__lte=date_to_obj)
+            except ValueError:
+                pass
+        
+        # Apply team filter
+        if team_id and team_id != 'all':
+            try:
+                team = Team.objects.get(id=team_id)
+                team_members = TeamMember.objects.filter(team=team).values_list('user__django_user', flat=True)
+                contacts_qs = contacts_qs.filter(
+                    Q(creator__in=team_members) | 
+                    Q(teleoperator__in=team_members) | 
+                    Q(confirmateur__in=team_members)
+                )
+                notes_qs = notes_qs.filter(userId__in=team_members)
+                events_qs = events_qs.filter(userId__in=team_members)
+            except Team.DoesNotExist:
+                pass
+        
+        # Calculate statistics
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+        
+        # Total counts
+        total_contacts = contacts_qs.count()
+        total_notes = notes_qs.count()
+        total_events = events_qs.count()
+        total_users = users_qs.count()
+        
+        # Contacts by status type
+        contacts_by_status_type = contacts_qs.values('status__type').annotate(count=Count('id'))
+        leads_count = sum(item['count'] for item in contacts_by_status_type if item['status__type'] == 'lead')
+        contacts_count = sum(item['count'] for item in contacts_by_status_type if item['status__type'] == 'contact')
+        clients_count = sum(item['count'] for item in contacts_by_status_type if item['status__type'] == 'client')
+        
+        # Recent activity
+        contacts_today = contacts_qs.filter(created_at__gte=today_start).count()
+        contacts_this_week = contacts_qs.filter(created_at__gte=week_start).count()
+        contacts_this_month = contacts_qs.filter(created_at__gte=month_start).count()
+        
+        notes_today = notes_qs.filter(created_at__gte=today_start).count()
+        events_today = events_qs.filter(created_at__gte=today_start).count()
+        
+        # Contacts by source
+        contacts_by_source = contacts_qs.values('source__name').annotate(count=Count('id')).order_by('-count')[:5]
+        top_sources = [{'name': item['source__name'] or 'Non défini', 'count': item['count']} for item in contacts_by_source]
+        
+        # Contacts by teleoperator
+        contacts_by_teleoperator = contacts_qs.filter(teleoperator__isnull=False).values(
+            'teleoperator__first_name', 
+            'teleoperator__last_name'
+        ).annotate(count=Count('id')).order_by('-count')[:5]
+        top_teleoperators = [
+            {
+                'name': f"{item['teleoperator__first_name'] or ''} {item['teleoperator__last_name'] or ''}".strip() or 'Non défini',
+                'count': item['count']
+            } 
+            for item in contacts_by_teleoperator
+        ]
+        
+        # Upcoming events (next 7 days)
+        upcoming_events = events_qs.filter(
+            datetime__gte=now,
+            datetime__lte=now + timedelta(days=7)
+        ).order_by('datetime')[:10]
+        
+        upcoming_events_data = []
+        for event in upcoming_events:
+            upcoming_events_data.append({
+                'id': event.id,
+                'datetime': event.datetime.isoformat(),
+                'contactId': event.contactId.id if event.contactId else None,
+                'contactName': f"{event.contactId.fname} {event.contactId.lname}".strip() if event.contactId else None,
+                'comment': event.comment,
+                'userId': event.userId.id,
+                'userName': f"{event.userId.first_name} {event.userId.last_name}".strip() or event.userId.username
+            })
+        
+        # Recent contacts (last 10)
+        recent_contacts = contacts_qs.order_by('-created_at')[:10]
+        recent_contacts_data = []
+        for contact in recent_contacts:
+            recent_contacts_data.append({
+                'id': contact.id,
+                'name': f"{contact.fname} {contact.lname}".strip(),
+                'status': contact.status.name if contact.status else None,
+                'source': contact.source.name if contact.source else None,
+                'createdAt': contact.created_at.isoformat()
+            })
+        
+        return Response({
+            'totalContacts': total_contacts,
+            'totalLeads': leads_count,
+            'totalContactsCount': contacts_count,
+            'totalClients': clients_count,
+            'totalNotes': total_notes,
+            'totalEvents': total_events,
+            'totalUsers': total_users,
+            'contactsToday': contacts_today,
+            'contactsThisWeek': contacts_this_week,
+            'contactsThisMonth': contacts_this_month,
+            'notesToday': notes_today,
+            'eventsToday': events_today,
+            'topSources': top_sources,
+            'topTeleoperators': top_teleoperators,
+            'upcomingEvents': upcoming_events_data,
+            'recentContacts': recent_contacts_data
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error getting stats: {error_details}")
+        return Response(
+            {'error': str(e)}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

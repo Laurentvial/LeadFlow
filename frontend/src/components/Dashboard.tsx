@@ -11,8 +11,11 @@ import {
   FileText, 
   Calendar, 
   Users as UsersIcon, 
-  DollarSign,
-  Mail
+  UserPlus,
+  Target,
+  Activity,
+  Mail,
+  ArrowUpRight
 } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import LoadingIndicator from './LoadingIndicator';
@@ -36,12 +39,19 @@ export function Dashboard({ user: userProp }: DashboardProps) {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedTeam, dateFrom, dateTo]);
 
   async function loadData() {
     try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo) params.append('dateTo', dateTo);
+      if (selectedTeam !== 'all') params.append('teamId', selectedTeam);
+      
+      const url = `/api/stats/${params.toString() ? '?' + params.toString() : ''}`;
       const [statsResponse, teamsResponse] = await Promise.all([
-        apiCall('/api/stats/'),
+        apiCall(url),
         apiCall('/api/teams/')
       ]);
       
@@ -64,46 +74,52 @@ export function Dashboard({ user: userProp }: DashboardProps) {
 
   const statCards = [
     { 
-      label: 'Chiffre d\'affaires', 
-      value: `${(stats?.totalRevenue || 0).toLocaleString('fr-FR')} €`, 
-      icon: DollarSign, 
-      valueClass: 'dashboard-stat-value-green',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-green'
-    },
-    { 
-      label: 'CA en attente', 
-      value: `${(stats?.pendingRevenue || 0).toLocaleString('fr-FR')} €`, 
-      icon: Clock, 
-      valueClass: 'dashboard-stat-value-orange',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-orange'
-    },
-    { 
-      label: 'Nb de Notes', 
-      value: '0', 
-      icon: FileText, 
-      valueClass: 'dashboard-stat-value-blue',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-blue'
-    },
-    { 
-      label: 'Nb de RDV', 
-      value: stats?.totalAppointments || 0, 
-      icon: Calendar, 
-      valueClass: 'dashboard-stat-value-purple',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-purple'
-    },
-    { 
-      label: 'Nb de leads', 
-      value: '0', 
-      icon: TrendingUp, 
-      valueClass: 'dashboard-stat-value-indigo',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-indigo'
-    },
-    { 
-      label: 'Nb clients', 
-      value: stats?.totalClients || 0, 
+      label: 'Total Contacts', 
+      value: (stats?.totalContacts || 0).toLocaleString('fr-FR'), 
       icon: UsersIcon, 
+      valueClass: 'dashboard-stat-value-blue',
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-blue',
+      subtitle: `${stats?.contactsToday || 0} aujourd'hui`
+    },
+    { 
+      label: 'Leads', 
+      value: (stats?.totalLeads || 0).toLocaleString('fr-FR'), 
+      icon: Target, 
+      valueClass: 'dashboard-stat-value-indigo',
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-indigo',
+      subtitle: `${stats?.contactsThisWeek || 0} cette semaine`
+    },
+    { 
+      label: 'Clients', 
+      value: (stats?.totalClients || 0).toLocaleString('fr-FR'), 
+      icon: UserPlus, 
+      valueClass: 'dashboard-stat-value-green',
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-green',
+      subtitle: `${stats?.contactsThisMonth || 0} ce mois`
+    },
+    { 
+      label: 'Notes', 
+      value: (stats?.totalNotes || 0).toLocaleString('fr-FR'), 
+      icon: FileText, 
+      valueClass: 'dashboard-stat-value-purple',
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-purple',
+      subtitle: `${stats?.notesToday || 0} aujourd'hui`
+    },
+    { 
+      label: 'Rendez-vous', 
+      value: (stats?.totalEvents || 0).toLocaleString('fr-FR'), 
+      icon: Calendar, 
+      valueClass: 'dashboard-stat-value-orange',
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-orange',
+      subtitle: `${stats?.eventsToday || 0} aujourd'hui`
+    },
+    { 
+      label: 'Utilisateurs actifs', 
+      value: (stats?.totalUsers || 0).toLocaleString('fr-FR'), 
+      icon: Activity, 
       valueClass: 'dashboard-stat-value-pink',
-      iconWrapperClass: 'dashboard-stat-icon-wrapper-pink'
+      iconWrapperClass: 'dashboard-stat-icon-wrapper-pink',
+      subtitle: 'Équipe'
     },
   ];
 
@@ -168,6 +184,9 @@ export function Dashboard({ user: userProp }: DashboardProps) {
                   <div className="dashboard-stat-info">
                     <p className="dashboard-stat-label">{stat.label}</p>
                     <p className={stat.valueClass}>{stat.value}</p>
+                    {stat.subtitle && (
+                      <p className="dashboard-stat-subtitle">{stat.subtitle}</p>
+                    )}
                   </div>
                   <div className={`dashboard-stat-icon-wrapper ${stat.iconWrapperClass}`}>
                     <Icon className="dashboard-stat-icon" />
@@ -179,71 +198,142 @@ export function Dashboard({ user: userProp }: DashboardProps) {
         })}
       </div>
 
-      {/* Recent Messages */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="dashboard-section-header">
-            <Mail className="dashboard-section-icon" />
-            Messages récents
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {stats?.recentMessages && stats.recentMessages.length > 0 ? (
-            <div className="dashboard-messages-list">
-              {stats.recentMessages.slice(0, 5).map((message: any) => (
-                <div key={message.id} className="dashboard-message-item">
-                  <div className="dashboard-message-content">
-                    <p className="dashboard-message-subject">{message.subject}</p>
-                    <p className="dashboard-message-date">
-                      {new Date(message.createdAt).toLocaleDateString('fr-FR')}
-                    </p>
+      <div className="dashboard-sections-grid">
+        {/* Top Sources */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="dashboard-section-header">
+              <TrendingUp className="dashboard-section-icon" />
+              Top Sources
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {stats?.topSources && stats.topSources.length > 0 ? (
+              <div className="dashboard-list">
+                {stats.topSources.map((source: any, index: number) => (
+                  <div key={index} className="dashboard-list-item">
+                    <div className="dashboard-list-content">
+                      <p className="dashboard-list-name">{source.name}</p>
+                      <p className="dashboard-list-count">{source.count} contacts</p>
+                    </div>
                   </div>
-                  {!message.read && (
-                    <span className="dashboard-message-badge">
-                      Non lu
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="dashboard-empty-message">Aucun message récent</p>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-empty-message">Aucune source</p>
+            )}
+          </CardContent>
+        </Card>
 
-      {/* Recent Transactions */}
+        {/* Top Teleoperators */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="dashboard-section-header">
+              <UsersIcon className="dashboard-section-icon" />
+              Top Téléopérateurs
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {stats?.topTeleoperators && stats.topTeleoperators.length > 0 ? (
+              <div className="dashboard-list">
+                {stats.topTeleoperators.map((teleoperator: any, index: number) => (
+                  <div key={index} className="dashboard-list-item">
+                    <div className="dashboard-list-content">
+                      <p className="dashboard-list-name">{teleoperator.name}</p>
+                      <p className="dashboard-list-count">{teleoperator.count} contacts</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-empty-message">Aucun téléopérateur</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Upcoming Events */}
       <Card>
         <CardHeader>
           <CardTitle className="dashboard-section-header">
-            <TrendingUp className="dashboard-section-icon" />
-            Dernières transactions
+            <Calendar className="dashboard-section-icon" />
+            Prochains rendez-vous (7 jours)
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {stats?.recentTransactions && stats.recentTransactions.length > 0 ? (
+          {stats?.upcomingEvents && stats.upcomingEvents.length > 0 ? (
             <div className="dashboard-table-container">
               <table className="dashboard-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Montant</th>
-                    <th>Statut</th>
+                    <th>Date & Heure</th>
+                    <th>Contact</th>
+                    <th>Utilisateur</th>
+                    <th>Commentaire</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.recentTransactions.slice(0, 10).map((transaction: any) => (
-                    <tr key={transaction.id}>
+                  {stats.upcomingEvents.map((event: any) => (
+                    <tr key={event.id}>
                       <td>
-                        {new Date(transaction.createdAt).toLocaleDateString('fr-FR')}
+                        {new Date(event.datetime).toLocaleString('fr-FR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
                       </td>
-                      <td className="dashboard-table-type">{transaction.type}</td>
-                      <td>{transaction.amount?.toLocaleString('fr-FR')} €</td>
+                      <td>{event.contactName || 'N/A'}</td>
+                      <td>{event.userName}</td>
+                      <td className="dashboard-table-comment">{event.comment || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="dashboard-empty-message">Aucun rendez-vous à venir</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Recent Contacts */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="dashboard-section-header">
+            <ArrowUpRight className="dashboard-section-icon" />
+            Contacts récents
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {stats?.recentContacts && stats.recentContacts.length > 0 ? (
+            <div className="dashboard-table-container">
+              <table className="dashboard-table">
+                <thead>
+                  <tr>
+                    <th>Nom</th>
+                    <th>Statut</th>
+                    <th>Source</th>
+                    <th>Date de création</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.recentContacts.map((contact: any) => (
+                    <tr key={contact.id}>
+                      <td>{contact.name}</td>
                       <td>
                         <span className="dashboard-table-badge">
-                          {transaction.status}
+                          {contact.status || 'N/A'}
                         </span>
+                      </td>
+                      <td>{contact.source || 'N/A'}</td>
+                      <td>
+                        {new Date(contact.createdAt).toLocaleDateString('fr-FR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric'
+                        })}
                       </td>
                     </tr>
                   ))}
@@ -251,7 +341,7 @@ export function Dashboard({ user: userProp }: DashboardProps) {
               </table>
             </div>
           ) : (
-            <p className="dashboard-empty-message">Aucune transaction récente</p>
+            <p className="dashboard-empty-message">Aucun contact récent</p>
           )}
         </CardContent>
       </Card>

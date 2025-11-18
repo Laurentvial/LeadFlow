@@ -68,4 +68,6 @@ urlpatterns = [
     path('sources/create/', api_views.source_create, name='source-create'),
     path('sources/<str:source_id>/', api_views.source_update, name='source-update'),
     path('sources/<str:source_id>/delete/', api_views.source_delete, name='source-delete'),
+    # Stats endpoint
+    path('stats/', api_views.get_stats, name='stats'),
 ]

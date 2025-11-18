@@ -43,10 +43,17 @@ export function useUsers() {
         return hasId;
       });
       
+      // Sort users by creation date (most recent first)
+      const sortedUsers = validUsers.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : (a.dateCreated ? new Date(a.dateCreated).getTime() : 0);
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : (b.dateCreated ? new Date(b.dateCreated).getTime() : 0);
+        return dateB - dateA; // Most recent first
+      });
+      
       // Update cache
-      usersCache = validUsers;
+      usersCache = sortedUsers;
       usersCacheTime = now;
-      setUsers(validUsers);
+      setUsers(sortedUsers);
     } catch (err: any) {
       const errorMessage = err?.message || err?.response?.detail || 'Erreur lors du chargement des utilisateurs';
       const error = new Error(errorMessage);

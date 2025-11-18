@@ -7,6 +7,7 @@
   width: 100%;
   max-width: 100%;
   overflow-x: hidden; /* Empêche le débordement horizontal du conteneur */
+  min-width: 0; /* Permet au flex item de se rétrécir en dessous de sa taille de contenu */
 }
 
 .contacts-header {
@@ -14,7 +15,7 @@
   top: 0;
   background-color: var(--background);
   z-index: 30;
-  padding: 1rem 0;
+  padding: 0;
   margin-bottom: 1rem;
   border-bottom: 1px solid #e2e8f0;
 }
@@ -66,36 +67,43 @@
   width: 100%;
   max-width: 100%;
   position: relative;
-  max-height: calc(100vh - 300px); /* Ajuster selon la hauteur disponible */
+  /* Taille fixe pour le conteneur - ne change pas avec le nombre de colonnes */
+  height: calc(100vh - 300px);
+  min-height: 400px;
   -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-  scrollbar-width: thin; /* Firefox */
-  scrollbar-color: #cbd5e1 #f1f5f9; /* Firefox */
+  scrollbar-width: thick; /* Firefox */
+  scrollbar-color: var(--primary) #f1f5f9; /* Firefox */
 }
 
 /* Webkit scrollbar styling */
 .contacts-table-wrapper::-webkit-scrollbar {
-  height: 8px;
+  height: 12px;
+  width: 12px;
 }
 
 .contacts-table-wrapper::-webkit-scrollbar-track {
   background: #f1f5f9;
-  border-radius: 0px;
+  border-radius: 0;
 }
 
 .contacts-table-wrapper::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 0px;
+  background: var(--primary);
+  border-radius: 0;
+  border: 2px solid #f1f5f9;
 }
 
 .contacts-table-wrapper::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--primary);
+  opacity: 0.8;
 }
 
 .contacts-table {
-  width: 100%;
   font-size: 0.875rem;
-  min-width: 1400px; /* Largeur minimale pour toutes les colonnes */
   border-collapse: collapse;
+  table-layout: auto; /* Permet au tableau de s'adapter au contenu */
+  /* Le tableau peut être plus large que le wrapper, ce qui active le scroll horizontal */
+  width: max-content;
+  min-width: 100%; /* Au minimum, prend toute la largeur du wrapper */
 }
 
 .contacts-table thead {
@@ -118,6 +126,15 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   color: #64748b;
+  vertical-align: top;
+}
+
+.contacts-column-header-button {
+  transition: color 0.2s;
+}
+
+.contacts-column-header-button:hover {
+  color: #3b82f6 !important;
 }
 
 .contacts-table tbody tr {
@@ -159,6 +176,54 @@
 .contacts-empty {
   font-size: 0.875rem;
   color: #64748b;
+}
+
+.contacts-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  gap: 1rem;
+}
+
+.contacts-loading-text {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0;
+  margin-top: 1rem;
+}
+
+/* Pagination styles */
+.contacts-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 0;
+  margin-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.contacts-pagination-info {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.contacts-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.contacts-pagination-pages {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.contacts-pagination-page-btn {
+  min-width: 2.5rem;
 }
 
 .contacts-filter-section {
@@ -419,4 +484,32 @@
 .contact-action-button-deactivate:hover {
   background-color: rgb(220 38 38);
   border-color: rgb(220 38 38);
+}
+
+/* Column Settings Panel Animation */
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.column-settings-panel {
+  animation: slideInFromRight 0.3s ease-out;
+}
+
+/* Column drag and drop styles */
+.column-drag-item {
+  user-select: none;
+}
+
+.column-drag-item:hover {
+  background-color: #f9fafb !important;
+}
+
+.column-drag-item.drag-over {
+  border-color: #3b82f6 !important;
+  background-color: #eff6ff !important;
 }

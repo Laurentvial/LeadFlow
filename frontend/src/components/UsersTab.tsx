@@ -12,8 +12,15 @@ import { User } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 
 export function UsersTab() {
-  const { users, loading: usersLoading, error: usersError, deleteUser, toggleUserActive, refetch } = useUsers();
+  const { users: usersData, loading: usersLoading, error: usersError, deleteUser, toggleUserActive, refetch } = useUsers();
   const { teams, loading: teamsLoading } = useTeams();
+  
+  // Sort users by creation date (most recent first) - already sorted in hook, but ensure it's maintained
+  const users = [...usersData].sort((a, b) => {
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : (a.dateCreated ? new Date(a.dateCreated).getTime() : 0);
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : (b.dateCreated ? new Date(b.dateCreated).getTime() : 0);
+    return dateB - dateA; // Most recent first
+  });
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);

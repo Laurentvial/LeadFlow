@@ -9,6 +9,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
 import { useSources } from '../hooks/useSources';
+import { useUsers } from '../hooks/useUsers';
 import LoadingIndicator from './LoadingIndicator';
 import '../styles/PageHeader.css';
 
@@ -20,9 +21,9 @@ const CRM_FIELDS = [
   { value: '', label: 'Ignorer cette colonne' },
   { value: 'civility', label: 'Civilité' },
   { value: 'firstName', label: 'Prénom (requis)' },
-  { value: 'lastName', label: 'Nom (requis)' },
+  { value: 'lastName', label: 'Nom' },
   { value: 'phone', label: 'Téléphone' },
-  { value: 'mobile', label: 'Portable (requis)' },
+  { value: 'mobile', label: 'Portable' },
   { value: 'email', label: 'Email' },
   { value: 'birthDate', label: 'Date de naissance' },
   { value: 'birthPlace', label: 'Lieu de naissance' },
@@ -38,6 +39,7 @@ export function CsvImport() {
   const navigate = useNavigate();
   const { statuses, loading: statusesLoading, error: statusesError } = useStatuses();
   const { sources, loading: sourcesLoading, error: sourcesError } = useSources();
+  const { users, loading: usersLoading, error: usersError } = useUsers();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'results'>('upload');
@@ -48,12 +50,16 @@ export function CsvImport() {
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
   const [defaultStatusId, setDefaultStatusId] = useState('');
   const [defaultSourceId, setDefaultSourceId] = useState('');
+  const [defaultTeleoperatorId, setDefaultTeleoperatorId] = useState('');
   const [importResults, setImportResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Get lead statuses only, with safe fallback
   const leadStatuses = Array.isArray(statuses) ? statuses.filter((s: any) => s?.type === 'lead') : [];
+  
+  // Get teleoperateurs only
+  const teleoperateurs = Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -117,9 +123,9 @@ export function CsvImport() {
   };
 
   const handleImport = async () => {
-    // Validate required mappings
-    if (!columnMapping.firstName || !columnMapping.lastName || !columnMapping.mobile) {
-      toast.error('Veuillez mapper les champs requis: Prénom, Nom, et Portable');
+    // Validate required mappings - only firstName is required
+    if (!columnMapping.firstName) {
+      toast.error('Veuillez mapper le champ requis: Prénom');
       return;
     }
 
@@ -144,6 +150,9 @@ export function CsvImport() {
       formData.append('defaultStatusId', defaultStatusId);
       if (defaultSourceId) {
         formData.append('defaultSourceId', defaultSourceId);
+      }
+      if (defaultTeleoperatorId) {
+        formData.append('defaultTeleoperatorId', defaultTeleoperatorId);
       }
 
       const response = await apiCall('/api/contacts/csv-import/', {
@@ -185,6 +194,7 @@ export function CsvImport() {
     setColumnMapping({});
     setDefaultStatusId('');
     setDefaultSourceId('');
+    setDefaultTeleoperatorId('');
     setImportResults(null);
     setError(null);
     setIsLoading(false);
@@ -194,7 +204,7 @@ export function CsvImport() {
   };
 
   // Show loading if hooks are still loading
-  if (statusesLoading || sourcesLoading) {
+  if (statusesLoading || sourcesLoading || usersLoading) {
     return (
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
         <div className="page-header">
@@ -226,7 +236,7 @@ export function CsvImport() {
   }
 
   // Show error if hooks failed
-  if (statusesError || sourcesError) {
+  if (statusesError || sourcesError || usersError) {
     return (
       <div className="space-y-6 p-6 max-w-6xl mx-auto">
         <div className="page-header">
@@ -251,7 +261,7 @@ export function CsvImport() {
               <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
               <p className="text-lg font-medium text-red-600">Erreur de chargement</p>
               <p className="text-sm text-slate-600 mt-2">
-                {statusesError || sourcesError || 'Impossible de charger les données nécessaires'}
+                {statusesError || sourcesError || usersError || 'Impossible de charger les données nécessaires'}
               </p>
               <Button onClick={() => window.location.reload()} className="mt-4">
                 Réessayer
@@ -298,21 +308,21 @@ export function CsvImport() {
             ) : (
               <>
                 {error && (
-                  <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="mb-4 p-4 bg-red-50 border border-red-200 ">
                     <p className="text-sm text-red-600 flex items-center gap-2">
                       <AlertCircle className="w-4 h-4" />
                       {error}
                     </p>
                   </div>
                 )}
-                <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-300 rounded-lg">
+                <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-300 ">
                   <FileSpreadsheet className="w-16 h-16 text-slate-400 mb-4" />
                   <Label htmlFor="csv-file" className="text-lg font-medium mb-2">
                     Sélectionner un fichier CSV
                   </Label>
-                  <p className="text-sm text-slate-500 mb-6 text-center max-w-md">
+                  <p className="text-sm text-slate-500 pb-6 text-center max-w-md">
                     Importez n'importe quel fichier CSV. Vous pourrez ensuite mapper vos colonnes aux champs du CRM.
-                    Les champs requis sont: Prénom, Nom, et Portable. Taille maximale: 10MB
+                    Les champs requis sont: Prénom. Taille maximale: 10MB
                   </p>
                   <input
                     ref={fileInputRef}
@@ -351,7 +361,7 @@ export function CsvImport() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="bg-slate-50 p-4 rounded-lg space-y-2">
+              <div className="bg-slate-50 p-4 space-y-2">
                 <p className="text-sm text-slate-700">
                   <strong>{totalRows}</strong> ligne(s) détectée(s) dans le fichier
                 </p>
@@ -362,7 +372,7 @@ export function CsvImport() {
                       {csvHeaders.map((header) => (
                         <span
                           key={header}
-                          className="px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700"
+                          className="px-2 py-1 bg-white border border-slate-200  text-xs text-slate-700"
                         >
                           {header}
                         </span>
@@ -380,14 +390,14 @@ export function CsvImport() {
                   Les colonnes non mappées seront ignorées.
                 </p>
                 {csvHeaders.length === 0 && (
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 ">
                     <p className="text-sm text-yellow-800">
                       ⚠️ Aucune colonne détectée dans le fichier CSV. Vérifiez que votre fichier contient bien une ligne d'en-tête.
                     </p>
                   </div>
                 )}
 
-                <div className="space-y-3 max-h-96 overflow-y-auto border rounded-lg p-4">
+                <div className="space-y-3 max-h-96 overflow-y-auto border  p-4">
                   {CRM_FIELDS.filter(field => field.value !== '').map((field) => (
                     <div key={field.value} className="flex items-center gap-4 py-2">
                       <Label className="w-48 text-sm font-medium">
@@ -419,7 +429,7 @@ export function CsvImport() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
                 <div className="space-y-2">
                   <Label htmlFor="default-status">Statut par défaut (requis)</Label>
                   <Select
@@ -433,6 +443,26 @@ export function CsvImport() {
                       {leadStatuses.map((status) => (
                         <SelectItem key={status.id} value={status.id}>
                           {status.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="default-teleoperator">Téléopérateur (optionnel)</Label>
+                  <Select
+                    value={defaultTeleoperatorId || '__none__'}
+                    onValueChange={(value) => setDefaultTeleoperatorId(value === '__none__' ? '' : value)}
+                  >
+                    <SelectTrigger id="default-teleoperator">
+                      <SelectValue placeholder="Sélectionner un téléopérateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Aucun téléopérateur</SelectItem>
+                      {teleoperateurs.map((teleoperator) => (
+                        <SelectItem key={teleoperator.id} value={teleoperator.id}>
+                          {teleoperator.firstName} {teleoperator.lastName}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -463,7 +493,7 @@ export function CsvImport() {
               {csvPreview.length > 0 && (
                 <div className="mt-6">
                   <h4 className="font-medium mb-2">Aperçu des données</h4>
-                  <div className="border rounded-lg overflow-x-auto">
+                  <div className="border  overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>
@@ -496,7 +526,7 @@ export function CsvImport() {
                 </Button>
                 <Button
                   onClick={handleImport}
-                  disabled={isLoading || !columnMapping.firstName || !columnMapping.lastName || !columnMapping.mobile || !defaultStatusId}
+                  disabled={isLoading || !columnMapping.firstName || !defaultStatusId}
                 >
                   <Upload className="w-4 h-4 mr-2" />
                   Importer les contacts
@@ -515,7 +545,7 @@ export function CsvImport() {
               <p className="text-lg font-medium mt-4">Importation en cours...</p>
               <p className="text-sm text-slate-500 mt-2">Veuillez patienter, cela peut prendre quelques instants</p>
               {error && (
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg max-w-md">
+                <div className="mt-4 p-4 bg-red-50 border border-red-200  max-w-md">
                   <p className="text-sm text-red-600 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />
                     {error}
@@ -567,7 +597,7 @@ export function CsvImport() {
                     <AlertCircle className="w-4 h-4" />
                     Erreurs ({importResults.errors.length})
                   </h4>
-                  <div className="max-h-64 overflow-y-auto border rounded-lg">
+                  <div className="max-h-64 overflow-y-auto border ">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>
@@ -594,7 +624,7 @@ export function CsvImport() {
                     <CheckCircle2 className="w-4 h-4" />
                     Contacts importés ({importResults.success.length})
                   </h4>
-                  <div className="max-h-64 overflow-y-auto border rounded-lg">
+                  <div className="max-h-64 overflow-y-auto border ">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>
