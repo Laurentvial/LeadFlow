@@ -88,14 +88,16 @@ function App() {
                     } />
                     <Route path="/contacts/add" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <AddContact />
-                            </Layout>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <AddContact />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/contacts/import" element={
                         <ProtectedRoute>
-                            <PermissionProtectedRoute component="contacts" action="view">
+                            <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <CsvImport />
                                 </Layout>

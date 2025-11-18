@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { User, Users, Edit } from 'lucide-react';
+import { useHasPermission } from '../hooks/usePermissions';
 
 interface ContactManagementInfoProps {
   contact: any;
@@ -10,22 +11,26 @@ interface ContactManagementInfoProps {
 }
 
 export function ContactManagementInfo({ contact, onEdit }: ContactManagementInfoProps) {
+  const canEdit = useHasPermission('contacts', 'edit');
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Gestion</CardTitle>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          <Edit className="w-4 h-4 mr-2" />
-          Modifier
-        </Button>
+        {canEdit && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
+            <Edit className="w-4 h-4 mr-2" />
+            Modifier
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

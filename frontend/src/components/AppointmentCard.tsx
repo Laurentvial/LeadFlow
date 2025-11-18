@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar as CalendarIcon, Clock, User, Pencil, Trash2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User, Pencil } from 'lucide-react';
 import { Button } from './ui/button';
 
 interface AppointmentCardProps {
@@ -66,53 +66,58 @@ export function AppointmentCard({
             </div>
           )}
         </div>
-        {showActions && onEdit && onDelete && (
+        {showActions && (onEdit || onDelete) && (
           <div className="flex gap-2 ml-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onEdit(appointment)}
-              className={isPast ? 'opacity-50' : ''}
-              title="Modifier"
-            >
-              <Pencil className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onDelete(appointment.id)}
-              className={`text-red-600 hover:text-red-700 ${isPast ? 'opacity-50' : ''}`}
-              title="Supprimer"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
+            {onEdit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onEdit(appointment)}
+                className={isPast ? 'opacity-50' : ''}
+                title="Modifier"
+              >
+                <Pencil className="w-4 h-4" />
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onDelete(appointment.id)}
+                className={`h-auto p-0 text-red-600 hover:text-red-700 ${isPast ? 'opacity-50' : ''}`}
+                title="Supprimer"
+                style={{ fontSize: '7px' }}
+              >
+                Supprimer
+              </Button>
+            )}
           </div>
         )}
       </div>
       
       <div className="mt-2 space-y-1">
-        {(appointment.assignedTo || appointment.createdBy) && (
+        {appointment.assignedTo && (
           <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
-            Assigné à: <span className="font-medium">{appointment.assignedTo || appointment.createdBy}</span>
-          </p>
-        )}
-        {appointment.createdBy && appointment.assignedTo && appointment.createdBy !== appointment.assignedTo && (
-          <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
-            Créé par: <span className="font-medium">{appointment.createdBy}</span>
+            Assigné à: <span className="font-medium">{appointment.assignedTo}</span>
           </p>
         )}
         {appointment.created_at && (
-          <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
-            Créé le {new Date(appointment.created_at).toLocaleDateString('fr-FR', { 
-              day: '2-digit', 
-              month: '2-digit', 
-              year: 'numeric'
-            })} à {new Date(appointment.created_at).toLocaleTimeString('fr-FR', {
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false
-            })}
-          </p>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+              {new Date(appointment.created_at).toLocaleString('fr-FR', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </span>
+            {appointment.createdBy && (
+              <span className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                • {appointment.createdBy}
+              </span>
+            )}
+          </div>
         )}
       </div>
       

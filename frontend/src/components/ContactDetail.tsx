@@ -5,8 +5,6 @@ import LoadingIndicator from './LoadingIndicator';
 import { toast } from 'sonner';
 import { EditPersonalInfoModal } from './EditPersonalInfoModal';
 import { ContactInfoTab } from './ContactInfoTab';
-import { ContactAppointmentsTab } from './ContactAppointmentsTab';
-import { ContactNotesTab } from './ContactNotesTab';
 import { ContactHistoryTab } from './ContactHistoryTab';
 import { ContactDocumentsTab } from './ContactDocumentsTab';
 import '../styles/Contacts.css';
@@ -95,9 +93,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       <Tabs defaultValue="info" className="space-y-6">
         <TabsList>
           <TabsTrigger value="info">Informations</TabsTrigger>
-          <TabsTrigger value="appointments">RDV</TabsTrigger>
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="documents">Documents & conformité</TabsTrigger>
+          <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="history">Historique</TabsTrigger>
         </TabsList>
 
@@ -107,21 +103,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
             contact={contact}
             onOpenEditPersonalInfo={handleOpenEditModal}
             onContactUpdated={loadContactData}
-          />
-        </TabsContent>
-
-        {/* Appointments Tab */}
-        <TabsContent value="appointments">
-          <ContactAppointmentsTab 
-            appointments={appointments} 
-            contactId={contactId}
-            onRefresh={loadContactData}
-          />
-        </TabsContent>
-
-        {/* Notes Tab */}
-        <TabsContent value="notes">
-          <ContactNotesTab 
+            appointments={appointments}
             notes={notes}
             contactId={contactId}
             onRefresh={loadContactData}

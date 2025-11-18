@@ -338,7 +338,10 @@ class ContactView(generics.ListAPIView):
     def get_queryset(self):
         """
         Filter contacts based on user's role data_access level:
-        - own_only: Only contacts where user is teleoperator, confirmateur, or creator
+        - own_only: 
+            - If user is teleoperateur: Only contacts where user is teleoperator
+            - If user is confirmateur: Only contacts where user is confirmateur
+            - Otherwise: Contacts where user is teleoperator, confirmateur, or creator
         - team_only: Contacts where user is assigned OR contacts from users in the same team
         - all: All contacts (no filtering)
         """
@@ -352,12 +355,29 @@ class ContactView(generics.ListAPIView):
                 data_access = user_details.role.data_access
                 
                 if data_access == 'own_only':
-                    # Only show contacts where user is teleoperator, confirmateur, or creator
-                    queryset = queryset.filter(
-                        models.Q(teleoperator=user) |
-                        models.Q(confirmateur=user) |
-                        models.Q(creator=user)
-                    )
+                    # Check if user is teleoperateur or confirmateur
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    if is_teleoperateur and is_confirmateur:
+                        # User is both: show contacts where user is teleoperator OR confirmateur
+                        queryset = queryset.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user)
+                        )
+                    elif is_teleoperateur:
+                        # Teleoperateur with own_only: only show contacts where user is teleoperator
+                        queryset = queryset.filter(teleoperator=user)
+                    elif is_confirmateur:
+                        # Confirmateur with own_only: only show contacts where user is confirmateur
+                        queryset = queryset.filter(confirmateur=user)
+                    else:
+                        # Default behavior: show contacts where user is teleoperator, confirmateur, or creator
+                        queryset = queryset.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        )
                 elif data_access == 'team_only':
                     # Get user's team members
                     team_member = user_details.team_memberships.first()
@@ -781,7 +801,10 @@ def csv_import_contacts(request):
 def contact_detail(request, contact_id):
     """
     Get or update a contact, respecting data_access restrictions.
-    Users with own_only can only access contacts they are assigned to.
+    Users with own_only:
+        - If teleoperateur: Can only access contacts where they are teleoperator
+        - If confirmateur: Can only access contacts where they are confirmateur
+        - Otherwise: Can access contacts where they are teleoperator, confirmateur, or creator
     Users with team_only can access contacts from their team.
     Users with all can access any contact.
     """
@@ -795,12 +818,38 @@ def contact_detail(request, contact_id):
             data_access = user_details.role.data_access
             
             if data_access == 'own_only':
-                # Only allow if user is teleoperator, confirmateur, or creator
-                if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
-                    return Response(
-                        {'error': 'Vous n\'avez pas accès à ce contact'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
+                # Check if user is teleoperateur or confirmateur
+                is_teleoperateur = user_details.role.is_teleoperateur
+                is_confirmateur = user_details.role.is_confirmateur
+                
+                if is_teleoperateur and is_confirmateur:
+                    # User is both: allow if user is teleoperator OR confirmateur
+                    if contact.teleoperator != user and contact.confirmateur != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                elif is_teleoperateur:
+                    # Teleoperateur with own_only: only allow if user is teleoperator
+                    if contact.teleoperator != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                elif is_confirmateur:
+                    # Confirmateur with own_only: only allow if user is confirmateur
+                    if contact.confirmateur != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                else:
+                    # Default behavior: only allow if user is teleoperator, confirmateur, or creator
+                    if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
             elif data_access == 'team_only':
                 # Check if user has access (either assigned to them or from their team)
                 team_member = user_details.team_memberships.first()
@@ -1137,41 +1186,56 @@ def user_toggle_active(request, user_id):
 @permission_classes([IsAuthenticated])
 def user_reset_password(request, user_id):
     """Reset password for a user"""
-    user_details = get_object_or_404(UserDetails, id=user_id)
-    django_user = user_details.django_user
-    
-    if not django_user:
-        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    # Get new password from request, or use default
-    new_password = request.data.get('password', 'Access@123')
-    
-    # Validate password length
-    if len(new_password) < 6:
-        return Response({'error': 'Password must be at least 6 characters long'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Get old value for logging (without password for security)
-    old_value = get_user_data_for_log(django_user, user_details)
-    
-    # Reset password using Django's set_password which properly hashes it
-    django_user.set_password(new_password)
-    django_user.save()
-    
-    # Get new value for logging (password is not included in user data)
-    new_value = get_user_data_for_log(django_user, user_details)
-    # Add indicator that password was reset
-    new_value['password_reset'] = True
-    
-    # Create log entry
-    create_log_entry(
-        event_type='resetPassword',
-        user_id=request.user,
-        request=request,
-        old_value=old_value,
-        new_value=new_value
-    )
-    
-    return Response({'message': 'Password reset successfully'}, status=status.HTTP_200_OK)
+    try:
+        user_details = get_object_or_404(UserDetails, id=user_id)
+        django_user = user_details.django_user
+        
+        if not django_user:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Debug: Log received data
+        print(f"Reset password request for user {user_id}")
+        print(f"Request data: {request.data}")
+        print(f"Request data type: {type(request.data)}")
+        
+        # Get new password from request, or use default
+        new_password = request.data.get('password')
+        
+        # If password is not provided, use default
+        if not new_password:
+            new_password = 'Access@123'
+        
+        # Validate password length
+        if len(new_password) < 6:
+            return Response({'error': 'Password must be at least 6 characters long'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get old value for logging (without password for security)
+        old_value = get_user_data_for_log(django_user, user_details)
+        
+        # Reset password using Django's set_password which properly hashes it
+        django_user.set_password(new_password)
+        django_user.save()
+        
+        # Get new value for logging (password is not included in user data)
+        new_value = get_user_data_for_log(django_user, user_details)
+        # Add indicator that password was reset
+        new_value['password_reset'] = True
+        
+        # Create log entry
+        create_log_entry(
+            event_type='resetPassword',
+            user_id=request.user,
+            request=request,
+            old_value=old_value,
+            new_value=new_value
+        )
+        
+        return Response({'message': 'Password reset successfully'}, status=status.HTTP_200_OK)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error resetting password: {error_details}")
+        return Response({'error': f'Failed to reset password: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
@@ -1258,14 +1322,106 @@ def user_update(request, user_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def event_list(request):
+    user = request.user
+    
     # Allow filtering by contactId if provided as query parameter
     contact_id = request.query_params.get('contactId', None)
     if contact_id:
         # Return all events for this contact (all users can see events for contacts they have access to)
         events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId').order_by('datetime')
     else:
-        # If no contactId, return current user's events (for backward compatibility)
-        events = Event.objects.filter(userId=request.user).select_related('userId', 'contactId').order_by('datetime')
+        # Filter events based on user's role data_access level
+        # Events are filtered based on the contacts the user can access
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                
+                if data_access == 'all':
+                    # User has access to all contacts, so show all events (including events without contacts)
+                    events = Event.objects.all().select_related('userId', 'contactId').order_by('datetime')
+                elif data_access == 'team_only':
+                    # Get user's team members
+                    team_member = user_details.team_memberships.first()
+                    if team_member:
+                        team = team_member.team
+                        # Get all users in the same team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Get contacts accessible to the user or their team
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user) |
+                            models.Q(teleoperator__id__in=team_user_ids) |
+                            models.Q(confirmateur__id__in=team_user_ids) |
+                            models.Q(creator__id__in=team_user_ids)
+                        ).values_list('id', flat=True)
+                        # Return events for accessible contacts OR events created by team members (even without contactId)
+                        events = Event.objects.filter(
+                            models.Q(contactId__id__in=accessible_contact_ids) |
+                            models.Q(contactId__isnull=True, userId__id__in=team_user_ids)
+                        ).select_related('userId', 'contactId').order_by('datetime')
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        is_teleoperateur = user_details.role.is_teleoperateur
+                        is_confirmateur = user_details.role.is_confirmateur
+                        
+                        if is_teleoperateur and is_confirmateur:
+                            accessible_contact_ids = Contact.objects.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user)
+                            ).values_list('id', flat=True)
+                        elif is_teleoperateur:
+                            accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
+                        elif is_confirmateur:
+                            accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
+                        else:
+                            accessible_contact_ids = Contact.objects.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user) |
+                                models.Q(creator=user)
+                            ).values_list('id', flat=True)
+                        # Return events for accessible contacts OR events created by user (even without contactId)
+                        events = Event.objects.filter(
+                            models.Q(contactId__id__in=accessible_contact_ids) |
+                            models.Q(contactId__isnull=True, userId=user)
+                        ).select_related('userId', 'contactId').order_by('datetime')
+                else:  # own_only
+                    # Check if user is teleoperateur or confirmateur
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    if is_teleoperateur and is_confirmateur:
+                        # User is both: show events for contacts where user is teleoperator OR confirmateur
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user)
+                        ).values_list('id', flat=True)
+                    elif is_teleoperateur:
+                        # Teleoperateur with own_only: only show events for contacts where user is teleoperator
+                        accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
+                    elif is_confirmateur:
+                        # Confirmateur with own_only: only show events for contacts where user is confirmateur
+                        accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
+                    else:
+                        # Default behavior: show events for contacts where user is teleoperator, confirmateur, or creator
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        ).values_list('id', flat=True)
+                    # Return events for accessible contacts OR events created by user (even without contactId)
+                    events = Event.objects.filter(
+                        models.Q(contactId__id__in=accessible_contact_ids) |
+                        models.Q(contactId__isnull=True, userId=user)
+                    ).select_related('userId', 'contactId').order_by('datetime')
+            else:
+                # User has no role, show no events (safety default)
+                events = Event.objects.none()
+        except UserDetails.DoesNotExist:
+            # If user has no UserDetails, show no events (safety default)
+            events = Event.objects.none()
+    
     serializer = EventSerializer(events, many=True)
     return Response({'events': serializer.data})
 

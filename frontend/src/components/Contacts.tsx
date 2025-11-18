@@ -22,6 +22,7 @@ import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
 import { useSources } from '../hooks/useSources';
+import { useHasPermission } from '../hooks/usePermissions';
 import { toast } from 'sonner';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
@@ -35,6 +36,11 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   const navigate = useNavigate();
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { sources, loading: sourcesLoading } = useSources();
+  
+  // Permission checks
+  const canCreate = useHasPermission('contacts', 'create');
+  const canEdit = useHasPermission('contacts', 'edit');
+  const canDelete = useHasPermission('contacts', 'delete');
   const [contacts, setContacts] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -545,13 +551,17 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       case 'teleoperator':
         return (
           <td key={columnId}>
-            <button
-              onClick={() => handleOpenTeleoperatorModal(contact)}
-              className="contacts-clickable-cell"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
-            >
-              {contact.managerName || contact.teleoperatorName || '-'}
-            </button>
+            {canEdit ? (
+              <button
+                onClick={() => handleOpenTeleoperatorModal(contact)}
+                className="contacts-clickable-cell"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+              >
+                {contact.managerName || contact.teleoperatorName || '-'}
+              </button>
+            ) : (
+              <span>{contact.managerName || contact.teleoperatorName || '-'}</span>
+            )}
           </td>
         );
       case 'source':
@@ -559,11 +569,28 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       case 'status':
         return (
           <td key={columnId}>
-            <button
-              onClick={() => handleOpenStatusModal(contact)}
-              className="contacts-clickable-cell"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-            >
+            {canEdit ? (
+              <button
+                onClick={() => handleOpenStatusModal(contact)}
+                className="contacts-clickable-cell"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              >
+                <span 
+                  className="contacts-status-badge"
+                  style={{
+                    backgroundColor: contact.statusColor || '#e5e7eb',
+                    color: contact.statusColor ? '#000000' : '#374151',
+                    padding: '4px 12px',
+                    borderRadius: '5px',
+                    fontSize: '0.875rem',
+                    fontWeight: '500',
+                    display: 'inline-block'
+                  }}
+                >
+                  {contact.statusName || '-'}
+                </span>
+              </button>
+            ) : (
               <span 
                 className="contacts-status-badge"
                 style={{
@@ -578,19 +605,23 @@ export function Contacts({ onSelectContact }: ContactsProps) {
               >
                 {contact.statusName || '-'}
               </span>
-            </button>
+            )}
           </td>
         );
       case 'confirmateur':
         return (
           <td key={columnId}>
-            <button
-              onClick={() => handleOpenConfirmateurModal(contact)}
-              className="contacts-clickable-cell"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
-            >
-              {contact.confirmateurName || '-'}
-            </button>
+            {canEdit ? (
+              <button
+                onClick={() => handleOpenConfirmateurModal(contact)}
+                className="contacts-clickable-cell"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+              >
+                {contact.confirmateurName || '-'}
+              </button>
+            ) : (
+              <span>{contact.confirmateurName || '-'}</span>
+            )}
           </td>
         );
       case 'creator':
@@ -692,12 +723,14 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   // Modal handlers
   function handleOpenStatusModal(contact: any) {
+    if (!canEdit) return;
     setSelectedContact(contact);
     setSelectedStatusId(contact.statusId || '');
     setIsStatusModalOpen(true);
   }
 
   function handleOpenTeleoperatorModal(contact: any) {
+    if (!canEdit) return;
     setSelectedContact(contact);
     // Prefill with current teleoperator ID if exists
     const teleoperatorId = contact.teleoperatorId || contact.managerId || '';
@@ -706,6 +739,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   }
 
   function handleOpenConfirmateurModal(contact: any) {
+    if (!canEdit) return;
     setSelectedContact(contact);
     setSelectedConfirmateurId(contact.confirmateurId || '');
     setIsConfirmateurModalOpen(true);
@@ -778,14 +812,18 @@ export function Contacts({ onSelectContact }: ContactsProps) {
         </div>
         
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate('/contacts/import')}>
-            <Upload className="w-4 h-4 mr-2" />
-            Importer CSV
-          </Button>
-          <Button onClick={() => navigate('/contacts/add')}>
-            <Plus className="w-4 h-4 mr-2" />
-            Ajouter un contact
-          </Button>
+          {canCreate && (
+            <>
+              <Button variant="outline" onClick={() => navigate('/contacts/import')}>
+                <Upload className="w-4 h-4 mr-2" />
+                Importer CSV
+              </Button>
+              <Button onClick={() => navigate('/contacts/add')}>
+                <Plus className="w-4 h-4 mr-2" />
+                Ajouter un contact
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -868,68 +906,74 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 </Button>
               </div>
               <div className="contacts-bulk-actions-buttons">
-                <div className="contacts-bulk-action-select">
-                  <Label className="sr-only">Attribuer un téléopérateur</Label>
-                  <Select value={bulkTeleoperatorId} onValueChange={handleBulkAssignTeleoperator}>
-                    <SelectTrigger className="w-[200px]">
-                      <UserCheck className="w-4 h-4 mr-2" />
-                      <SelectValue placeholder="Attribuer un téléopérateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                      {usersLoading ? (
-                        <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                      ) : usersError ? (
-                        <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
-                      ) : teleoperateurs.length === 0 ? (
-                        <SelectItem value="empty" disabled>Aucun téléopérateur disponible</SelectItem>
-                      ) : (
-                        teleoperateurs.map((user) => {
-                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                          return (
-                            <SelectItem key={user.id} value={user.id}>
-                              {displayName}
-                            </SelectItem>
-                          );
-                        })
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {canEdit && (
+                  <>
+                    <div className="contacts-bulk-action-select">
+                      <Label className="sr-only">Attribuer un téléopérateur</Label>
+                      <Select value={bulkTeleoperatorId} onValueChange={handleBulkAssignTeleoperator}>
+                        <SelectTrigger className="w-[200px]">
+                          <UserCheck className="w-4 h-4 mr-2" />
+                          <SelectValue placeholder="Attribuer un téléopérateur" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                          {usersLoading ? (
+                            <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                          ) : usersError ? (
+                            <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
+                          ) : teleoperateurs.length === 0 ? (
+                            <SelectItem value="empty" disabled>Aucun téléopérateur disponible</SelectItem>
+                          ) : (
+                            teleoperateurs.map((user) => {
+                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                              return (
+                                <SelectItem key={user.id} value={user.id}>
+                                  {displayName}
+                                </SelectItem>
+                              );
+                            })
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                <div className="contacts-bulk-action-select">
-                  <Label className="sr-only">Attribuer un confirmateur</Label>
-                  <Select value={bulkConfirmateurId} onValueChange={handleBulkAssignConfirmateur}>
-                    <SelectTrigger className="w-[200px]">
-                      <UserCheck className="w-4 h-4 mr-2" />
-                      <SelectValue placeholder="Attribuer un confirmateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun confirmateur</SelectItem>
-                      {usersLoading ? (
-                        <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                      ) : usersError ? (
-                        <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
-                      ) : confirmateurs.length === 0 ? (
-                        <SelectItem value="empty" disabled>Aucun confirmateur disponible</SelectItem>
-                      ) : (
-                        confirmateurs.map((user) => {
-                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                          return (
-                            <SelectItem key={user.id} value={user.id}>
-                              {displayName}
-                            </SelectItem>
-                          );
-                        })
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                    <div className="contacts-bulk-action-select">
+                      <Label className="sr-only">Attribuer un confirmateur</Label>
+                      <Select value={bulkConfirmateurId} onValueChange={handleBulkAssignConfirmateur}>
+                        <SelectTrigger className="w-[200px]">
+                          <UserCheck className="w-4 h-4 mr-2" />
+                          <SelectValue placeholder="Attribuer un confirmateur" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun confirmateur</SelectItem>
+                          {usersLoading ? (
+                            <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                          ) : usersError ? (
+                            <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
+                          ) : confirmateurs.length === 0 ? (
+                            <SelectItem value="empty" disabled>Aucun confirmateur disponible</SelectItem>
+                          ) : (
+                            confirmateurs.map((user) => {
+                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                              return (
+                                <SelectItem key={user.id} value={user.id}>
+                                  {displayName}
+                                </SelectItem>
+                              );
+                            })
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                )}
 
-                <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Supprimer
-                </Button>
+                {canDelete && (
+                  <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Supprimer
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -1140,13 +1184,15 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                                 <FileText className="w-4 h-4 mr-2" />
                                 Ajouter une note
                               </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                onClick={() => handleDeleteContact(contact.id)}
-                                className="text-red-600"
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Supprimer
-                              </DropdownMenuItem>
+                              {canDelete && (
+                                <DropdownMenuItem 
+                                  onClick={() => handleDeleteContact(contact.id)}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  Supprimer
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -1263,9 +1309,11 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsStatusModalOpen(false)}>
                   Annuler
                 </Button>
-                <Button type="button" onClick={handleUpdateStatus}>
-                  Enregistrer
-                </Button>
+                {canEdit && (
+                  <Button type="button" onClick={handleUpdateStatus}>
+                    Enregistrer
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -1438,9 +1486,11 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsTeleoperatorModalOpen(false)}>
                   Annuler
                 </Button>
-                <Button type="button" onClick={handleUpdateTeleoperator}>
-                  Enregistrer
-                </Button>
+                {canEdit && (
+                  <Button type="button" onClick={handleUpdateTeleoperator}>
+                    Enregistrer
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -1492,9 +1542,11 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsConfirmateurModalOpen(false)}>
                   Annuler
                 </Button>
-                <Button type="button" onClick={handleUpdateConfirmateur}>
-                  Enregistrer
-                </Button>
+                {canEdit && (
+                  <Button type="button" onClick={handleUpdateConfirmateur}>
+                    Enregistrer
+                  </Button>
+                )}
               </div>
             </div>
           </div>

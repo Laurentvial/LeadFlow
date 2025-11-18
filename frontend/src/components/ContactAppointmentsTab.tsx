@@ -10,6 +10,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
+import { useHasPermission } from '../hooks/usePermissions';
 import { AppointmentCard } from './AppointmentCard';
 import '../styles/Modal.css';
 
@@ -22,6 +23,12 @@ interface ContactAppointmentsTabProps {
 export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: ContactAppointmentsTabProps) {
   const { currentUser } = useUser();
   const { users } = useUsers();
+  
+  // Permission checks
+  const canCreate = useHasPermission('planning', 'create');
+  const canEdit = useHasPermission('planning', 'edit');
+  const canDelete = useHasPermission('planning', 'delete');
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
@@ -92,6 +99,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
   }
 
   function handleEditEvent(event: any) {
+    if (!canEdit) return;
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
     const hour = eventDate.getHours().toString().padStart(2, '0');
@@ -150,6 +158,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
   }
 
   async function handleDeleteEvent(eventId: string) {
+    if (!canDelete) return;
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce rendez-vous ?')) return;
     
     try {
@@ -175,25 +184,32 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Rendez-vous</CardTitle>
-            <Button type="button" onClick={() => setIsModalOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Ajouter un rendez-vous
-            </Button>
+            {canCreate && (
+              <Button type="button" onClick={() => setIsModalOpen(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Ajouter un rendez-vous
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
           {appointments.length > 0 ? (
             <div className="space-y-3">
-              {appointments.map((apt) => (
-                <AppointmentCard
-                  key={apt.id}
-                  appointment={apt}
-                  variant="default"
-                  showActions={true}
-                  onEdit={handleEditEvent}
-                  onDelete={handleDeleteEvent}
-                />
-              ))}
+              {appointments.map((apt) => {
+                const cardProps: any = {
+                  appointment: apt,
+                  variant: 'default' as const,
+                  showActions: canEdit || canDelete,
+                };
+                if (canEdit) cardProps.onEdit = handleEditEvent;
+                if (canDelete) cardProps.onDelete = handleDeleteEvent;
+                return (
+                  <AppointmentCard
+                    key={apt.id}
+                    {...cardProps}
+                  />
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-slate-500">Aucun rendez-vous</p>
@@ -334,10 +350,12 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
                 >
                   Annuler
                 </Button>
-                <Button type="submit" disabled={isSubmitting || !formData.date}>
-                  <Send className="w-4 h-4 mr-2" />
-                  {isSubmitting ? 'Enregistrement...' : 'Enregistrer'}
-                </Button>
+                {canCreate && (
+                  <Button type="submit" disabled={isSubmitting || !formData.date}>
+                    <Send className="w-4 h-4 mr-2" />
+                    {isSubmitting ? 'Enregistrement...' : 'Enregistrer'}
+                  </Button>
+                )}
               </div>
             </form>
           </div>
@@ -480,10 +498,12 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
                 >
                   Annuler
                 </Button>
-                <Button type="submit" disabled={isSubmitting || !editFormData.date}>
-                  <Send className="w-4 h-4 mr-2" />
-                  {isSubmitting ? 'Enregistrement...' : 'Enregistrer'}
-                </Button>
+                {canEdit && (
+                  <Button type="submit" disabled={isSubmitting || !editFormData.date}>
+                    <Send className="w-4 h-4 mr-2" />
+                    {isSubmitting ? 'Enregistrement...' : 'Enregistrer'}
+                  </Button>
+                )}
               </div>
             </form>
           </div>

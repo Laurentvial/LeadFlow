@@ -7,6 +7,7 @@ import { Upload, FileText, Download, X, Eye } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
+import { useHasPermission } from '../hooks/usePermissions';
 import {
   Select,
   SelectContent,
@@ -47,6 +48,9 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  
+  // Permission check for document deletion
+  const canDeleteDocument = useHasPermission('contacts', 'delete');
 
   useEffect(() => {
     loadDocuments();
@@ -202,7 +206,7 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Documents & conformité</CardTitle>
+          <CardTitle>Documents</CardTitle>
           <Button 
             type="button" 
             className="flex items-center gap-2"
@@ -358,15 +362,17 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
                       </button>
                     </>
                   )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDeleteDocument(document.id)}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50 ml-auto"
-                  >
-                    Supprimer le document
-                  </Button>
+                  {canDeleteDocument && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDeleteDocument(document.id)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 ml-auto"
+                    >
+                      Supprimer le document
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}

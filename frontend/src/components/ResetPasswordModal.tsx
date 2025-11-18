@@ -50,13 +50,18 @@ export function ResetPasswordModal({
     }
 
     try {
-      await apiCall(`/api/users/${user.id}/reset-password/`, {
+      console.log('Resetting password for user:', user.id);
+      console.log('Password length:', password.length);
+      
+      const response = await apiCall(`/api/users/${user.id}/reset-password/`, {
         method: 'POST',
         body: JSON.stringify({
           password: password,
         }),
       });
 
+      console.log('Reset password response:', response);
+      
       toast.success('Mot de passe réinitialisé avec succès');
       onClose();
       setPassword('Access@123');
@@ -64,11 +69,19 @@ export function ResetPasswordModal({
       onPasswordReset();
     } catch (err: any) {
       console.error('Reset password error:', err);
-      const data = err?.response?.data || {};
+      console.error('Error details:', {
+        message: err.message,
+        status: err.status,
+        response: err.response,
+        data: err?.response?.data
+      });
+      
+      const data = err?.response?.data || err?.response || {};
       const message =
         data.error ||
         data.detail ||
-        Object.values(data).flat().join(', ') ||
+        err.message ||
+        (typeof data === 'string' ? data : Object.values(data).flat().join(', ')) ||
         'Une erreur est survenue lors de la réinitialisation du mot de passe';
       setError(message);
       toast.error(message);

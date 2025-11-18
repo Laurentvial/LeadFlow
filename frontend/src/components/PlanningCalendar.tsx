@@ -10,6 +10,7 @@ import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send } 
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
+import { useHasPermission } from '../hooks/usePermissions';
 import { AppointmentCard } from './AppointmentCard';
 import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
@@ -20,6 +21,12 @@ import LoadingIndicator from './LoadingIndicator';
 export function PlanningCalendar() {
   const { currentUser } = useUser();
   const { users } = useUsers();
+  
+  // Permission checks
+  const canCreate = useHasPermission('planning', 'create');
+  const canEdit = useHasPermission('planning', 'edit');
+  const canDelete = useHasPermission('planning', 'delete');
+  
   const [events, setEvents] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -102,6 +109,7 @@ export function PlanningCalendar() {
   }
 
   function handleEditEvent(event: any) {
+    if (!canEdit) return;
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
     const hour = eventDate.getHours().toString().padStart(2, '0');
@@ -148,6 +156,7 @@ export function PlanningCalendar() {
   }
 
   async function handleDeleteEvent(id: string) {
+    if (!canDelete) return;
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce rendez-vous ?')) return;
     
     try {
@@ -210,10 +219,12 @@ export function PlanningCalendar() {
           <p className="page-subtitle">Gestion des rendez-vous</p>
         </div>
         
-        <Button type="button" onClick={() => setIsModalOpen(true)}>
-          <Plus className="planning-icon planning-icon-with-margin" />
-          Ajouter un rendez-vous
-        </Button>
+        {canCreate && (
+          <Button type="button" onClick={() => setIsModalOpen(true)}>
+            <Plus className="planning-icon planning-icon-with-margin" />
+            Ajouter un rendez-vous
+          </Button>
+        )}
         
         {isModalOpen && (
           <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
@@ -334,9 +345,11 @@ export function PlanningCalendar() {
                   <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>
                     Annuler
                   </Button>
-                  <Button type="submit">
-                    Créer
-                  </Button>
+                  {canCreate && (
+                    <Button type="submit">
+                      Créer
+                    </Button>
+                  )}
                 </div>
               </form>
             </div>
@@ -485,10 +498,12 @@ export function PlanningCalendar() {
                   >
                     Annuler
                   </Button>
-                  <Button type="submit">
-                    <Send className="w-4 h-4 mr-2" />
-                    Enregistrer
-                  </Button>
+                  {canEdit && (
+                    <Button type="submit">
+                      <Send className="w-4 h-4 mr-2" />
+                      Enregistrer
+                    </Button>
+                  )}
                 </div>
               </form>
             </div>
@@ -638,16 +653,21 @@ export function PlanningCalendar() {
                       const dateB = new Date(b.datetime).getTime();
                       return dateB - dateA; // Descending order (most recent first)
                     })
-                    .map((event) => (
-                      <AppointmentCard
-                        key={event.id}
-                        appointment={event}
-                        variant="planning"
-                        showActions={true}
-                        onEdit={handleEditEvent}
-                        onDelete={handleDeleteEvent}
-                      />
-                    ))}
+                    .map((event) => {
+                      const cardProps: any = {
+                        appointment: event,
+                        variant: 'planning' as const,
+                        showActions: canEdit || canDelete,
+                      };
+                      if (canEdit) cardProps.onEdit = handleEditEvent;
+                      if (canDelete) cardProps.onDelete = handleDeleteEvent;
+                      return (
+                        <AppointmentCard
+                          key={event.id}
+                          {...cardProps}
+                        />
+                      );
+                    })}
                 </div>
               ) : (
                 <p className="planning-empty-message">
