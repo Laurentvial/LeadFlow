@@ -91,21 +91,50 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 # Database configuration
-# Heroku provides DATABASE_URL, otherwise use environment variables or local defaults
+# Priority: Custom DB_* env vars > DATABASE_URL > Local defaults
 import dj_database_url
 
-DATABASE_URL = os.getenv('DATABASE_URL')
-if DATABASE_URL:
-    # Heroku or other platform with DATABASE_URL
+# Check if custom database credentials are provided
+DB_HOST = os.getenv("DB_HOST")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_PORT = os.getenv("DB_PORT", "5432")
+
+if DB_HOST and DB_NAME and DB_USER and DB_PASSWORD:
+    # Use custom remote database from environment variables (highest priority)
+    # Aiven databases require SSL and specific connection parameters
+    db_options = {
+        'connect_timeout': 10,
+        'sslmode': 'require',  # Aiven requires SSL
+    }
+    
+    # Aiven-specific: Check if using connection pooler port (25060) or direct port (5432)
+    # Connection pooler doesn't need sslmode in OPTIONS, direct connection does
+    if DB_PORT != '25060':
+        db_options['sslmode'] = 'require'
+    
     DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': DB_NAME,
+            'USER': DB_USER,
+            'PASSWORD': DB_PASSWORD,
+            'HOST': DB_HOST,
+            'PORT': DB_PORT,
+            'OPTIONS': db_options,
+        }
+    }
+elif os.getenv('DATABASE_URL'):
+    # Use DATABASE_URL if provided (e.g., Heroku Postgres)
+    DATABASES = {
+        'default': dj_database_url.parse(os.getenv('DATABASE_URL'), conn_max_age=600)
     }
 else:
-    # Local development or custom database configuration
+    # Local development defaults
     USE_LOCAL_DB = os.getenv("USE_LOCAL_DB", "1")
     
-    if USE_LOCAL_DB == "1" or not os.getenv("DB_HOST"):
-        # Use local database for development
+    if USE_LOCAL_DB == "1":
         DATABASES = {
             'default': {
                 'ENGINE': 'django.db.backends.postgresql',
@@ -117,18 +146,11 @@ else:
             }
         }
     else:
-        # Use remote database from environment variables
+        # Fallback to SQLite if no database configured
         DATABASES = {
             'default': {
-                'ENGINE': 'django.db.backends.postgresql',
-                'NAME': os.getenv("DB_NAME"),
-                'USER': os.getenv("DB_USER"),
-                'PASSWORD': os.getenv("DB_PASSWORD"),
-                'HOST': os.getenv("DB_HOST"),
-                'PORT': os.getenv("DB_PORT"),
-                'OPTIONS': {
-                    'connect_timeout': 5,
-                },
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
             }
         }
 
