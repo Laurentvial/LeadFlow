@@ -55,7 +55,7 @@ export function LoginPage() {
 
           <CardTitle>
             <div className="login-logo-container">
-              <img src="../static/images/logo-w.png" alt="Logo" className="" style={{ maxHeight: 100, maxWidth: 140 }} />
+              <img src="/images/logo-w.png" alt="Logo" className="" style={{ maxHeight: 100, maxWidth: 140 }} />
             </div>
           </CardTitle>
           <CardDescription>

@@ -47,7 +47,7 @@ export function Header({ user }: HeaderProps) {
             <div className="header-logo">
             </div>
             <div className="header-title-section">
-              <img src="../static/images/logo.png" alt="Logo" className="header-logo-img" style={{ maxHeight: 100, maxWidth: 140 }} />
+              <img src="/images/logo.png" alt="Logo" className="header-logo-img" style={{ maxHeight: 100, maxWidth: 140 }} />
               <p className="header-subtitle">Outil de prospecting et de gestion de clients</p>
             </div>
           </div>
