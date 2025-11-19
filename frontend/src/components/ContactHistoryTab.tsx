@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import LoadingIndicator from './LoadingIndicator';
 import '../styles/Modal.css';
+import '../styles/ContactTab.css';
 
 interface ContactHistoryTabProps {
   contactId: string;
@@ -114,7 +115,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       {/* Modal for log details */}
       {isModalOpen && selectedLog && (
         <div className="modal-overlay" onClick={handleCloseModal}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-content contact-tab-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Détails de l'événement</h2>
               <Button
@@ -183,7 +184,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                 )}
               </div>
 
-              <div className="modal-form-actions" style={{ marginTop: '1.5rem' }}>
+              <div className="modal-form-actions contact-tab-modal-actions">
                 <Button type="button" variant="outline" onClick={handleCloseModal}>
                   Fermer
                 </Button>

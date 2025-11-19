@@ -3,7 +3,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { apiCall } from '../utils/api';
 import LoadingIndicator from './LoadingIndicator';
 import { toast } from 'sonner';
-import { EditPersonalInfoModal } from './EditPersonalInfoModal';
 import { ContactInfoTab } from './ContactInfoTab';
 import { ContactHistoryTab } from './ContactHistoryTab';
 import { ContactDocumentsTab } from './ContactDocumentsTab';
@@ -20,10 +19,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Dialogs
-  const [isEditPersonalInfoOpen, setIsEditPersonalInfoOpen] = useState(false);
-  
 
   useEffect(() => {
     loadContactData();
@@ -56,12 +51,8 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
     }
   }
 
-  function handleOpenEditModal() {
-    setIsEditPersonalInfoOpen(true);
-  }
-
-  function handlePersonalInfoUpdated(updatedContact: any) {
-    setContact(updatedContact);
+  async function handleContactUpdated() {
+    await loadContactData();
   }
 
   if (loading) {
@@ -101,8 +92,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
         <TabsContent value="info">
           <ContactInfoTab 
             contact={contact}
-            onOpenEditPersonalInfo={handleOpenEditModal}
-            onContactUpdated={loadContactData}
+            onContactUpdated={handleContactUpdated}
             appointments={appointments}
             notes={notes}
             contactId={contactId}
@@ -120,15 +110,6 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
           <ContactHistoryTab contactId={contactId} />
         </TabsContent>
       </Tabs>
-
-      {/* Edit Personal Info Modal */}
-      <EditPersonalInfoModal
-        isOpen={isEditPersonalInfoOpen}
-        onClose={() => setIsEditPersonalInfoOpen(false)}
-        contact={contact}
-        contactId={contactId}
-        onUpdate={handlePersonalInfoUpdated}
-      />
 
     </div>
   );

@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
+import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Pencil, Plus, Calendar, Clock, Send, X } from 'lucide-react';
+import { Plus, Calendar, Clock, Send, X } from 'lucide-react';
 import { useHasPermission } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
@@ -13,10 +14,15 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import '../styles/Contacts.css';
 import '../styles/Modal.css';
+import '../styles/ContactTab.css';
+
+interface Source {
+  id: string;
+  name: string;
+}
 
 interface ContactInfoTabProps {
   contact: any;
-  onOpenEditPersonalInfo: () => void;
   onContactUpdated?: () => void;
   appointments?: any[];
   notes?: any[];
@@ -26,7 +32,6 @@ interface ContactInfoTabProps {
 
 export function ContactInfoTab({ 
   contact, 
-  onOpenEditPersonalInfo, 
   onContactUpdated,
   appointments = [],
   notes = [],
@@ -39,6 +44,15 @@ export function ContactInfoTab({
   const canDeletePlanning = useHasPermission('planning', 'delete');
   const { currentUser } = useUser();
   const { users } = useUsers();
+  
+  // Statuses and sources
+  const [statuses, setStatuses] = useState<any[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
+  
+  // Editing states
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [fieldValue, setFieldValue] = useState<string>('');
+  const [isSaving, setIsSaving] = useState(false);
   
   // Appointments state
   const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
@@ -63,7 +77,32 @@ export function ContactInfoTab({
   // Notes state
   const [noteText, setNoteText] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
+  const [showAllNotes, setShowAllNotes] = useState(false);
   
+  // Load statuses and sources
+  useEffect(() => {
+    loadStatuses();
+    loadSources();
+  }, []);
+
+  async function loadStatuses() {
+    try {
+      const data = await apiCall('/api/statuses/');
+      setStatuses(data.statuses || []);
+    } catch (error) {
+      console.error('Error loading statuses:', error);
+    }
+  }
+
+  async function loadSources() {
+    try {
+      const data = await apiCall('/api/sources/');
+      setSources(data.sources || []);
+    } catch (error) {
+      console.error('Error loading sources:', error);
+    }
+  }
+
   // Initialize userId with current user when modal opens
   useEffect(() => {
     if (isAppointmentModalOpen && currentUser?.id && !appointmentFormData.userId) {
@@ -73,6 +112,79 @@ export function ContactInfoTab({
       }));
     }
   }, [isAppointmentModalOpen, currentUser]);
+
+  async function handleFieldUpdate(fieldName: string, value: any) {
+    if (!canEdit || !contactId) return;
+    
+    setIsSaving(true);
+    try {
+      const payload: any = {};
+      
+      // Map field names to API field names
+      const fieldMap: { [key: string]: string } = {
+        'statusId': 'statusId',
+        'civility': 'civility',
+        'firstName': 'firstName',
+        'lastName': 'lastName',
+        'email': 'email',
+        'mobile': 'mobile',
+        'phone': 'phone',
+        'birthDate': 'birthDate',
+        'nationality': 'nationality',
+        'address': 'address',
+        'addressComplement': 'addressComplement',
+        'postalCode': 'postalCode',
+        'city': 'city',
+        'sourceId': 'sourceId',
+        'campaign': 'campaign',
+        'teleoperatorId': 'teleoperatorId',
+        'confirmateurId': 'confirmateurId'
+      };
+      
+      const apiFieldName = fieldMap[fieldName];
+      if (apiFieldName) {
+        payload[apiFieldName] = value === '' || value === 'none' ? null : value;
+      }
+      
+      const response = await apiCall(`/api/contacts/${contactId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response?.contact) {
+        // Update local contact state if onContactUpdated is provided
+        if (onContactUpdated) {
+          onContactUpdated();
+        }
+        if (onRefresh) {
+          onRefresh();
+        }
+        setEditingField(null);
+        toast.success('Champ mis à jour avec succès');
+      }
+    } catch (error: any) {
+      console.error('Error updating field:', error);
+      toast.error(error?.message || 'Erreur lors de la mise à jour');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function startEditing(fieldName: string, currentValue: any) {
+    if (!canEdit) return;
+    setEditingField(fieldName);
+    setFieldValue(currentValue || '');
+  }
+
+  function cancelEditing() {
+    setEditingField(null);
+    setFieldValue('');
+  }
+
+  function saveField(fieldName: string) {
+    handleFieldUpdate(fieldName, fieldValue);
+  }
   
   const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
   const minutes = ['00', '15', '30', '45'];
@@ -254,32 +366,28 @@ export function ContactInfoTab({
                 return (
                   <div 
                     key={apt.id} 
-                    className={`p-2 border rounded text-sm ${
-                      isPast 
-                        ? 'border-slate-300 bg-slate-50 opacity-60' 
-                        : 'border-slate-200'
-                    }`}
+                    className={`contact-appointment-card ${isPast ? 'past' : ''}`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <Calendar className={`w-4 h-4 ${isPast ? 'text-slate-400' : 'text-slate-500'}`} />
-                          <span className={`font-medium ${isPast ? 'text-slate-500' : ''}`}>
+                          <Calendar className={`contact-icon-calendar ${isPast ? 'past' : ''}`} />
+                          <span className={`font-medium ${isPast ? 'contact-text-past' : ''}`}>
                             {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                           </span>
-                          <Clock className={`w-4 h-4 ${isPast ? 'text-slate-400' : 'text-slate-500'} ml-1`} />
-                          <span className={isPast ? 'text-slate-400' : ''}>
+                          <Clock className={`contact-icon-clock ml-1 ${isPast ? 'past' : ''}`} />
+                          <span className={isPast ? 'contact-text-past' : ''}>
                             {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
                           </span>
                         </div>
                         {apt.comment && (
-                          <p className={`text-sm mb-1 whitespace-pre-wrap line-clamp-2 ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
+                          <p className={`contact-text-comment ${isPast ? 'past' : ''}`}>
                             {apt.comment}
                           </p>
                         )}
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
-                            <span className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
                               {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
                                 day: '2-digit', 
                                 month: '2-digit', 
@@ -289,14 +397,14 @@ export function ContactInfoTab({
                               }) : '-'}
                             </span>
                             {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
-                              <span className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                              <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
                                 • {apt.createdBy || apt.userId?.username || apt.user?.username}
                               </span>
                             )}
                           </div>
                           {apt.assignedTo && (
                             <div className="flex items-center gap-2">
-                              <span className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                              <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
                                 Assigné à: <span className="font-medium">{apt.assignedTo}</span>
                               </span>
                             </div>
@@ -304,15 +412,15 @@ export function ContactInfoTab({
                         </div>
                       </div>
                       {(canEditPlanning || canDeletePlanning) && (
-                        <div className="flex gap-1 flex-shrink-0">
+                        <div className="flex gap-2 flex-shrink-0">
                           {canEditPlanning && (
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleEditAppointment(apt)}
-                              className={`h-7 w-7 p-0 ${isPast ? 'opacity-50' : ''}`}
+                              className={`contact-tab-button-modify cursor-pointer text-slate-600 ${isPast ? 'past' : ''}`}
                             >
-                              <Pencil className="w-3 h-3" />
+                              Modifier
                             </Button>
                           )}
                           {canDeletePlanning && (
@@ -320,8 +428,7 @@ export function ContactInfoTab({
                               variant="ghost"
                               size="sm"
                               onClick={() => handleDeleteAppointment(apt.id)}
-                              className={`h-auto p-0 text-red-600 hover:text-red-700 ${isPast ? 'opacity-50' : ''}`}
-                              style={{ fontSize: '7px' }}
+                              className={`contact-tab-button-delete text-red-600 cursor-pointer ${isPast ? 'past' : ''}`}
                             >
                               Supprimer
                             </Button>
@@ -364,7 +471,7 @@ export function ContactInfoTab({
                 type="submit" 
                 size="sm" 
                 disabled={isSubmittingNote || !noteText.trim()}
-                className="self-stretch"
+                className="contact-tab-button-save-note"
               >
                 <Send className="w-3 h-3 mr-1" />
                 {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
@@ -379,7 +486,7 @@ export function ContactInfoTab({
                   const dateB = new Date(b.createdAt || b.created_at).getTime();
                   return dateB - dateA; // Descending order (most recent first)
                 })
-                .slice(0, 3)
+                .slice(0, showAllNotes ? notes.length : 3)
                 .map((note) => (
                 <div key={note.id} className="text-sm">
                   <div className="flex items-start justify-between gap-2">
@@ -401,24 +508,34 @@ export function ContactInfoTab({
                             </span>
                           )}
                         </div>
-                         <span className="text-sm text-slate-700 whitespace-pre-wrap break-words text-wrap">{note.text}</span>
+                         <span className="contact-note-text">{note.text}</span>
                       </div>
                     </div>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDeleteNote(note.id)}
-                      className="text-red-600 hover:text-red-700 flex-shrink-0 h-auto p-0"
-                      style={{ fontSize: '7px' }}
+                      className="contact-tab-button-delete text-red-600 cursor-pointer flex-shrink-0"
                     >
                       Supprimer
                     </Button>
                   </div>
                 </div>
               ))}
-              {notes.length > 3 && (
-                <p className="text-xs text-slate-500 text-center pt-1">
+              {notes.length > 3 && !showAllNotes && (
+                <p 
+                  className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                  onClick={() => setShowAllNotes(true)}
+                >
                   + {notes.length - 3} autre(s) note(s)
+                </p>
+              )}
+              {showAllNotes && notes.length > 3 && (
+                <p 
+                  className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                  onClick={() => setShowAllNotes(false)}
+                >
+                  Afficher moins
                 </p>
               )}
             </div>
@@ -428,80 +545,248 @@ export function ContactInfoTab({
 
       {/* 1. Informations générales */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>1. Informations générales</CardTitle>
-          {canEdit && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onOpenEditPersonalInfo}
-          >
-            <Pencil className="w-4 h-4 mr-2" />
-            Éditer
-          </Button>
-          )}
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Statut</Label>
-              <p>
-                <span 
-                  style={{
-                    backgroundColor: contact.statusColor || '#e5e7eb',
-                    color: contact.statusColor ? '#000000' : '#374151',
-                    padding: '4px 12px',
-                    marginTop: '5px',
-                    borderRadius: '5px',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'inline-block'
-                  }}
+              {editingField === 'statusId' ? (
+                <div className="contact-field-input-wrapper">
+                  <Select
+                    value={fieldValue || 'none'}
+                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="flex-1 h-10">
+                      <SelectValue placeholder="Sélectionner un statut" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun</SelectItem>
+                      {statuses
+                        .filter((status) => status.id && status.id.trim() !== '')
+                        .map((status) => (
+                          <SelectItem key={status.id} value={status.id}>
+                            {status.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => saveField('statusId')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('statusId', contact.statusId)}
                 >
-                  {contact.statusName || '-'}
-                </span>
-              </p>
+                  <span 
+                    className="contact-status-badge"
+                    style={{
+                      backgroundColor: contact.statusColor || '#e5e7eb',
+                      color: contact.statusColor ? '#000000' : '#374151'
+                    }}
+                  >
+                    {contact.statusName || '-'}
+                  </span>
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Civilité</Label>
-              <p>{contact.civility || '-'}</p>
+              {editingField === 'civility' ? (
+                <div className="contact-field-input-wrapper">
+                  <Select
+                    value={fieldValue || 'none'}
+                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="flex-1 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucune</SelectItem>
+                      <SelectItem value="Monsieur">Monsieur</SelectItem>
+                      <SelectItem value="Madame">Madame</SelectItem>
+                      <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => saveField('civility')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('civility', contact.civility)}
+                >
+                  {contact.civility || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Prénom</Label>
-              <p>{contact.firstName || '-'}</p>
+              {editingField === 'firstName' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('firstName')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('firstName', contact.firstName)}
+                >
+                  {contact.firstName || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Nom</Label>
-              <p>{contact.lastName || '-'}</p>
+              {editingField === 'lastName' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('lastName')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('lastName', contact.lastName)}
+                >
+                  {contact.lastName || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Email</Label>
-              <p>{contact.email || '-'}</p>
+              {editingField === 'email' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    type="email"
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('email')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('email', contact.email)}
+                >
+                  {contact.email || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Portable</Label>
-              <p>{contact.mobile || '-'}</p>
+              {editingField === 'mobile' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('mobile')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('mobile', contact.mobile)}
+                >
+                  {contact.mobile || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Téléphone</Label>
-              <p>{contact.phone || '-'}</p>
+              {editingField === 'phone' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('phone')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('phone', contact.phone)}
+                >
+                  {contact.phone || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Date de naissance</Label>
-              <p>{(() => {
-                if (!contact.birthDate) return '-';
-                const date = new Date(contact.birthDate);
-                if (isNaN(date.getTime())) return '-';
-                return date.toLocaleDateString('fr-FR', { 
-                  day: '2-digit', 
-                  month: '2-digit', 
-                  year: 'numeric'
-                });
-              })()}</p>
+              {editingField === 'birthDate' ? (
+                <div className="contact-field-input-wrapper">
+                  <DateInput
+                    value={fieldValue}
+                    onChange={(value) => setFieldValue(value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('birthDate')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('birthDate', contact.birthDate)}
+                >
+                  {(() => {
+                    if (!contact.birthDate) return '-';
+                    const date = new Date(contact.birthDate);
+                    if (isNaN(date.getTime())) return '-';
+                    return date.toLocaleDateString('fr-FR', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      year: 'numeric'
+                    });
+                  })()}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Nationalité</Label>
-              <p>{contact.nationality || '-'}</p>
+              {editingField === 'nationality' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('nationality')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('nationality', contact.nationality)}
+                >
+                  {contact.nationality || '-'}
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -516,19 +801,91 @@ export function ContactInfoTab({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Adresse</Label>
-              <p>{contact.address || '-'}</p>
+              {editingField === 'address' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('address')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('address', contact.address)}
+                >
+                  {contact.address || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Complément d'adresse</Label>
-              <p>{contact.addressComplement || '-'}</p>
+              {editingField === 'addressComplement' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('addressComplement')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('addressComplement', contact.addressComplement)}
+                >
+                  {contact.addressComplement || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Code postal</Label>
-              <p>{contact.postalCode || '-'}</p>
+              {editingField === 'postalCode' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('postalCode')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('postalCode', contact.postalCode)}
+                >
+                  {contact.postalCode || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Ville</Label>
-              <p>{contact.city || '-'}</p>
+              {editingField === 'city' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('city')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('city', contact.city)}
+                >
+                  {contact.city || '-'}
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -543,19 +900,130 @@ export function ContactInfoTab({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Source</Label>
-              <p>{contact.source || '-'}</p>
+              {editingField === 'sourceId' ? (
+                <div className="contact-field-input-wrapper">
+                  <Select
+                    value={fieldValue || 'none'}
+                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="flex-1 h-10">
+                      <SelectValue placeholder="Sélectionner une source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucune</SelectItem>
+                      {sources
+                        .filter((source) => source.id && source.id.trim() !== '')
+                        .map((source) => (
+                          <SelectItem key={source.id} value={source.id}>
+                            {source.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => saveField('sourceId')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('sourceId', contact.sourceId)}
+                >
+                  {contact.source || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Campagne</Label>
-              <p>{contact.campaign || '-'}</p>
+              {editingField === 'campaign' ? (
+                <div className="contact-field-input-wrapper">
+                  <Input
+                    value={fieldValue}
+                    onChange={(e) => setFieldValue(e.target.value)}
+                    disabled={isSaving}
+                    className="flex-1 h-10"
+                  />
+                  <Button size="sm" onClick={() => saveField('campaign')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('campaign', contact.campaign)}
+                >
+                  {contact.campaign || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Téléopérateur</Label>
-              <p>{contact.teleoperatorName || contact.managerName || '-'}</p>
+              {editingField === 'teleoperatorId' ? (
+                <div className="contact-field-input-wrapper">
+                  <Select
+                    value={fieldValue || 'none'}
+                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="flex-1 h-10">
+                      <SelectValue placeholder="Sélectionner un téléopérateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun</SelectItem>
+                      {users
+                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                        .map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.firstName} {user.lastName}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => saveField('teleoperatorId')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('teleoperatorId', contact.teleoperatorId)}
+                >
+                  {contact.teleoperatorName || contact.managerName || '-'}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-slate-600">Confirmateur</Label>
-              <p>{contact.confirmateurName || '-'}</p>
+              {editingField === 'confirmateurId' ? (
+                <div className="contact-field-input-wrapper">
+                  <Select
+                    value={fieldValue || 'none'}
+                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="flex-1 h-10">
+                      <SelectValue placeholder="Sélectionner un confirmateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun</SelectItem>
+                      {users
+                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
+                        .map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.firstName} {user.lastName}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => saveField('confirmateurId')} disabled={isSaving}>✓</Button>
+                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                </div>
+              ) : (
+                <div 
+                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
+                  onClick={() => startEditing('confirmateurId', contact.confirmateurId)}
+                >
+                  {contact.confirmateurName || '-'}
+                </div>
+              )}
             </div>
           </div>
         </CardContent>

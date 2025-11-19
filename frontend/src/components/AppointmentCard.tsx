@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar as CalendarIcon, Clock, User, Pencil } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User } from 'lucide-react';
 import { Button } from './ui/button';
 
 interface AppointmentCardProps {
@@ -73,10 +73,11 @@ export function AppointmentCard({
                 variant="ghost"
                 size="sm"
                 onClick={() => onEdit(appointment)}
-                className={isPast ? 'opacity-50' : ''}
+                className={`h-auto p-0 hover:text-black hover:bg-transparent cursor-pointer text-slate-600 ${isPast ? 'opacity-50' : ''}`}
                 title="Modifier"
+                style={{ fontSize: '12px' }}
               >
-                <Pencil className="w-4 h-4" />
+                Modifier
               </Button>
             )}
             {onDelete && (
@@ -84,9 +85,9 @@ export function AppointmentCard({
                 variant="ghost"
                 size="sm"
                 onClick={() => onDelete(appointment.id)}
-                className={`h-auto p-0 text-red-600 hover:text-red-700 ${isPast ? 'opacity-50' : ''}`}
+                className={`h-auto p-0 text-red-600 hover:opacity-70 hover:bg-transparent cursor-pointer ${isPast ? 'opacity-50' : ''}`}
                 title="Supprimer"
-                style={{ fontSize: '7px' }}
+                style={{ fontSize: '12px' }}
               >
                 Supprimer
               </Button>

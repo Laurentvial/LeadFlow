@@ -47,6 +47,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('all');
+  const [statusTypeFilter, setStatusTypeFilter] = useState<'all' | 'lead' | 'client'>('all');
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
@@ -366,6 +367,13 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     }
   };
 
+  // Helper function to get status type for a contact
+  const getContactStatusType = (contact: any): string | null => {
+    if (!contact.statusId) return null;
+    const status = statuses.find(s => s.id === contact.statusId);
+    return status?.type || null;
+  };
+
   const filteredContacts = contacts.filter(contact => {
     const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.toLowerCase();
     const matchesSearch = 
@@ -373,6 +381,14 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       contact.email?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesTeam = selectedTeam === 'all'; // Team field removed from Contact model
+    
+    // Apply status type filter
+    const matchesStatusType = statusTypeFilter === 'all' 
+      ? true 
+      : (() => {
+          const statusType = getContactStatusType(contact);
+          return statusType === statusTypeFilter;
+        })();
     
     // Apply column filters
     const matchesColumnFilters = getOrderedVisibleColumns().every(columnId => {
@@ -390,7 +406,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       return cellValue.includes(filterValue.toLowerCase());
     });
     
-    return matchesSearch && matchesTeam && matchesColumnFilters;
+    return matchesSearch && matchesTeam && matchesStatusType && matchesColumnFilters;
   });
 
   // Calculate pagination
@@ -405,10 +421,10 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     }
   }, [totalPages, currentPage]);
   
-  // Reset to page 1 when search term, team filter, or column filters change
+  // Reset to page 1 when search term, team filter, status type filter, or column filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedTeam, columnFilters]);
+  }, [searchTerm, selectedTeam, statusTypeFilter, columnFilters]);
   
   // Calculate displayed contacts based on pagination
   const displayedContacts = itemsPerPage === -1 
@@ -857,6 +873,20 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                       {team.name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="contacts-filter-section">
+              <Label>Type de statut</Label>
+              <Select value={statusTypeFilter} onValueChange={(value) => setStatusTypeFilter(value as 'all' | 'lead' | 'client')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tous</SelectItem>
+                  <SelectItem value="lead">Lead</SelectItem>
+                  <SelectItem value="client">Client</SelectItem>
                 </SelectContent>
               </Select>
             </div>
