@@ -216,8 +216,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS Configuration
 # Note: CORS_ALLOW_ALL_ORIGINS and CORS_ALLOWED_ORIGINS are mutually exclusive
-# For development, we allow all origins
-CORS_ALLOW_ALL_ORIGINS = True
+# For development and production, we allow all origins
+# You can restrict this by setting CORS_ALLOWED_ORIGINS environment variable
+CORS_ALLOWED_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if CORS_ALLOWED_ORIGINS_ENV:
+    # Use specific origins if provided via environment variable
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_ENV.split(',') if origin.strip()]
+    CORS_ALLOW_ALL_ORIGINS = False
+else:
+    # Allow all origins (default - works for development and production)
+    CORS_ALLOW_ALL_ORIGINS = True
+
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
@@ -243,6 +252,12 @@ CORS_ALLOW_HEADERS = [
 
 # Allow preflight requests
 CORS_PREFLIGHT_MAX_AGE = 86400
+
+# Explicitly expose headers that might be needed
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'content-length',
+]
 
 # File upload settings for large CSV imports
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB

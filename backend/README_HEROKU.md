@@ -41,11 +41,14 @@ heroku config:set SECRET_KEY="your-secret-key-here"
 # Set debug mode (False for production)
 heroku config:set DEBUG="False"
 
-# Set allowed hosts (your Heroku app URL)
-heroku config:set ALLOWED_HOSTS="your-app-name.herokuapp.com"
+# Set allowed hosts (your Heroku app URL - use the actual URL with hash ID)
+heroku config:set ALLOWED_HOSTS="your-app-name-8d20fb5efc7b.herokuapp.com"
 
 # Set CSRF trusted origins (add your frontend URL)
-heroku config:set CSRF_TRUSTED_ORIGINS="https://your-app-name.herokuapp.com,https://your-frontend-domain.com"
+heroku config:set CSRF_TRUSTED_ORIGINS="https://your-app-name-8d20fb5efc7b.herokuapp.com,https://your-frontend-domain.com"
+
+# Optional: Set specific CORS origins (if not set, all origins are allowed)
+# heroku config:set CORS_ALLOWED_ORIGINS="https://your-frontend-domain.com,https://another-domain.com"
 ```
 
 ### 5. Deploy to Heroku
