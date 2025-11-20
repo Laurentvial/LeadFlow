@@ -233,3 +233,122 @@ class Document(models.Model):
 
     def __str__(self):
         return f"Document {self.document_type} - Contact {self.contact_id.id}"
+
+class SMTPConfig(models.Model):
+    """SMTP configuration for users to send/receive emails"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    user = models.OneToOneField(DjangoUser, on_delete=models.CASCADE, related_name='smtp_config')
+    
+    # SMTP Settings
+    smtp_server = models.CharField(max_length=255, default="")
+    smtp_port = models.IntegerField(default=587)
+    smtp_use_tls = models.BooleanField(default=True)
+    smtp_username = models.CharField(max_length=255, default="")
+    smtp_password = models.CharField(max_length=255, default="")  # Should be encrypted in production
+    
+    # IMAP Settings (for receiving emails)
+    imap_server = models.CharField(max_length=255, default="", blank=True)
+    imap_port = models.IntegerField(default=993, null=True, blank=True)
+    imap_use_ssl = models.BooleanField(default=True)
+    
+    # Email address
+    email_address = models.EmailField(max_length=255, default="")
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"SMTP Config for {self.user.username} ({self.email_address})"
+
+class Email(models.Model):
+    """Stored emails (sent and received)"""
+    EMAIL_TYPE_CHOICES = [
+        ('sent', 'Sent'),
+        ('received', 'Received'),
+        ('draft', 'Draft'),
+    ]
+    
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    user = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='emails')
+    email_type = models.CharField(max_length=10, choices=EMAIL_TYPE_CHOICES, default='sent')
+    
+    # Email headers
+    subject = models.CharField(max_length=500, default="")
+    from_email = models.EmailField(max_length=255, default="")
+    to_emails = models.JSONField(default=list)  # List of email addresses
+    cc_emails = models.JSONField(default=list, blank=True)
+    bcc_emails = models.JSONField(default=list, blank=True)
+    
+    # Email content
+    body_text = models.TextField(default="", blank=True)
+    body_html = models.TextField(default="", blank=True)
+    
+    # Attachments (stored as JSON list of file info)
+    attachments = models.JSONField(default=list, blank=True)
+    
+    # For received emails
+    message_id = models.CharField(max_length=500, default="", blank=True)  # Email Message-ID header
+    in_reply_to = models.CharField(max_length=500, default="", blank=True)  # In-Reply-To header
+    references = models.TextField(default="", blank=True)  # References header
+    
+    # Related contact (if email is related to a contact)
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='emails')
+    
+    # Status
+    is_read = models.BooleanField(default=False)
+    is_starred = models.BooleanField(default=False)
+    
+    # Timestamps
+    sent_at = models.DateTimeField(null=True, blank=True)  # When email was sent/received
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-sent_at', '-created_at']
+        indexes = [
+            models.Index(fields=['user', 'email_type', '-sent_at']),
+            models.Index(fields=['user', 'is_read']),
+        ]
+    
+    def __str__(self):
+        return f"Email {self.id} - {self.subject} ({self.email_type})"
+
+class EmailSignature(models.Model):
+    """Email signatures for users"""
+    LOGO_POSITIONS = [
+        ('top', 'En haut'),
+        ('bottom', 'En bas'),
+        ('left', 'À gauche'),
+        ('right', 'À droite'),
+    ]
+    
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    user = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='email_signatures')
+    
+    # Signature details
+    name = models.CharField(max_length=100, default="")  # Name/label for the signature
+    content_html = models.TextField(default="", blank=True)  # HTML content of signature
+    content_text = models.TextField(default="", blank=True)  # Plain text content of signature
+    
+    # Logo settings
+    logo_url = models.URLField(max_length=500, blank=True, default="")  # URL of logo image
+    logo_position = models.CharField(max_length=10, choices=LOGO_POSITIONS, default='left', blank=True)  # Position of logo
+    
+    # Default signature flag (only one per user can be default)
+    is_default = models.BooleanField(default=False)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_default', '-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_default']),
+        ]
+    
+    def __str__(self):
+        return f"Signature {self.name} - {self.user.username}"

@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
 import { useSources } from '../hooks/useSources';
 import { useUsers } from '../hooks/useUsers';
+import { useUser } from '../contexts/UserContext';
 import LoadingIndicator from './LoadingIndicator';
 import '../styles/PageHeader.css';
 
@@ -40,6 +41,7 @@ export function CsvImport() {
   const { statuses, loading: statusesLoading, error: statusesError } = useStatuses();
   const { sources, loading: sourcesLoading, error: sourcesError } = useSources();
   const { users, loading: usersLoading, error: usersError } = useUsers();
+  const { currentUser } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'results'>('upload');
@@ -55,8 +57,28 @@ export function CsvImport() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Get lead statuses only, with safe fallback
-  const leadStatuses = Array.isArray(statuses) ? statuses.filter((s: any) => s?.type === 'lead') : [];
+  // Get status view permissions
+  const statusViewPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
+
+  // Get lead statuses only, filtered by view permissions
+  const leadStatuses = React.useMemo(() => {
+    if (!Array.isArray(statuses)) return [];
+    return statuses.filter((s: any) => {
+      if (s?.type !== 'lead') return false;
+      if (!s.id || s.id.trim() === '') return false;
+      // Filter by view permissions
+      const normalizedStatusId = String(s.id).trim();
+      return statusViewPermissions.has(normalizedStatusId);
+    });
+  }, [statuses, statusViewPermissions]);
   
   // Get teleoperateurs only
   const teleoperateurs = Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];

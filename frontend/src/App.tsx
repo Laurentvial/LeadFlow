@@ -10,6 +10,7 @@ import AddContact from './components/AddContact';
 import { CsvImport } from './components/CsvImport';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
+import Mails from './components/Mails';
 import { UserProvider } from './contexts/UserContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import PermissionProtectedRoute from './components/PermissionProtectedRoute';
@@ -118,6 +119,13 @@ function App() {
                                     <Settings />
                                 </Layout>
                             </SettingsPermissionWrapper>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/mails" element={
+                        <ProtectedRoute>
+                            <Layout>
+                                <Mails />
+                            </Layout>
                         </ProtectedRoute>
                     } />
                     <Route path="*" element={

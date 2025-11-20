@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document
+from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -687,6 +687,154 @@ class PermissionRoleSerializer(serializers.ModelSerializer):
         ret['roleName'] = instance.role.name
         ret['permissionId'] = instance.permission.id
         ret['permission'] = PermissionSerializer(instance.permission).data
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class SMTPConfigSerializer(serializers.ModelSerializer):
+    userId = serializers.CharField(source='user.id', read_only=True)
+    emailAddress = serializers.EmailField(source='email_address')
+    smtpServer = serializers.CharField(source='smtp_server')
+    smtpPort = serializers.IntegerField(source='smtp_port')
+    smtpUseTls = serializers.BooleanField(source='smtp_use_tls')
+    smtpUsername = serializers.CharField(source='smtp_username')
+    smtpPassword = serializers.CharField(source='smtp_password', write_only=True, required=False)
+    imapServer = serializers.CharField(source='imap_server', required=False, allow_blank=True)
+    imapPort = serializers.IntegerField(source='imap_port', required=False, allow_null=True)
+    imapUseSsl = serializers.BooleanField(source='imap_use_ssl', required=False)
+    isActive = serializers.BooleanField(source='is_active')
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = SMTPConfig
+        fields = ['id', 'userId', 'emailAddress', 'smtpServer', 'smtpPort', 'smtpUseTls', 
+                  'smtpUsername', 'smtpPassword', 'imapServer', 'imapPort', 'imapUseSsl', 
+                  'isActive', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['userId'] = instance.user.id
+        ret['emailAddress'] = instance.email_address
+        ret['smtpServer'] = instance.smtp_server
+        ret['smtpPort'] = instance.smtp_port
+        ret['smtpUseTls'] = instance.smtp_use_tls
+        ret['smtpUsername'] = instance.smtp_username
+        # Don't include password in response
+        if 'smtpPassword' in ret:
+            del ret['smtpPassword']
+        ret['imapServer'] = instance.imap_server or ''
+        ret['imapPort'] = instance.imap_port
+        ret['imapUseSsl'] = instance.imap_use_ssl
+        ret['isActive'] = instance.is_active
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class EmailSerializer(serializers.ModelSerializer):
+    userId = serializers.CharField(source='user.id', read_only=True)
+    userName = serializers.SerializerMethodField()
+    emailType = serializers.ChoiceField(source='email_type', choices=Email.EMAIL_TYPE_CHOICES)
+    fromEmail = serializers.EmailField(source='from_email')
+    toEmails = serializers.JSONField(source='to_emails')
+    ccEmails = serializers.JSONField(source='cc_emails', required=False, allow_null=True)
+    bccEmails = serializers.JSONField(source='bcc_emails', required=False, allow_null=True)
+    bodyText = serializers.CharField(source='body_text', required=False, allow_blank=True)
+    bodyHtml = serializers.CharField(source='body_html', required=False, allow_blank=True)
+    attachments = serializers.JSONField(required=False, allow_null=True)
+    messageId = serializers.CharField(source='message_id', required=False, allow_blank=True)
+    inReplyTo = serializers.CharField(source='in_reply_to', required=False, allow_blank=True)
+    references = serializers.CharField(required=False, allow_blank=True)
+    contactId = serializers.CharField(source='contact.id', read_only=True, allow_null=True)
+    isRead = serializers.BooleanField(source='is_read', required=False)
+    isStarred = serializers.BooleanField(source='is_starred', required=False)
+    sentAt = serializers.DateTimeField(source='sent_at', required=False, allow_null=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = Email
+        fields = ['id', 'userId', 'userName', 'emailType', 'subject', 'fromEmail', 'toEmails', 
+                  'ccEmails', 'bccEmails', 'bodyText', 'bodyHtml', 'attachments', 'messageId', 
+                  'inReplyTo', 'references', 'contactId', 'isRead', 'isStarred', 'sentAt', 
+                  'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def get_userName(self, obj):
+        if obj.user:
+            return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username
+        return None
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['userId'] = instance.user.id if instance.user else None
+        ret['userName'] = self.get_userName(instance)
+        ret['emailType'] = instance.email_type
+        ret['fromEmail'] = instance.from_email
+        ret['toEmails'] = instance.to_emails or []
+        ret['ccEmails'] = instance.cc_emails or []
+        ret['bccEmails'] = instance.bcc_emails or []
+        ret['bodyText'] = instance.body_text or ''
+        ret['bodyHtml'] = instance.body_html or ''
+        ret['attachments'] = instance.attachments or []
+        ret['messageId'] = instance.message_id or ''
+        ret['inReplyTo'] = instance.in_reply_to or ''
+        ret['references'] = instance.references or ''
+        ret['contactId'] = instance.contact.id if instance.contact else None
+        ret['isRead'] = instance.is_read
+        ret['isStarred'] = instance.is_starred
+        ret['sentAt'] = instance.sent_at
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class EmailSignatureSerializer(serializers.ModelSerializer):
+    userId = serializers.CharField(source='user.id', read_only=True)
+    name = serializers.CharField(required=True)
+    contentHtml = serializers.CharField(source='content_html', required=False, allow_blank=True)
+    contentText = serializers.CharField(source='content_text', required=False, allow_blank=True)
+    logoUrl = serializers.URLField(source='logo_url', required=False, allow_blank=True)
+    logoProxyUrl = serializers.SerializerMethodField()  # Proxy URL for preview
+    logoPosition = serializers.ChoiceField(source='logo_position', choices=EmailSignature.LOGO_POSITIONS, required=False, allow_blank=True)
+    isDefault = serializers.BooleanField(source='is_default', required=False)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = EmailSignature
+        fields = ['id', 'userId', 'name', 'contentHtml', 'contentText', 'logoUrl', 'logoProxyUrl', 'logoPosition', 'isDefault', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def get_logoProxyUrl(self, obj):
+        """Generate proxy URL for logo preview to avoid CORS issues"""
+        import os
+        if not obj.logo_url:
+            return None
+        
+        # Extract file path from URL: https://endpoint/bucket/path -> path
+        endpoint = os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net').rstrip('/')
+        bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+        
+        if obj.logo_url.startswith(endpoint):
+            # Extract path after bucket name
+            path_part = obj.logo_url[len(endpoint):].lstrip('/')
+            if path_part.startswith(f'{bucket_name}/'):
+                file_path = path_part[len(bucket_name) + 1:]  # Remove bucket name and leading slash
+                return f'/api/emails/signatures/logo-proxy/{file_path}'
+        
+        return None
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['userId'] = instance.user.id
+        ret['name'] = instance.name
+        ret['contentHtml'] = instance.content_html or ''
+        ret['contentText'] = instance.content_text or ''
+        ret['logoUrl'] = instance.logo_url if instance.logo_url else None  # Keep original URL for email sending
+        ret['logoProxyUrl'] = self.get_logoProxyUrl(instance)  # Proxy URL for preview
+        ret['logoPosition'] = instance.logo_position or 'left'
+        ret['isDefault'] = instance.is_default
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret

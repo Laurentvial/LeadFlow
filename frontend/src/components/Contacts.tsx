@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
 import { useSources } from '../hooks/useSources';
 import { useHasPermission } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
@@ -39,15 +40,120 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   
   // Permission checks
   const canCreate = useHasPermission('contacts', 'create');
-  const canEdit = useHasPermission('contacts', 'edit');
+  const canEditGeneral = useHasPermission('contacts', 'edit');
+  const canViewGeneral = useHasPermission('contacts', 'view');
   const canDelete = useHasPermission('contacts', 'delete');
+  
+  // Get all status permissions
+  const { currentUser } = useUser();
+  
+  const statusEditPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const editPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(editPerms);
+  }, [currentUser?.permissions]);
+  
+  const statusViewPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
+  
+  // Helper function to check if user can view a contact based on its status
+  // Logic:
+  // 1. If contact has no status -> use general permission
+  // 2. If contact has a status -> user MUST have BOTH:
+  //    - General 'contacts' view permission (required by PermissionsTab validation)
+  //    - Status-specific view permission for this status
+  // This ensures that even with general permission, status-specific permission is required
+  const canViewContact = React.useCallback((contact: any): boolean => {
+    const contactStatusId = contact?.statusId;
+    
+    // Normalize statusId to string for comparison
+    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
+    
+    // If contact has no status, use general permission
+    if (!normalizedStatusId) {
+      return canViewGeneral;
+    }
+    
+    // If contact has a status, user MUST have:
+    // 1. General 'contacts' view permission (required by PermissionsTab validation)
+    // 2. Status-specific view permission for this status
+    if (!canViewGeneral) {
+      // User doesn't have general permission, so they cannot view
+      // (PermissionsTab ensures status permissions can only be granted if general permission exists)
+      return false;
+    }
+    
+    // Check if user has permission to view this specific status
+    const canViewStatus = statusViewPermissions.has(normalizedStatusId);
+    
+    // User must have BOTH general permission AND status-specific permission
+    return canViewStatus;
+  }, [canViewGeneral, statusViewPermissions]);
+  
+  // Helper function to check if user can edit a contact based on its status
+  // Logic:
+  // 1. If contact has no status -> use general permission
+  // 2. If contact has a status -> user MUST have BOTH:
+  //    - General 'contacts' edit permission (required by PermissionsTab validation)
+  //    - Status-specific edit permission for this status
+  // This ensures that even with general permission, status-specific permission is required
+  const canEditContact = React.useCallback((contact: any, statusIdOverride?: string | null): boolean => {
+    // Use override statusId if provided (for checking new status when updating)
+    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
+    
+    // Normalize statusId to string for comparison
+    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
+    
+    // If contact has no status, use general permission
+    if (!normalizedStatusId) {
+      return canEditGeneral;
+    }
+    
+    // If contact has a status, user MUST have:
+    // 1. General 'contacts' edit permission (required by PermissionsTab validation)
+    // 2. Status-specific edit permission for this status
+    if (!canEditGeneral) {
+      // User doesn't have general permission, so they cannot edit
+      // (PermissionsTab ensures status permissions can only be granted if general permission exists)
+      return false;
+    }
+    
+    // Check if user has permission to edit this specific status
+    const canEditStatus = statusEditPermissions.has(normalizedStatusId);
+    
+    // User must have BOTH general permission AND status-specific permission
+    return canEditStatus;
+  }, [canEditGeneral, statusEditPermissions]);
   const [contacts, setContacts] = useState<any[]>([]);
+  const [totalContacts, setTotalContacts] = useState<number>(0);
   const [teams, setTeams] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTeam, setSelectedTeam] = useState('all');
-  const [statusTypeFilter, setStatusTypeFilter] = useState<'all' | 'lead' | 'client'>('all');
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Pending filters (what user is typing/selecting)
+  const [pendingSearchTerm, setPendingSearchTerm] = useState('');
+  const [pendingTeam, setPendingTeam] = useState('all');
+  const [pendingStatusType, setPendingStatusType] = useState<'all' | 'lead' | 'client'>('all');
+  const [pendingColumnFilters, setPendingColumnFilters] = useState<Record<string, string>>({});
+  
+  // Applied filters (what's actually being used for API calls)
+  const [appliedSearchTerm, setAppliedSearchTerm] = useState('');
+  const [appliedTeam, setAppliedTeam] = useState('all');
+  const [appliedStatusType, setAppliedStatusType] = useState<'all' | 'lead' | 'client'>('all');
+  const [appliedColumnFilters, setAppliedColumnFilters] = useState<Record<string, string>>({});
+  
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
@@ -225,26 +331,46 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [itemsPerPage, appliedSearchTerm, appliedTeam, appliedStatusType, appliedColumnFilters]); // Reload when filters or itemsPerPage change
 
   async function loadData() {
     setIsLoading(true);
     try {
-      // Load all data in parallel for better performance
+      // Calculate limit: request enough contacts to cover multiple pages
+      const limit = Math.max(itemsPerPage * 10, 500);
+      
+      // Build query parameters for filters
+      const queryParams = new URLSearchParams();
+      queryParams.append('limit', limit.toString());
+      
+      if (appliedSearchTerm) {
+        queryParams.append('search', appliedSearchTerm);
+      }
+      if (appliedTeam !== 'all') {
+        queryParams.append('team', appliedTeam);
+      }
+      if (appliedStatusType !== 'all') {
+        queryParams.append('status_type', appliedStatusType);
+      }
+      
+      // Add column filters
+      Object.entries(appliedColumnFilters).forEach(([key, value]) => {
+        if (value && typeof value === 'string') {
+          queryParams.append(`filter_${key}`, value);
+        }
+      });
+      
+      // Load data in parallel for better performance
       const [contactsData, teamsData, statusesData] = await Promise.all([
-        apiCall('/api/contacts/'),
+        apiCall(`/api/contacts/?${queryParams.toString()}`),
         apiCall('/api/teams/'),
         apiCall('/api/statuses/')
       ]);
       
-      // Sort contacts by creation date (most recent first)
+      // Contacts are already sorted and filtered by the backend
       const contactsList = contactsData.contacts || [];
-      const sortedContacts = contactsList.sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA; // Most recent first
-      });
-      setContacts(sortedContacts);
+      setContacts(contactsList);
+      setTotalContacts(contactsData.total || contactsList.length);
       setTeams(teamsData.teams || []);
       setStatuses(statusesData.statuses || []);
     } catch (error) {
@@ -253,6 +379,39 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       setIsLoading(false);
     }
   }
+  
+  // Apply filters - called when user clicks "Filtrer" button
+  function handleApplyFilters() {
+    setAppliedSearchTerm(pendingSearchTerm);
+    setAppliedTeam(pendingTeam);
+    setAppliedStatusType(pendingStatusType);
+    setAppliedColumnFilters({...pendingColumnFilters});
+    setColumnFilters({...pendingColumnFilters}); // Keep for display
+    setCurrentPage(1); // Reset to first page
+    // loadData will be called by useEffect when applied filters change
+  }
+  
+  // Reset filters
+  function handleResetFilters() {
+    setPendingSearchTerm('');
+    setPendingTeam('all');
+    setPendingStatusType('all');
+    setPendingColumnFilters({});
+    setAppliedSearchTerm('');
+    setAppliedTeam('all');
+    setAppliedStatusType('all');
+    setAppliedColumnFilters({});
+    setColumnFilters({});
+    setCurrentPage(1);
+    // loadData will be called by useEffect when applied filters change
+  }
+  
+  // Helper to check if filters have changed
+  const hasFilterChanges = 
+    pendingSearchTerm !== appliedSearchTerm ||
+    pendingTeam !== appliedTeam ||
+    pendingStatusType !== appliedStatusType ||
+    JSON.stringify(pendingColumnFilters) !== JSON.stringify(appliedColumnFilters);
 
 
   // Helper function to determine if a column should use Select filter
@@ -374,45 +533,14 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     return status?.type || null;
   };
 
-  const filteredContacts = contacts.filter(contact => {
-    const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.toLowerCase();
-    const matchesSearch = 
-      fullName.includes(searchTerm.toLowerCase()) ||
-      contact.email?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesTeam = selectedTeam === 'all'; // Team field removed from Contact model
-    
-    // Apply status type filter
-    const matchesStatusType = statusTypeFilter === 'all' 
-      ? true 
-      : (() => {
-          const statusType = getContactStatusType(contact);
-          return statusType === statusTypeFilter;
-        })();
-    
-    // Apply column filters
-    const matchesColumnFilters = getOrderedVisibleColumns().every(columnId => {
-      const filterValue = columnFilters[columnId];
-      if (!filterValue) return true; // No filter for this column
-      
-      // For Select filters (status, creator, teleoperator, confirmateur, source), match by ID
-      if (shouldUseSelectFilter(columnId)) {
-        const contactValue = getContactValueForSelectFilter(contact, columnId);
-        return contactValue === filterValue;
-      }
-      
-      // For text filters, match by text content
-      const cellValue = getCellValue(contact, columnId);
-      return cellValue.includes(filterValue.toLowerCase());
-    });
-    
-    return matchesSearch && matchesTeam && matchesStatusType && matchesColumnFilters;
-  });
+  // Filter contacts based on status view permissions
+  // Backend handles filtering, but we also filter by status view permissions on client side
+  const filteredContacts = React.useMemo(() => {
+    return contacts.filter(contact => canViewContact(contact));
+  }, [contacts, canViewContact]);
 
   // Calculate pagination
-  const totalPages = itemsPerPage === -1 
-    ? 1 
-    : Math.ceil(filteredContacts.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredContacts.length / itemsPerPage);
   
   // Reset to page 1 if current page is out of bounds or when filters change
   useEffect(() => {
@@ -421,15 +549,13 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     }
   }, [totalPages, currentPage]);
   
-  // Reset to page 1 when search term, team filter, status type filter, or column filters change
+  // Reset to page 1 when applied filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedTeam, statusTypeFilter, columnFilters]);
+  }, [appliedSearchTerm, appliedTeam, appliedStatusType, appliedColumnFilters]);
   
   // Calculate displayed contacts based on pagination
-  const displayedContacts = itemsPerPage === -1 
-    ? filteredContacts 
-    : filteredContacts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const displayedContacts = filteredContacts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   // Gestion de la sélection
   function handleSelectContact(contactId: string) {
@@ -469,6 +595,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     return column?.label || columnId;
   };
   
+  // Helper function to truncate text with ellipsis
+  const truncateText = (text: string, maxLength: number = 15): string => {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+  };
+  
   // Helper function to render cell content based on column id
   const renderCell = (contact: any, columnId: string) => {
     switch (columnId) {
@@ -484,8 +616,9 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
                 }}
                 className="contacts-name-link"
+                title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
               >
-                {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                {truncateText(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-')}
               </button>
               {lastOpenedContactId === contact.id && (
                 <span 
@@ -506,17 +639,17 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           </td>
         );
       case 'firstName':
-        return <td key={columnId}>{contact.firstName || '-'}</td>;
+        return <td key={columnId} title={contact.firstName || ''}>{truncateText(contact.firstName || '-')}</td>;
       case 'lastName':
-        return <td key={columnId}>{contact.lastName || '-'}</td>;
+        return <td key={columnId} title={contact.lastName || ''}>{truncateText(contact.lastName || '-')}</td>;
       case 'civility':
-        return <td key={columnId}>{contact.civility || '-'}</td>;
+        return <td key={columnId} title={contact.civility || ''}>{truncateText(contact.civility || '-')}</td>;
       case 'phone':
-        return <td key={columnId}>{contact.phone || '-'}</td>;
+        return <td key={columnId} title={contact.phone || ''}>{truncateText(contact.phone || '-')}</td>;
       case 'mobile':
-        return <td key={columnId}>{contact.mobile || '-'}</td>;
+        return <td key={columnId} title={contact.mobile || ''}>{truncateText(contact.mobile || '-')}</td>;
       case 'email':
-        return <td key={columnId} className="contacts-table-email">{contact.email || '-'}</td>;
+        return <td key={columnId} className="contacts-table-email" title={contact.email || ''}>{truncateText(contact.email || '-')}</td>;
       case 'birthDate':
         return (
           <td key={columnId}>
@@ -527,19 +660,19 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           </td>
         );
       case 'birthPlace':
-        return <td key={columnId}>{contact.birthPlace || '-'}</td>;
+        return <td key={columnId} title={contact.birthPlace || ''}>{truncateText(contact.birthPlace || '-')}</td>;
       case 'address':
-        return <td key={columnId}>{contact.address || '-'}</td>;
+        return <td key={columnId} title={contact.address || ''}>{truncateText(contact.address || '-')}</td>;
       case 'addressComplement':
-        return <td key={columnId}>{contact.addressComplement || '-'}</td>;
+        return <td key={columnId} title={contact.addressComplement || ''}>{truncateText(contact.addressComplement || '-')}</td>;
       case 'postalCode':
-        return <td key={columnId}>{contact.postalCode || '-'}</td>;
+        return <td key={columnId} title={contact.postalCode || ''}>{truncateText(contact.postalCode || '-')}</td>;
       case 'city':
-        return <td key={columnId}>{contact.city || '-'}</td>;
+        return <td key={columnId} title={contact.city || ''}>{truncateText(contact.city || '-')}</td>;
       case 'nationality':
-        return <td key={columnId}>{contact.nationality || '-'}</td>;
+        return <td key={columnId} title={contact.nationality || ''}>{truncateText(contact.nationality || '-')}</td>;
       case 'campaign':
-        return <td key={columnId}>{contact.campaign || '-'}</td>;
+        return <td key={columnId} title={contact.campaign || ''}>{truncateText(contact.campaign || '-')}</td>;
       case 'createdAt':
         return (
           <td key={columnId}>
@@ -567,25 +700,26 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       case 'teleoperator':
         return (
           <td key={columnId}>
-            {canEdit ? (
+            {canEditContact(contact) ? (
               <button
                 onClick={() => handleOpenTeleoperatorModal(contact)}
                 className="contacts-clickable-cell"
                 style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                title={contact.managerName || contact.teleoperatorName || ''}
               >
-                {contact.managerName || contact.teleoperatorName || '-'}
+                {truncateText(contact.managerName || contact.teleoperatorName || '-')}
               </button>
             ) : (
-              <span>{contact.managerName || contact.teleoperatorName || '-'}</span>
+              <span title={contact.managerName || contact.teleoperatorName || ''}>{truncateText(contact.managerName || contact.teleoperatorName || '-')}</span>
             )}
           </td>
         );
       case 'source':
-        return <td key={columnId}>{contact.source || '-'}</td>;
+        return <td key={columnId} title={contact.source || ''}>{truncateText(contact.source || '-')}</td>;
       case 'status':
         return (
           <td key={columnId}>
-            {canEdit ? (
+            {canEditContact(contact) ? (
               <button
                 onClick={() => handleOpenStatusModal(contact)}
                 className="contacts-clickable-cell"
@@ -603,7 +737,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                     display: 'inline-block'
                   }}
                 >
-                  {contact.statusName || '-'}
+                  {truncateText(contact.statusName || '-')}
                 </span>
               </button>
             ) : (
@@ -627,23 +761,24 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       case 'confirmateur':
         return (
           <td key={columnId}>
-            {canEdit ? (
+            {canEditContact(contact) ? (
               <button
                 onClick={() => handleOpenConfirmateurModal(contact)}
                 className="contacts-clickable-cell"
                 style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                title={contact.confirmateurName || ''}
               >
-                {contact.confirmateurName || '-'}
+                {truncateText(contact.confirmateurName || '-')}
               </button>
             ) : (
-              <span>{contact.confirmateurName || '-'}</span>
+              <span title={contact.confirmateurName || ''}>{truncateText(contact.confirmateurName || '-')}</span>
             )}
           </td>
         );
       case 'creator':
-        return <td key={columnId}>{contact.creatorName || '-'}</td>;
+        return <td key={columnId} title={contact.creatorName || ''}>{truncateText(contact.creatorName || '-')}</td>;
       case 'managerTeam':
-        return <td key={columnId}>{contact.managerTeamName || '-'}</td>;
+        return <td key={columnId} title={contact.managerTeamName || ''}>{truncateText(contact.managerTeamName || '-')}</td>;
       default:
         return <td key={columnId}>-</td>;
     }
@@ -700,6 +835,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   async function handleBulkDelete() {
     if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedContacts.size} contact(s) ? Cette action est irréversible.`)) return;
     
+    setIsDeleting(true);
     try {
       const promises = Array.from(selectedContacts).map(contactId =>
         apiCall(`/api/contacts/${contactId}/delete/`, { method: 'DELETE' })
@@ -707,9 +843,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       await Promise.all(promises);
       loadData();
       handleClearSelection();
+      toast.success(`${selectedContacts.size} contact(s) supprimé(s) avec succès`);
     } catch (error) {
       console.error('Error deleting contacts:', error);
-      alert('Erreur lors de la suppression des contacts');
+      toast.error('Erreur lors de la suppression des contacts');
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -727,26 +866,29 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   async function handleDeleteContact(contactId: string) {
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce contact ?')) return;
     
+    setIsDeleting(true);
     try {
-      // TODO: Implémenter l'endpoint de suppression
-      // await apiCall(`/api/contacts/${contactId}/`, { method: 'DELETE' });
-      console.log('Supprimer contact:', contactId);
+      await apiCall(`/api/contacts/${contactId}/delete/`, { method: 'DELETE' });
       loadData();
+      toast.success('Contact supprimé avec succès');
     } catch (error) {
       console.error('Error deleting contact:', error);
+      toast.error('Erreur lors de la suppression du contact');
+    } finally {
+      setIsDeleting(false);
     }
   }
 
   // Modal handlers
   function handleOpenStatusModal(contact: any) {
-    if (!canEdit) return;
+    if (!canEditContact(contact)) return;
     setSelectedContact(contact);
     setSelectedStatusId(contact.statusId || '');
     setIsStatusModalOpen(true);
   }
 
   function handleOpenTeleoperatorModal(contact: any) {
-    if (!canEdit) return;
+    if (!canEditContact(contact)) return;
     setSelectedContact(contact);
     // Prefill with current teleoperator ID if exists
     const teleoperatorId = contact.teleoperatorId || contact.managerId || '';
@@ -755,7 +897,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   }
 
   function handleOpenConfirmateurModal(contact: any) {
-    if (!canEdit) return;
+    if (!canEditContact(contact)) return;
     setSelectedContact(contact);
     setSelectedConfirmateurId(contact.confirmateurId || '');
     setIsConfirmateurModalOpen(true);
@@ -763,6 +905,20 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   async function handleUpdateStatus() {
     if (!selectedContact) return;
+    
+    // Check if user has permission to edit this contact with the CURRENT status
+    if (!canEditContact(selectedContact)) {
+      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      return;
+    }
+    
+    // Also check if user has permission to edit the NEW status (if status is being changed)
+    if (selectedStatusId && selectedStatusId !== selectedContact.statusId) {
+      if (!canEditContact(selectedContact, selectedStatusId)) {
+        toast.error('Vous n\'avez pas la permission d\'éditer les contacts avec ce statut');
+        return;
+      }
+    }
     
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
@@ -782,6 +938,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   async function handleUpdateTeleoperator() {
     if (!selectedContact) return;
     
+    // Check if user has permission to edit this contact
+    if (!canEditContact(selectedContact)) {
+      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      return;
+    }
+    
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
         method: 'PATCH',
@@ -799,6 +961,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   async function handleUpdateConfirmateur() {
     if (!selectedContact) return;
+    
+    // Check if user has permission to edit this contact
+    if (!canEditContact(selectedContact)) {
+      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      return;
+    }
     
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
@@ -854,15 +1022,20 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Input
                   className="contacts-search-input"
                   placeholder="Nom, email..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={pendingSearchTerm}
+                  onChange={(e) => setPendingSearchTerm(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleApplyFilters();
+                    }
+                  }}
                 />
               </div>
             </div>
             
             <div className="contacts-filter-section">
               <Label>Équipe</Label>
-              <Select value={selectedTeam} onValueChange={setSelectedTeam}>
+              <Select value={pendingTeam} onValueChange={setPendingTeam}>
                 <SelectTrigger>
                   <SelectValue placeholder="Toutes les équipes" />
                 </SelectTrigger>
@@ -879,7 +1052,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
             <div className="contacts-filter-section">
               <Label>Type de statut</Label>
-              <Select value={statusTypeFilter} onValueChange={(value) => setStatusTypeFilter(value as 'all' | 'lead' | 'client')}>
+              <Select value={pendingStatusType} onValueChange={(value) => setPendingStatusType(value as 'all' | 'lead' | 'client')}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -894,20 +1067,16 @@ export function Contacts({ onSelectContact }: ContactsProps) {
             <div className="contacts-filter-section">
               <Label>Affichage par</Label>
               <Select 
-                value={itemsPerPage === -1 ? "all" : itemsPerPage.toString()} 
+                value={itemsPerPage.toString()} 
                 onValueChange={(value) => {
-                  if (value === "all") {
-                    setItemsPerPage(-1);
-                  } else {
-                    const numValue = Number(value);
-                    setItemsPerPage(numValue);
-                    setCurrentPage(1); // Reset to first page when changing items per page
-                  }
+                  const numValue = Number(value);
+                  setItemsPerPage(numValue);
+                  setCurrentPage(1); // Reset to first page when changing items per page
                 }}
               >
                 <SelectTrigger>
                   <SelectValue>
-                    {itemsPerPage === -1 ? "Tous" : `${itemsPerPage}`}
+                    {itemsPerPage}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -915,7 +1084,9 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   <SelectItem value="25">25</SelectItem>
                   <SelectItem value="50">50</SelectItem>
                   <SelectItem value="100">100</SelectItem>
-                  <SelectItem value="all">Tous</SelectItem>
+                  <SelectItem value="200">200</SelectItem>
+                  <SelectItem value="500">500</SelectItem>
+                  <SelectItem value="1000">1000</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -936,7 +1107,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 </Button>
               </div>
               <div className="contacts-bulk-actions-buttons">
-                {canEdit && (
+                {canEditGeneral && (
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
@@ -999,9 +1170,22 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 )}
 
                 {canDelete && (
-                  <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Supprimer
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    onClick={handleBulkDelete}
+                    disabled={isDeleting}
+                  >
+                    {isDeleting ? (
+                      <>
+                        <span style={{ marginLeft: '8px' }}>Suppression...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Supprimer
+                      </>
+                    )}
                   </Button>
                 )}
               </div>
@@ -1015,19 +1199,27 @@ export function Contacts({ onSelectContact }: ContactsProps) {
         <CardHeader>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <CardTitle>
-              Liste des contacts ({filteredContacts.length})
-              {itemsPerPage !== -1 && totalPages > 1 && ` - Page ${currentPage} sur ${totalPages}`}
+              Liste des contacts ({itemsPerPage} / {totalContacts})
+              {totalPages > 1 && ` - Page ${currentPage} sur ${totalPages}`}
             </CardTitle>
             <div style={{ display: 'flex', gap: '8px' }}>
-              {Object.keys(columnFilters).length > 0 && (
+              <Button 
+                onClick={handleApplyFilters} 
+                size="sm"
+                disabled={!hasFilterChanges && !appliedSearchTerm && appliedTeam === 'all' && appliedStatusType === 'all' && Object.keys(appliedColumnFilters).length === 0}
+              >
+                <Search className="w-4 h-4 mr-2" />
+                Filtrer
+              </Button>
+              {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || appliedTeam !== 'all' || appliedStatusType !== 'all') && (
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => setColumnFilters({})}
+                  onClick={handleResetFilters}
                   title="Réinitialiser les filtres"
                 >
                   <X className="w-4 h-4 mr-2" />
-                  Réinitialiser filtres ({Object.keys(columnFilters).length})
+                  Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (appliedTeam !== 'all' ? 1 : 0) + (appliedStatusType !== 'all' ? 1 : 0)})
                 </Button>
               )}
               <Button 
@@ -1042,10 +1234,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {(isLoading || isDeleting) ? (
             <div className="contacts-loading">
               <LoadingIndicator />
-              <p className="contacts-loading-text">Chargement des contacts...</p>
+              <p className="contacts-loading-text">
+                {isDeleting ? 'Suppression des contacts en cours...' : 'Chargement des contacts...'}
+              </p>
             </div>
           ) : filteredContacts.length > 0 ? (
             <div className="contacts-table-wrapper">
@@ -1089,7 +1283,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                               className="contacts-column-header-button"
                             >
                               <span>{getColumnLabel(columnId)}</span>
-                              {columnFilters[columnId] && (
+                              {(pendingColumnFilters[columnId] || columnFilters[columnId]) && (
                                 <Filter className="w-3 h-3" style={{ color: '#3b82f6' }} />
                               )}
                             </button>
@@ -1104,12 +1298,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                                 <Label className="text-sm font-semibold">
                                   Filtrer par {getColumnLabel(columnId)}
                                 </Label>
-                                {columnFilters[columnId] && (
+                                {pendingColumnFilters[columnId] && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => {
-                                      setColumnFilters(prev => {
+                                      setPendingColumnFilters(prev => {
                                         const newFilters = { ...prev };
                                         delete newFilters[columnId];
                                         return newFilters;
@@ -1124,9 +1318,9 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                               {shouldUseSelectFilter(columnId) ? (
                                 <>
                                   <Select
-                                    value={columnFilters[columnId] || ''}
+                                    value={pendingColumnFilters[columnId] || ''}
                                     onValueChange={(value) => {
-                                      setColumnFilters(prev => ({
+                                      setPendingColumnFilters(prev => ({
                                         ...prev,
                                         [columnId]: value === 'all' ? '' : value
                                       }));
@@ -1155,9 +1349,9 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                                   <Input
                                     type="text"
                                     placeholder={`Rechercher dans ${getColumnLabel(columnId).toLowerCase()}...`}
-                                    value={columnFilters[columnId] || ''}
+                                    value={pendingColumnFilters[columnId] || ''}
                                     onChange={(e) => {
-                                      setColumnFilters(prev => ({
+                                      setPendingColumnFilters(prev => ({
                                         ...prev,
                                         [columnId]: e.target.value
                                       }));
@@ -1216,11 +1410,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                               </DropdownMenuItem>
                               {canDelete && (
                                 <DropdownMenuItem 
-                                  onClick={() => handleDeleteContact(contact.id)}
+                                  onClick={() => !isDeleting && handleDeleteContact(contact.id)}
                                   className="text-red-600"
+                                  disabled={isDeleting}
                                 >
                                   <Trash2 className="w-4 h-4 mr-2" />
-                                  Supprimer
+                                  {isDeleting ? 'Suppression...' : 'Supprimer'}
                                 </DropdownMenuItem>
                               )}
                             </DropdownMenuContent>
@@ -1237,7 +1432,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
           )}
           
           {/* Pagination Controls */}
-          {itemsPerPage !== -1 && totalPages > 1 && filteredContacts.length > 0 && (
+          {totalPages > 1 && filteredContacts.length > 0 && (
             <div className="contacts-pagination">
               <div className="contacts-pagination-info">
                 <span>
@@ -1326,7 +1521,12 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   <SelectContent>
                     <SelectItem value="none">Aucun statut</SelectItem>
                     {statuses
-                      .filter((status) => status.id && status.id.trim() !== '')
+                      .filter((status) => {
+                        if (!status.id || status.id.trim() === '') return false;
+                        // Filter by view permissions
+                        const normalizedStatusId = String(status.id).trim();
+                        return statusViewPermissions.has(normalizedStatusId);
+                      })
                       .map((status) => (
                         <SelectItem key={status.id} value={status.id.toString()}>
                           {status.name}
@@ -1339,7 +1539,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsStatusModalOpen(false)}>
                   Annuler
                 </Button>
-                {canEdit && (
+                {selectedContact && canEditContact(selectedContact) && (
                   <Button type="button" onClick={handleUpdateStatus}>
                     Enregistrer
                   </Button>
@@ -1516,7 +1716,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsTeleoperatorModalOpen(false)}>
                   Annuler
                 </Button>
-                {canEdit && (
+                {selectedContact && canEditContact(selectedContact) && (
                   <Button type="button" onClick={handleUpdateTeleoperator}>
                     Enregistrer
                   </Button>
@@ -1572,7 +1772,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsConfirmateurModalOpen(false)}>
                   Annuler
                 </Button>
-                {canEdit && (
+                {selectedContact && canEditContact(selectedContact) && (
                   <Button type="button" onClick={handleUpdateConfirmateur}>
                     Enregistrer
                   </Button>

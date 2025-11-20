@@ -12,3 +12,4 @@ boto3==1.40.74
 gunicorn==23.0.0
 whitenoise==6.8.2
 dj-database-url==2.1.0
+email-validator==2.1.1

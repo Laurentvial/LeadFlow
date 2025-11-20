@@ -3,6 +3,7 @@
 import * as React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react@0.487.0";
 import { DayPicker } from "react-day-picker@8.10.1";
+import "react-day-picker/dist/style.css";
 
 import { cn } from "./utils";
 import { buttonVariants } from "./button";
@@ -42,7 +43,7 @@ function Calendar({
         ),
         day: cn(
           buttonVariants({ variant: "ghost" }),
-          "size-8 p-0 font-normal aria-selected:opacity-100",
+          "size-8 p-0 font-normal aria-selected:opacity-100 w-8 h-8 flex items-center justify-center",
         ),
         day_range_start:
           "day-range-start aria-selected:bg-primary aria-selected:text-primary-foreground",

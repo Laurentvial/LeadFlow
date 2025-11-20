@@ -7,6 +7,7 @@ import { DateInput } from './ui/date-input';
 import { X, Plus } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { useUsers } from '../hooks/useUsers';
+import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import '../styles/Modal.css';
 import '../styles/Contacts.css';
@@ -32,8 +33,20 @@ export function EditPersonalInfoModal({
   onUpdate
 }: EditPersonalInfoModalProps) {
   const { users, loading: usersLoading } = useUsers();
+  const { currentUser } = useUser();
   const [statuses, setStatuses] = useState<any[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+  
+  // Get status view permissions
+  const statusViewPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
   const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
   
@@ -216,15 +229,20 @@ export function EditPersonalInfoModal({
                       <SelectItem value="no-status-disabled" disabled>
                         Aucun statut disponible
                       </SelectItem>
-                    ) : (
-                      statuses
-                        .filter((status) => status.id && status.id.trim() !== '')
-                        .map((status) => (
-                          <SelectItem key={status.id} value={status.id}>
-                            {status.name}
-                          </SelectItem>
-                        ))
-                    )}
+                      ) : (
+                        statuses
+                          .filter((status) => {
+                            if (!status.id || status.id.trim() === '') return false;
+                            // Filter by view permissions
+                            const normalizedStatusId = String(status.id).trim();
+                            return statusViewPermissions.has(normalizedStatusId);
+                          })
+                          .map((status) => (
+                            <SelectItem key={status.id} value={status.id}>
+                              {status.name}
+                            </SelectItem>
+                          ))
+                      )}
                   </SelectContent>
                 </Select>
               </div>

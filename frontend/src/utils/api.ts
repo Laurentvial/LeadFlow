@@ -117,8 +117,14 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     headers['Connection'] = 'keep-alive';
     
     // Add timeout for production to prevent hanging requests
+    // Use longer timeout for CSV import (10 minutes), email sending (60 seconds), contacts list (2 minutes), file uploads (120 seconds) vs regular requests (30 seconds)
+    const isImportRequest = endpoint.includes('/csv-import/');
+    const isEmailSendRequest = endpoint.includes('/emails/send/') || endpoint.includes('/emails/fetch/');
+    const isContactsListRequest = endpoint.includes('/api/contacts/') && !endpoint.includes('/csv-import');
+    const isFileUploadRequest = endpoint.includes('/upload') || endpoint.includes('/upload-logo/') || endpoint.includes('/document-upload/');
+    const timeoutDuration = isImportRequest ? 600000 : (isFileUploadRequest ? 120000 : (isEmailSendRequest ? 60000 : (isContactsListRequest ? 120000 : 30000))); // 10 min for imports, 2 min for file uploads, 60 sec for email operations, 2 min for contacts list, 30 sec otherwise
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
     
     let response;
     try {
@@ -141,7 +147,10 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     // If 401, try to refresh token and retry once
     if (response.status === 401) {
       if (!token) {
-        // No token available, user needs to log in
+        // No token available, redirect to login
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
         const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
         const errorMessage = error.detail || error.error || error.message || 'Authentication required. Please log in.';
         const errorObj = new Error(errorMessage);
@@ -164,7 +173,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         
         // Add timeout for retry as well
         const retryController = new AbortController();
-        const retryTimeoutId = setTimeout(() => retryController.abort(), 30000);
+        const retryTimeoutDuration = isImportRequest ? 600000 : (isEmailSendRequest ? 60000 : (isContactsListRequest ? 120000 : 30000));
+        const retryTimeoutId = setTimeout(() => retryController.abort(), retryTimeoutDuration);
         
         try {
           response = await fetch(`${apiUrl}${endpoint}`, {
@@ -184,10 +194,14 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           throw retryError;
         }
         
-        // If retry still fails with 401, throw error
+        // If retry still fails with 401, redirect to login
         if (response.status === 401) {
           localStorage.removeItem(ACCESS_TOKEN);
           localStorage.removeItem(REFRESH_TOKEN);
+          // Redirect to login page
+          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+            window.location.href = '/login';
+          }
           const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
           const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
           const errorObj = new Error(errorMessage);
@@ -196,9 +210,13 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           throw errorObj;
         }
       } else {
-        // Token refresh failed, clear tokens and throw authentication error
+        // Token refresh failed, clear tokens and redirect to login
         localStorage.removeItem(ACCESS_TOKEN);
         localStorage.removeItem(REFRESH_TOKEN);
+        // Redirect to login page
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
         const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
         const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
         const errorObj = new Error(errorMessage);

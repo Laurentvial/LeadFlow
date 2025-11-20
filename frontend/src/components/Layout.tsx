@@ -23,6 +23,7 @@ export function Layout({ children }: LayoutProps) {
     if (path === '/users') return 'users-teams';
     if (path === '/contacts') return 'contacts';
     if (path === '/planning') return 'planning';
+    if (path === '/mails') return 'mails';
     if (path === '/settings') return 'settings';
     if (path === '/transactions') return 'transactions';
     if (path === '/placements') return 'placements';

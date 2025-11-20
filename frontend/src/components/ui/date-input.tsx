@@ -1,5 +1,9 @@
 import * as React from "react";
 import { Input } from "./input";
+import { Button } from "./button";
+import { Calendar } from "./calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "./popover";
+import { Calendar as CalendarIcon } from "lucide-react";
 import { cn } from "./utils";
 
 interface DateInputProps extends Omit<React.ComponentProps<"input">, "type" | "value" | "onChange"> {
@@ -9,6 +13,24 @@ interface DateInputProps extends Omit<React.ComponentProps<"input">, "type" | "v
 }
 
 function DateInput({ value, onChange, className, label, ...props }: DateInputProps) {
+  const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
+
+  // Convert YYYY-MM-DD to Date object
+  const getDateFromValue = (dateStr: string): Date | undefined => {
+    if (!dateStr) return undefined;
+    const date = new Date(dateStr + 'T00:00:00');
+    if (isNaN(date.getTime())) return undefined;
+    return date;
+  };
+
+  // Convert Date to YYYY-MM-DD
+  const formatDateToString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Convert YYYY-MM-DD to DD/MM/YYYY for display
   const formatForDisplay = (dateStr: string): string => {
     if (!dateStr) return '';
@@ -101,18 +123,53 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
     setIsFocused(true);
   };
 
+  const handleCalendarSelect = (date: Date | undefined) => {
+    if (date) {
+      const dateStr = formatDateToString(date);
+      onChange(dateStr);
+      setDisplayValue(formatForDisplay(dateStr));
+      setIsCalendarOpen(false);
+    }
+  };
+
+  const selectedDate = getDateFromValue(value);
+
   return (
-    <Input
-      type="text"
-      value={displayValue}
-      onChange={handleChange}
-      onBlur={handleBlur}
-      onFocus={handleFocus}
-      placeholder="jj/mm/aaaa"
-      maxLength={10}
-      className={cn(className)}
-      {...props}
-    />
+    <div className={cn("flex gap-2", className)}>
+      <Input
+        type="text"
+        value={displayValue}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        onFocus={handleFocus}
+        placeholder="jj/mm/aaaa"
+        maxLength={10}
+        className={cn("flex-1")}
+        {...props}
+      />
+      <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(
+              "px-3",
+              !value && "text-muted-foreground"
+            )}
+          >
+            <CalendarIcon className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={selectedDate}
+            onSelect={handleCalendarSelect}
+            initialFocus
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
 

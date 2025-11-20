@@ -70,4 +70,18 @@ urlpatterns = [
     path('sources/<str:source_id>/delete/', api_views.source_delete, name='source-delete'),
     # Stats endpoint
     path('stats/', api_views.get_stats, name='stats'),
+    # Email endpoints
+    path('emails/smtp-config/', api_views.smtp_config, name='smtp-config'),
+    path('emails/test-connection/', api_views.test_smtp_connection, name='test-smtp-connection'),
+    path('emails/send/', api_views.send_email, name='send-email'),
+    path('emails/fetch/', api_views.fetch_emails, name='fetch-emails'),
+    path('emails/signatures/', api_views.email_signatures, name='email-signatures'),
+    path('emails/signatures/upload-logo/', api_views.email_signature_logo_upload, name='email-signature-logo-upload'),
+    path('emails/signatures/logo-presigned-url/', api_views.email_signature_logo_presigned_url, name='email-signature-logo-presigned-url'),
+    path('emails/signatures/logo-proxy/<path:file_path>/', api_views.email_signature_logo_proxy, name='email-signature-logo-proxy'),
+    path('emails/signatures/<str:signature_id>/', api_views.email_signature_detail, name='email-signature-detail'),
+    path('emails/', api_views.email_list, name='email-list'),
+    path('emails/<str:email_id>/update/', api_views.email_update, name='email-update'),
+    path('emails/<str:email_id>/delete/', api_views.email_delete, name='email-delete'),
+    path('emails/<str:email_id>/', api_views.email_detail, name='email-detail'),
 ]

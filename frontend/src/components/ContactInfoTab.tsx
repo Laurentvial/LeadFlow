@@ -38,12 +38,71 @@ export function ContactInfoTab({
   contactId = '',
   onRefresh = () => {}
 }: ContactInfoTabProps) {
-  const canEdit = useHasPermission('contacts', 'edit');
+  const canEditGeneral = useHasPermission('contacts', 'edit');
   const canCreatePlanning = useHasPermission('planning', 'create');
   const canEditPlanning = useHasPermission('planning', 'edit');
   const canDeletePlanning = useHasPermission('planning', 'delete');
   const { currentUser } = useUser();
   const { users } = useUsers();
+  
+  // Get status permissions
+  const statusEditPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const editPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(editPerms);
+  }, [currentUser?.permissions]);
+  
+  const statusViewPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .map((p: any) => String(p.statusId).trim());
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
+  
+  // Helper function to check if user can edit this contact based on its status
+  // Logic:
+  // 1. If contact has no status -> use general permission
+  // 2. If contact has a status -> user MUST have BOTH:
+  //    - General 'contacts' edit permission (required by PermissionsTab validation)
+  //    - Status-specific edit permission for this status
+  const canEditContact = React.useCallback((contactData: any): boolean => {
+    const contactStatusId = contactData?.statusId;
+    
+    // Normalize statusId to string for comparison
+    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
+    
+    // If contact has no status, use general permission
+    if (!normalizedStatusId) {
+      return canEditGeneral;
+    }
+    
+    // If contact has a status, user MUST have:
+    // 1. General 'contacts' edit permission (required by PermissionsTab validation)
+    // 2. Status-specific edit permission for this status
+    if (!canEditGeneral) {
+      // User doesn't have general permission, so they cannot edit
+      return false;
+    }
+    
+    // Check if user has permission to edit this specific status
+    const canEditStatus = statusEditPermissions.has(normalizedStatusId);
+    
+    // User must have BOTH general permission AND status-specific permission
+    return canEditStatus;
+  }, [canEditGeneral, statusEditPermissions]);
+  
+  // Use canEditContact for the current contact
+  // Recalculate when contact changes
+  const canEdit = React.useMemo(() => {
+    return canEditContact(contact);
+  }, [contact, canEditContact]);
   
   // Statuses and sources
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -115,6 +174,25 @@ export function ContactInfoTab({
 
   async function handleFieldUpdate(fieldName: string, value: any) {
     if (!canEdit || !contactId) return;
+    
+    // Check if user has permission to edit this contact with the CURRENT status
+    if (!canEditContact(contact)) {
+      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      return;
+    }
+    
+    // If updating status, also check permission for the NEW status
+    if (fieldName === 'statusId') {
+      const newStatusId = value === '' || value === 'none' ? null : value;
+      if (newStatusId && newStatusId !== contact.statusId) {
+        // Create a temporary contact object with the new status to check permissions
+        const tempContact = { ...contact, statusId: newStatusId };
+        if (!canEditContact(tempContact)) {
+          toast.error('Vous n\'avez pas la permission d\'éditer les contacts avec ce statut');
+          return;
+        }
+      }
+    }
     
     setIsSaving(true);
     try {
@@ -565,7 +643,12 @@ export function ContactInfoTab({
                     <SelectContent>
                       <SelectItem value="none">Aucun</SelectItem>
                       {statuses
-                        .filter((status) => status.id && status.id.trim() !== '')
+                        .filter((status) => {
+                          if (!status.id || status.id.trim() === '') return false;
+                          // Filter by view permissions
+                          const normalizedStatusId = String(status.id).trim();
+                          return statusViewPermissions.has(normalizedStatusId);
+                        })
                         .map((status) => (
                           <SelectItem key={status.id} value={status.id}>
                             {status.name}

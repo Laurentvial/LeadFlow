@@ -243,3 +243,8 @@ CORS_ALLOW_HEADERS = [
 
 # Allow preflight requests
 CORS_PREFLIGHT_MAX_AGE = 86400
+
+# File upload settings for large CSV imports
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000  # Increase field limit for large CSV files

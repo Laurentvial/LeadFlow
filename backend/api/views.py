@@ -10,11 +10,12 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Document
+from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
-    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer
+    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
+    SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -33,6 +34,16 @@ from django.http import StreamingHttpResponse, HttpResponse
 from io import BytesIO
 import csv
 import io
+import smtplib
+import imaplib
+import email
+import email.utils
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+from email.header import decode_header
+import re
 
 
 def get_client_ip(request):
@@ -233,6 +244,35 @@ def clean_contact_data_for_log(contact_data, include_created_at=False):
     
     return cleaned_data
 
+def compute_changed_fields(old_value, new_value):
+    """Compute only the fields that changed between old_value and new_value
+    Returns a dictionary with only changed fields, showing old and new values
+    """
+    if not isinstance(old_value, dict) or not isinstance(new_value, dict):
+        return {}
+    
+    changes = {}
+    
+    # Get all unique keys from both dictionaries
+    all_keys = set(old_value.keys()) | set(new_value.keys())
+    
+    for key in all_keys:
+        old_val = old_value.get(key, '')
+        new_val = new_value.get(key, '')
+        
+        # Normalize values for comparison (handle None, empty strings, etc.)
+        old_val_normalized = old_val if old_val is not None else ''
+        new_val_normalized = new_val if new_val is not None else ''
+        
+        # Compare normalized values
+        if str(old_val_normalized) != str(new_val_normalized):
+            changes[key] = {
+                'old': old_val_normalized,
+                'new': new_val_normalized
+            }
+    
+    return changes
+
 def create_log_entry(event_type, user_id, request, old_value=None, new_value=None, contact_id=None, creator_id=None):
     """Create a log entry for an activity"""
     # Generate log ID
@@ -350,7 +390,7 @@ class ContactView(generics.ListAPIView):
         
         # Get user's role and data_access level
         try:
-            user_details = UserDetails.objects.get(django_user=user)
+            user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
             if user_details.role:
                 data_access = user_details.role.data_access
                 
@@ -380,7 +420,7 @@ class ContactView(generics.ListAPIView):
                         )
                 elif data_access == 'team_only':
                     # Get user's team members
-                    team_member = user_details.team_memberships.first()
+                    team_member = user_details.team_memberships.select_related('team').first()
                     if team_member:
                         team = team_member.team
                         # Get all users in the same team
@@ -408,11 +448,146 @@ class ContactView(generics.ListAPIView):
             # If user has no UserDetails, show no contacts (safety default)
             queryset = Contact.objects.none()
         
+        # Optimize queries with select_related for ForeignKey relationships
+        # This prevents N+1 queries when accessing related objects
+        queryset = queryset.select_related(
+            'status',
+            'source',
+            'teleoperator',
+            'confirmateur',
+            'creator'
+        )
+        
+        # Prefetch related user_details and team_memberships for teleoperator
+        # This optimizes the serializer's access to managerUserDetailsId and managerTeamId
+        queryset = queryset.prefetch_related(
+            'teleoperator__user_details__team_memberships__team'
+        )
+        
+        # Order by created_at descending (most recent first)
+        queryset = queryset.order_by('-created_at')
+        
         return queryset
     
     def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        return Response({'contacts': response.data})
+        # Check if limit is requested (for performance - limits number of contacts returned)
+        limit = request.query_params.get('limit')
+        if limit:
+            try:
+                limit = int(limit)
+                # Ensure limit is reasonable (max 10000)
+                if limit > 10000:
+                    limit = 10000
+                if limit < 1:
+                    limit = 1
+                # Get base queryset
+                queryset = self.get_queryset()
+                
+                # Apply search filter
+                search = request.query_params.get('search', '').strip()
+                if search:
+                    queryset = queryset.filter(
+                        models.Q(fname__icontains=search) |
+                        models.Q(lname__icontains=search) |
+                        models.Q(email__icontains=search)
+                    )
+                
+                # Apply team filter (filter by teleoperator's team)
+                team_id = request.query_params.get('team')
+                if team_id and team_id != 'all':
+                    # Get team members
+                    team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
+                    queryset = queryset.filter(
+                        models.Q(teleoperator__id__in=team_user_ids) |
+                        models.Q(confirmateur__id__in=team_user_ids) |
+                        models.Q(creator__id__in=team_user_ids)
+                    )
+                
+                # Apply status type filter
+                status_type = request.query_params.get('status_type')
+                if status_type and status_type != 'all':
+                    queryset = queryset.filter(status__type=status_type)
+                
+                # Apply column filters
+                for key, value in request.query_params.items():
+                    if key.startswith('filter_') and value:
+                        column_id = key.replace('filter_', '')
+                        # Map frontend column IDs to model fields
+                        if column_id == 'status':
+                            queryset = queryset.filter(status_id=value)
+                        elif column_id == 'source':
+                            queryset = queryset.filter(source_id=value)
+                        elif column_id == 'teleoperator':
+                            queryset = queryset.filter(teleoperator_id=value)
+                        elif column_id == 'confirmateur':
+                            queryset = queryset.filter(confirmateur_id=value)
+                        elif column_id == 'creator':
+                            queryset = queryset.filter(creator_id=value)
+                        elif column_id == 'email':
+                            queryset = queryset.filter(email__icontains=value)
+                        elif column_id == 'phone':
+                            queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
+                        elif column_id == 'city':
+                            queryset = queryset.filter(city__icontains=value)
+                        # Add more column filters as needed
+                
+                # Get total count after applying filters
+                total_count = queryset.count()
+                
+                # Apply limit to queryset before serialization
+                queryset = queryset[:limit]
+                serializer = self.get_serializer(queryset, many=True, context={'request': request})
+                return Response({
+                    'contacts': serializer.data,
+                    'total': total_count,
+                    'limit': limit
+                })
+            except (ValueError, TypeError):
+                # Invalid limit, fall through to default behavior
+                pass
+            except Exception as e:
+                # Log the error and return a proper error response
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error in ContactView.list with limit: {error_details}")
+                return Response({'error': str(e), 'details': error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Check if pagination is requested (default to False for backward compatibility)
+        paginate = request.query_params.get('paginate', 'false').lower() == 'true'
+        requested_page_size = int(request.query_params.get('page_size', '100'))
+        requested_page = int(request.query_params.get('page', '1'))
+        
+        if paginate:
+            # Use pagination for large datasets
+            from rest_framework.pagination import PageNumberPagination
+            
+            class ContactPagination(PageNumberPagination):
+                page_size = requested_page_size
+                page_size_query_param = 'page_size'
+                max_page_size = 1000
+            
+            self.pagination_class = ContactPagination
+            response = super().list(request, *args, **kwargs)
+            return Response({
+                'contacts': response.data['results'],
+                'count': response.data['count'],
+                'next': response.data.get('next'),
+                'previous': response.data.get('previous'),
+                'page': requested_page,
+                'page_size': requested_page_size
+            })
+        else:
+            # For backward compatibility, return all contacts (but optimized)
+            # However, apply a default limit of 1000 to prevent performance issues
+            total_queryset = self.get_queryset()
+            total_count = total_queryset.count()
+            queryset = total_queryset[:1000]
+            serializer = self.get_serializer(queryset, many=True, context={'request': request})
+            return Response({
+                'contacts': serializer.data,
+                'total': total_count,
+                'limit': 1000
+            })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -585,7 +760,7 @@ def csv_import_preview(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def csv_import_contacts(request):
-    """Import contacts from CSV with column mapping"""
+    """Import contacts from CSV with column mapping - optimized for large imports"""
     if 'file' not in request.FILES:
         return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -677,7 +852,12 @@ def csv_import_contacts(request):
                     continue
             return None
         
-        # Process each row
+        # Batch processing configuration
+        BATCH_SIZE = 1000  # Process contacts in batches of 1000
+        contacts_to_create = []
+        row_data_map = {}  # Map contact_id to row number and name for results
+        
+        # First pass: Parse all rows and collect valid contacts
         for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
             results['total'] += 1
             try:
@@ -685,12 +865,11 @@ def csv_import_contacts(request):
                 contact_data = {}
                 
                 # Map CSV columns to contact fields
-                # Accept any column name from the CSV - no restrictions on header names
                 for frontend_field, csv_column in column_mapping.items():
                     if not csv_column:
                         continue
                     
-                    # Try exact match first, then case-insensitive, then trimmed match
+                    # Try exact match first, then case-insensitive match
                     csv_value = None
                     if csv_column in row:
                         csv_value = row[csv_column]
@@ -725,20 +904,14 @@ def csv_import_contacts(request):
                     results['failed'] += 1
                     continue
                 
-                # Check if email already exists (if provided)
+                # Store email for bulk duplicate check
                 email = contact_data.get('email', '').strip()
-                if email and Contact.objects.filter(email=email).exists():
-                    results['errors'].append({
-                        'row': row_num,
-                        'error': f'Email {email} already exists',
-                        'data': {'firstName': contact_data.get('fname'), 'lastName': contact_data.get('lname')}
-                    })
-                    results['failed'] += 1
-                    continue
                 
-                # Generate contact ID
+                # Generate contact ID (UUID collisions are extremely rare, so we'll handle them during bulk_create if needed)
                 contact_id = uuid.uuid4().hex[:12]
-                while Contact.objects.filter(id=contact_id).exists():
+                # Check uniqueness only against pending contacts in this batch
+                existing_ids = {c.id for c in contacts_to_create}
+                while contact_id in existing_ids:
                     contact_id = uuid.uuid4().hex[:12]
                 
                 contact_data['id'] = contact_id
@@ -749,35 +922,20 @@ def csv_import_contacts(request):
                 if teleoperator_obj:
                     contact_data['teleoperator'] = teleoperator_obj
                 
-                # Create contact
-                contact = Contact.objects.create(**contact_data)
-                
-                # Create log entry
-                serializer = ContactSerializer(contact, context={'request': request})
-                contact_data_raw = serializer.data
-                contact_data_for_log = clean_contact_data_for_log(contact_data_raw, include_created_at=False)
-                
-                create_log_entry(
-                    event_type='addContact',
-                    user_id=request.user if request.user.is_authenticated else None,
-                    request=request,
-                    old_value={},
-                    new_value=contact_data_for_log,
-                    contact_id=contact,
-                    creator_id=request.user if request.user.is_authenticated else None
-                )
-                
-                # Build name for display (only firstName is required)
+                # Store row data for results
                 contact_name = contact_data.get('fname', '')
                 if contact_data.get('lname'):
                     contact_name = f"{contact_data.get('fname')} {contact_data.get('lname')}"
                 
-                results['success'].append({
+                row_data_map[contact_id] = {
                     'row': row_num,
-                    'contactId': contact.id,
-                    'name': contact_name
-                })
-                results['imported'] += 1
+                    'name': contact_name,
+                    'email': email
+                }
+                
+                # Create Contact instance (not saved yet)
+                contact = Contact(**contact_data)
+                contacts_to_create.append(contact)
                 
             except Exception as e:
                 import traceback
@@ -788,6 +946,111 @@ def csv_import_contacts(request):
                     'details': error_details
                 })
                 results['failed'] += 1
+        
+        # Bulk check for duplicate emails
+        emails_to_check = [row_data['email'] for row_data in row_data_map.values() if row_data['email']]
+        if emails_to_check:
+            existing_emails = set(
+                Contact.objects.filter(email__in=emails_to_check).values_list('email', flat=True)
+            )
+            
+            # Remove contacts with duplicate emails
+            contacts_to_remove = []
+            for contact in contacts_to_create:
+                email = row_data_map[contact.id]['email']
+                if email and email in existing_emails:
+                    row_num = row_data_map[contact.id]['row']
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Email {email} already exists',
+                        'data': {'firstName': contact.fname, 'lastName': contact.lname}
+                    })
+                    results['failed'] += 1
+                    contacts_to_remove.append(contact.id)
+                    del row_data_map[contact.id]
+            
+            contacts_to_create = [c for c in contacts_to_create if c.id not in contacts_to_remove]
+        
+        # Bulk create contacts in batches
+        from django.db import transaction, IntegrityError
+        
+        with transaction.atomic():
+            for i in range(0, len(contacts_to_create), BATCH_SIZE):
+                batch = contacts_to_create[i:i + BATCH_SIZE]
+                try:
+                    Contact.objects.bulk_create(batch, batch_size=BATCH_SIZE)
+                    
+                    # Add to success results
+                    for contact in batch:
+                        row_data = row_data_map[contact.id]
+                        results['success'].append({
+                            'row': row_data['row'],
+                            'contactId': contact.id,
+                            'name': row_data['name']
+                        })
+                        results['imported'] += 1
+                except IntegrityError as e:
+                    # Handle potential ID collisions by falling back to individual creates for this batch
+                    # This is extremely rare but can happen
+                    for contact in batch:
+                        try:
+                            contact.save()
+                            row_data = row_data_map[contact.id]
+                            results['success'].append({
+                                'row': row_data['row'],
+                                'contactId': contact.id,
+                                'name': row_data['name']
+                            })
+                            results['imported'] += 1
+                        except IntegrityError:
+                            # ID collision - regenerate and try once more
+                            contact.id = uuid.uuid4().hex[:12]
+                            try:
+                                contact.save()
+                                row_data = row_data_map[contact.id]
+                                results['success'].append({
+                                    'row': row_data['row'],
+                                    'contactId': contact.id,
+                                    'name': row_data['name']
+                                })
+                                results['imported'] += 1
+                            except Exception as e:
+                                row_data = row_data_map.get(contact.id, {})
+                                results['errors'].append({
+                                    'row': row_data.get('row', 'unknown'),
+                                    'error': f'Failed to create contact: {str(e)}'
+                                })
+                                results['failed'] += 1
+        
+        # Create a single bulk log entry for the import (more efficient than individual logs)
+        # This logs the import action itself rather than each individual contact
+        if results['imported'] > 0:
+            try:
+                bulk_log_details = {
+                    'ip_address': get_client_ip(request),
+                    'browser': get_browser_info(request),
+                    'imported_count': results['imported'],
+                    'total_rows': results['total'],
+                    'failed_count': results['failed'],
+                }
+                
+                log_id = uuid.uuid4().hex[:12]
+                while Log.objects.filter(id=log_id).exists():
+                    log_id = uuid.uuid4().hex[:12]
+                
+                Log.objects.create(
+                    id=log_id,
+                    event_type='bulkImportContacts',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    contact_id=None,  # Bulk import doesn't have a single contact
+                    creator_id=request.user if request.user.is_authenticated else None,
+                    details=bulk_log_details,
+                    old_value={},
+                    new_value={'imported': results['imported'], 'total': results['total']}
+                )
+            except Exception as e:
+                # Don't fail the import if logging fails
+                pass
         
         return Response(results, status=status.HTTP_200_OK)
         
@@ -1000,16 +1263,26 @@ def contact_detail(request, contact_id):
         new_value_raw = serializer.data
         new_value = clean_contact_data_for_log(new_value_raw, include_created_at=False)
         
-        # Create log entry for contact update
-        create_log_entry(
-            event_type='editContact',
-            user_id=request.user if request.user.is_authenticated else None,
-            request=request,
-            old_value=old_value,
-            new_value=new_value,
-            contact_id=contact,
-            creator_id=request.user if request.user.is_authenticated else None
-        )
+        # Compute only changed fields
+        changed_fields = compute_changed_fields(old_value, new_value)
+        
+        # Only create log entry if there are actual changes
+        if changed_fields:
+            # Store only the changed fields in old_value and new_value
+            # old_value will contain the old values of changed fields
+            # new_value will contain the new values of changed fields
+            old_value_changes = {field: change['old'] for field, change in changed_fields.items()}
+            new_value_changes = {field: change['new'] for field, change in changed_fields.items()}
+            
+            create_log_entry(
+                event_type='editContact',
+                user_id=request.user if request.user.is_authenticated else None,
+                request=request,
+                old_value=old_value_changes,
+                new_value=new_value_changes,
+                contact_id=contact,
+                creator_id=request.user if request.user.is_authenticated else None
+            )
         
         return Response({'contact': serializer.data})
 
@@ -2354,4 +2627,829 @@ def get_stats(request):
             {'error': str(e)}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+# ==================== EMAIL ENDPOINTS ====================
+
+@api_view(['GET', 'POST', 'PUT'])
+@permission_classes([IsAuthenticated])
+def smtp_config(request):
+    """Get, create, or update SMTP configuration for current user"""
+    user = request.user
+    
+    if request.method == 'GET':
+        try:
+            config = SMTPConfig.objects.filter(user=user).first()
+            if config:
+                serializer = SMTPConfigSerializer(config)
+                return Response({'config': serializer.data})
+            return Response({'config': None})
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'POST':
+        # Create new config
+        try:
+            # Check if config already exists
+            existing = SMTPConfig.objects.filter(user=user).first()
+            if existing:
+                return Response({'error': 'SMTP configuration already exists. Use PUT to update.'}, 
+                              status=status.HTTP_400_BAD_REQUEST)
+            
+            config_id = uuid.uuid4().hex[:12]
+            while SMTPConfig.objects.filter(id=config_id).exists():
+                config_id = uuid.uuid4().hex[:12]
+            
+            config = SMTPConfig.objects.create(
+                id=config_id,
+                user=user,
+                email_address=request.data.get('emailAddress', ''),
+                smtp_server=request.data.get('smtpServer', ''),
+                smtp_port=request.data.get('smtpPort', 587),
+                smtp_use_tls=request.data.get('smtpUseTls', True),
+                smtp_username=request.data.get('smtpUsername', ''),
+                smtp_password=request.data.get('smtpPassword', ''),
+                imap_server=request.data.get('imapServer', ''),
+                imap_port=request.data.get('imapPort', 993),
+                imap_use_ssl=request.data.get('imapUseSsl', True),
+                is_active=request.data.get('isActive', True)
+            )
+            
+            serializer = SMTPConfigSerializer(config)
+            return Response({'config': serializer.data}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'PUT':
+        # Update existing config
+        try:
+            config = SMTPConfig.objects.filter(user=user).first()
+            if not config:
+                return Response({'error': 'SMTP configuration not found. Use POST to create.'}, 
+                              status=status.HTTP_404_NOT_FOUND)
+            
+            # Update fields
+            if 'emailAddress' in request.data:
+                config.email_address = request.data['emailAddress']
+            if 'smtpServer' in request.data:
+                config.smtp_server = request.data['smtpServer']
+            if 'smtpPort' in request.data:
+                config.smtp_port = request.data['smtpPort']
+            if 'smtpUseTls' in request.data:
+                config.smtp_use_tls = request.data['smtpUseTls']
+            if 'smtpUsername' in request.data:
+                config.smtp_username = request.data['smtpUsername']
+            if 'smtpPassword' in request.data:
+                config.smtp_password = request.data['smtpPassword']
+            if 'imapServer' in request.data:
+                config.imap_server = request.data.get('imapServer', '')
+            if 'imapPort' in request.data:
+                config.imap_port = request.data.get('imapPort', 993)
+            if 'imapUseSsl' in request.data:
+                config.imap_use_ssl = request.data.get('imapUseSsl', True)
+            if 'isActive' in request.data:
+                config.is_active = request.data['isActive']
+            
+            config.save()
+            serializer = SMTPConfigSerializer(config)
+            return Response({'config': serializer.data})
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def test_smtp_connection(request):
+    """Test SMTP connection with current configuration"""
+    user = request.user
+    try:
+        config = SMTPConfig.objects.filter(user=user, is_active=True).first()
+        if not config:
+            return Response({'error': 'No active SMTP configuration found'}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        
+        # Test SMTP connection with timeout
+        server = None
+        try:
+            # Port 465 SSL connections may need slightly more time for SSL handshake
+            timeout = 45 if config.smtp_port == 465 else 30  # 45 seconds for SSL, 30 for others
+            # Port 465 requires SSL from the start, not STARTTLS
+            # Port 587 typically uses STARTTLS
+            if config.smtp_port == 465:
+                # Port 465 always uses SSL/TLS from the start
+                server = smtplib.SMTP_SSL(config.smtp_server, config.smtp_port, timeout=timeout)
+            elif config.smtp_use_tls:
+                # Port 587 or other ports with TLS enabled - use STARTTLS
+                server = smtplib.SMTP(config.smtp_server, config.smtp_port, timeout=timeout)
+                server.starttls()
+            else:
+                # No encryption (not recommended but supported)
+                server = smtplib.SMTP(config.smtp_server, config.smtp_port, timeout=timeout)
+            
+            server.login(config.smtp_username, config.smtp_password)
+            server.quit()
+            server = None  # Mark as closed
+            
+            return Response({'success': True, 'message': 'SMTP connection successful'})
+        except smtplib.SMTPConnectError as e:
+            return Response({'success': False, 'error': f'Could not connect to SMTP server: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPAuthenticationError as e:
+            return Response({'success': False, 'error': f'Authentication failed: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPException as e:
+            return Response({'success': False, 'error': f'SMTP error: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'success': False, 'error': f'Connection error: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except:
+                    pass
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_email(request):
+    """Send an email using user's SMTP configuration"""
+    user = request.user
+    try:
+        config = SMTPConfig.objects.filter(user=user, is_active=True).first()
+        if not config:
+            return Response({'error': 'No active SMTP configuration found. Please configure SMTP settings first.'}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        
+        # Get email data
+        to_emails = request.data.get('toEmails', [])
+        if not to_emails or not isinstance(to_emails, list):
+            return Response({'error': 'toEmails is required and must be a list'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        subject = request.data.get('subject', '')
+        body_text = request.data.get('bodyText', '')
+        body_html = request.data.get('bodyHtml', '')
+        cc_emails = request.data.get('ccEmails', [])
+        bcc_emails = request.data.get('bccEmails', [])
+        contact_id = request.data.get('contactId', None)
+        
+        # Convert logo URLs in body_html to base64 embedded images (publicly accessible)
+        if body_html:
+            import re
+            import base64
+            endpoint = os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net').rstrip('/')
+            bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+            
+            # Find all img tags with src pointing to Impossible Cloud
+            def replace_logo_url(match):
+                img_tag = match.group(0)
+                src_match = re.search(r'src="([^"]+)"', img_tag)
+                if src_match:
+                    logo_url = src_match.group(1)
+                    # Check if it's an Impossible Cloud URL
+                    if logo_url.startswith(endpoint):
+                        # Extract file path
+                        path_part = logo_url[len(endpoint):].lstrip('/')
+                        if path_part.startswith(f'{bucket_name}/'):
+                            file_path = path_part[len(bucket_name) + 1:]  # Remove bucket name and leading slash
+                            
+                            # Check if it's a signature logo
+                            if file_path.startswith('email-signatures/'):
+                                # Download image and convert to base64
+                                try:
+                                    s3_client = boto3.client(
+                                        's3',
+                                        endpoint_url=endpoint,
+                                        aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+                                        aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+                                        region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+                                    )
+                                    
+                                    # Get the image from S3
+                                    s3_object = s3_client.get_object(Bucket=bucket_name, Key=file_path)
+                                    image_data = s3_object['Body'].read()
+                                    content_type = s3_object.get('ContentType', 'image/png')
+                                    
+                                    # Convert to base64
+                                    base64_data = base64.b64encode(image_data).decode('utf-8')
+                                    data_uri = f"data:{content_type};base64,{base64_data}"
+                                    
+                                    print(f"Embedded logo as base64: {file_path} ({len(image_data)} bytes)")
+                                    
+                                    # Replace URL in img tag with data URI
+                                    return img_tag.replace(logo_url, data_uri)
+                                except Exception as e:
+                                    import traceback
+                                    error_details = traceback.format_exc()
+                                    print(f"Error embedding logo as base64 for {file_path}: {error_details}")
+                                    return img_tag  # Return original if error
+                
+                return img_tag  # Return original if not a signature logo
+            
+            # Replace all img src URLs with base64 data URIs
+            body_html = re.sub(r'<img[^>]+src="[^"]+"[^>]*>', replace_logo_url, body_html)
+        
+        # Create email message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = config.email_address
+        msg['To'] = ', '.join(to_emails)
+        if cc_emails:
+            msg['Cc'] = ', '.join(cc_emails)
+        msg['Subject'] = subject
+        
+        # Add body
+        if body_html:
+            msg.attach(MIMEText(body_html, 'html'))
+        if body_text:
+            msg.attach(MIMEText(body_text, 'plain'))
+        
+        # Handle attachments (if any)
+        attachments = request.data.get('attachments', [])
+        # Note: In a real implementation, you'd need to handle file uploads
+        
+        # Send email with timeout handling
+        server = None
+        try:
+            # Port 465 SSL connections may need slightly more time for SSL handshake
+            timeout = 45 if config.smtp_port == 465 else 30  # 45 seconds for SSL, 30 for others
+            # Port 465 requires SSL from the start, not STARTTLS
+            # Port 587 typically uses STARTTLS
+            if config.smtp_port == 465:
+                # Port 465 always uses SSL/TLS from the start
+                server = smtplib.SMTP_SSL(config.smtp_server, config.smtp_port, timeout=timeout)
+            elif config.smtp_use_tls:
+                # Port 587 or other ports with TLS enabled - use STARTTLS
+                server = smtplib.SMTP(config.smtp_server, config.smtp_port, timeout=timeout)
+                server.starttls()
+            else:
+                # No encryption (not recommended but supported)
+                server = smtplib.SMTP(config.smtp_server, config.smtp_port, timeout=timeout)
+            
+            server.login(config.smtp_username, config.smtp_password)
+            
+            # Combine all recipients
+            recipients = to_emails + (cc_emails if cc_emails else []) + (bcc_emails if bcc_emails else [])
+            server.sendmail(config.email_address, recipients, msg.as_string())
+            server.quit()
+            server = None  # Mark as closed
+            
+            # Save email to database
+            contact = None
+            if contact_id:
+                contact = Contact.objects.filter(id=contact_id).first()
+            
+            email_id = uuid.uuid4().hex[:12]
+            while Email.objects.filter(id=email_id).exists():
+                email_id = uuid.uuid4().hex[:12]
+            
+            email_obj = Email.objects.create(
+                id=email_id,
+                user=user,
+                email_type='sent',
+                subject=subject,
+                from_email=config.email_address,
+                to_emails=to_emails,
+                cc_emails=cc_emails or [],
+                bcc_emails=bcc_emails or [],
+                body_text=body_text,
+                body_html=body_html,
+                attachments=attachments or [],
+                contact=contact,
+                sent_at=timezone.now(),
+                is_read=True
+            )
+            
+            serializer = EmailSerializer(email_obj)
+            return Response({'email': serializer.data, 'message': 'Email sent successfully'}, 
+                          status=status.HTTP_201_CREATED)
+        except smtplib.SMTPConnectError as e:
+            return Response({'error': f'Could not connect to SMTP server. Please check your server address and port: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPAuthenticationError as e:
+            return Response({'error': f'Authentication failed. Please check your username and password: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPRecipientsRefused as e:
+            return Response({'error': f'One or more recipients were refused: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPSenderRefused as e:
+            return Response({'error': f'Sender address was refused: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPDataError as e:
+            return Response({'error': f'SMTP server refused the email data: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except smtplib.SMTPException as e:
+            return Response({'error': f'SMTP error occurred: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        except TimeoutError as e:
+            return Response({'error': f'Connection timeout. Please check your network connection and SMTP settings: {str(e)}'}, 
+                          status=status.HTTP_408_REQUEST_TIMEOUT)
+        except Exception as e:
+            error_msg = str(e)
+            if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+                return Response({'error': f'Request timeout. Please check your SMTP server settings and network connection: {error_msg}'}, 
+                              status=status.HTTP_408_REQUEST_TIMEOUT)
+            return Response({'error': f'Failed to send email: {error_msg}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            # Ensure server connection is closed
+            if server:
+                try:
+                    server.quit()
+                except:
+                    try:
+                        server.close()
+                    except:
+                        pass
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def email_list(request):
+    """Get list of emails for current user with pagination"""
+    user = request.user
+    try:
+        email_type = request.query_params.get('type', 'all')  # all, sent, received, draft
+        is_read = request.query_params.get('isRead', None)
+        is_starred = request.query_params.get('isStarred', None)
+        contact_id = request.query_params.get('contactId', None)
+        
+        # Pagination parameters
+        page = int(request.query_params.get('page', 1))
+        limit = int(request.query_params.get('limit', 50))
+        offset = (page - 1) * limit
+        
+        emails = Email.objects.filter(user=user)
+        
+        if email_type != 'all':
+            emails = emails.filter(email_type=email_type)
+        
+        if is_read is not None:
+            emails = emails.filter(is_read=is_read.lower() == 'true')
+        
+        if is_starred is not None:
+            emails = emails.filter(is_starred=is_starred.lower() == 'true')
+        
+        if contact_id:
+            emails = emails.filter(contact_id=contact_id)
+        
+        # Get total count before pagination
+        total_count = emails.count()
+        
+        # Order by sent_at (most recent first)
+        emails = emails.order_by('-sent_at', '-created_at')
+        
+        # Apply pagination
+        emails = emails[offset:offset + limit]
+        
+        serializer = EmailSerializer(emails, many=True)
+        return Response({
+            'emails': serializer.data,
+            'total': total_count,
+            'page': page,
+            'limit': limit
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def email_detail(request, email_id):
+    """Get email details"""
+    user = request.user
+    try:
+        email_obj = Email.objects.filter(id=email_id, user=user).first()
+        if not email_obj:
+            return Response({'error': 'Email not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Mark as read if it's a received email
+        if email_obj.email_type == 'received' and not email_obj.is_read:
+            email_obj.is_read = True
+            email_obj.save()
+        
+        serializer = EmailSerializer(email_obj)
+        return Response({'email': serializer.data})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def fetch_emails(request):
+    """Fetch emails from IMAP server"""
+    user = request.user
+    try:
+        config = SMTPConfig.objects.filter(user=user, is_active=True).first()
+        if not config or not config.imap_server:
+            return Response({'error': 'No active IMAP configuration found'}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        
+        # Connect to IMAP server
+        try:
+            if config.imap_use_ssl:
+                mail = imaplib.IMAP4_SSL(config.imap_server, config.imap_port)
+            else:
+                mail = imaplib.IMAP4(config.imap_server, config.imap_port)
+            
+            mail.login(config.smtp_username, config.smtp_password)
+            mail.select('INBOX')
+            
+            # Search for unread emails
+            status, messages = mail.search(None, 'UNSEEN')
+            email_ids = messages[0].split()
+            
+            fetched_count = 0
+            for email_id_bytes in email_ids:
+                try:
+                    # Fetch email
+                    status, msg_data = mail.fetch(email_id_bytes, '(RFC822)')
+                    email_body = msg_data[0][1]
+                    email_message = email.message_from_bytes(email_body)
+                    
+                    # Parse email
+                    subject = decode_header(email_message['Subject'])[0][0]
+                    if isinstance(subject, bytes):
+                        subject = subject.decode()
+                    
+                    from_email = email_message['From']
+                    to_email = email_message['To']
+                    
+                    # Extract email addresses
+                    from_match = re.search(r'[\w\.-]+@[\w\.-]+', from_email)
+                    from_addr = from_match.group(0) if from_match else from_email
+                    
+                    # Get body
+                    body_text = ''
+                    body_html = ''
+                    if email_message.is_multipart():
+                        for part in email_message.walk():
+                            content_type = part.get_content_type()
+                            if content_type == 'text/plain':
+                                body_text = part.get_payload(decode=True).decode()
+                            elif content_type == 'text/html':
+                                body_html = part.get_payload(decode=True).decode()
+                    else:
+                        body_text = email_message.get_payload(decode=True).decode()
+                    
+                    # Check if email already exists
+                    message_id = email_message.get('Message-ID', '')
+                    existing = Email.objects.filter(user=user, message_id=message_id).first()
+                    if existing:
+                        continue
+                    
+                    # Save email
+                    new_email_id = uuid.uuid4().hex[:12]
+                    while Email.objects.filter(id=new_email_id).exists():
+                        new_email_id = uuid.uuid4().hex[:12]
+                    
+                    Email.objects.create(
+                        id=new_email_id,
+                        user=user,
+                        email_type='received',
+                        subject=subject or '(No Subject)',
+                        from_email=from_addr,
+                        to_emails=[config.email_address],
+                        body_text=body_text,
+                        body_html=body_html,
+                        message_id=message_id,
+                        in_reply_to=email_message.get('In-Reply-To', ''),
+                        references=email_message.get('References', ''),
+                        sent_at=email.utils.parsedate_to_datetime(email_message['Date']) if email_message.get('Date') else timezone.now(),
+                        is_read=False
+                    )
+                    fetched_count += 1
+                except Exception as e:
+                    # Continue with next email if one fails
+                    continue
+            
+            mail.close()
+            mail.logout()
+            
+            return Response({'message': f'Fetched {fetched_count} new email(s)'})
+        except Exception as e:
+            return Response({'error': f'Failed to fetch emails: {str(e)}'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def email_update(request, email_id):
+    """Update email (mark as read/unread, star/unstar, etc.)"""
+    user = request.user
+    try:
+        email_obj = Email.objects.filter(id=email_id, user=user).first()
+        if not email_obj:
+            return Response({'error': 'Email not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if 'isRead' in request.data:
+            email_obj.is_read = request.data['isRead']
+        if 'isStarred' in request.data:
+            email_obj.is_starred = request.data['isStarred']
+        
+        email_obj.save()
+        serializer = EmailSerializer(email_obj)
+        return Response({'email': serializer.data})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def email_delete(request, email_id):
+    """Delete an email"""
+    user = request.user
+    try:
+        email_obj = Email.objects.filter(id=email_id, user=user).first()
+        if not email_obj:
+            return Response({'error': 'Email not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        email_obj.delete()
+        return Response({'message': 'Email deleted successfully'}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+# ==================== EMAIL SIGNATURE ENDPOINTS ====================
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def email_signatures(request):
+    """Get list of email signatures or create a new one"""
+    user = request.user
+    
+    if request.method == 'GET':
+        try:
+            signatures = EmailSignature.objects.filter(user=user).order_by('-is_default', '-created_at')
+            serializer = EmailSignatureSerializer(signatures, many=True)
+            return Response({'signatures': serializer.data})
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'POST':
+        # Create new signature
+        try:
+            name = request.data.get('name', '')
+            if not name:
+                return Response({'error': 'Signature name is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            content_html = request.data.get('contentHtml', '')
+            content_text = request.data.get('contentText', '')
+            logo_url = request.data.get('logoUrl', '')
+            logo_position = request.data.get('logoPosition', 'left')
+            is_default = request.data.get('isDefault', False)
+            
+            # If setting as default, unset other defaults
+            if is_default:
+                EmailSignature.objects.filter(user=user, is_default=True).update(is_default=False)
+            
+            signature_id = uuid.uuid4().hex[:12]
+            while EmailSignature.objects.filter(id=signature_id).exists():
+                signature_id = uuid.uuid4().hex[:12]
+            
+            signature = EmailSignature.objects.create(
+                id=signature_id,
+                user=user,
+                name=name,
+                content_html=content_html,
+                content_text=content_text,
+                logo_url=logo_url,
+                logo_position=logo_position,
+                is_default=is_default
+            )
+            
+            serializer = EmailSignatureSerializer(signature)
+            return Response({'signature': serializer.data}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def email_signature_detail(request, signature_id):
+    """Get, update, or delete a specific email signature"""
+    user = request.user
+    
+    try:
+        signature = EmailSignature.objects.filter(id=signature_id, user=user).first()
+        if not signature:
+            return Response({'error': 'Signature not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if request.method == 'GET':
+            serializer = EmailSignatureSerializer(signature)
+            return Response({'signature': serializer.data})
+        
+        elif request.method == 'PUT':
+            # Update signature
+            if 'name' in request.data:
+                signature.name = request.data['name']
+            if 'contentHtml' in request.data:
+                signature.content_html = request.data['contentHtml']
+            if 'contentText' in request.data:
+                signature.content_text = request.data['contentText']
+            if 'logoUrl' in request.data:
+                signature.logo_url = request.data['logoUrl']
+            if 'logoPosition' in request.data:
+                signature.logo_position = request.data['logoPosition']
+            if 'isDefault' in request.data:
+                is_default = request.data['isDefault']
+                # If setting as default, unset other defaults
+                if is_default:
+                    EmailSignature.objects.filter(user=user, is_default=True).exclude(id=signature_id).update(is_default=False)
+                signature.is_default = is_default
+            
+            signature.save()
+            serializer = EmailSignatureSerializer(signature)
+            return Response({'signature': serializer.data})
+        
+        elif request.method == 'DELETE':
+            signature.delete()
+            return Response({'message': 'Signature deleted successfully'}, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def email_signature_logo_upload(request):
+    """Upload a logo image for email signature to Impossible Cloud and return the URL"""
+    try:
+        if 'file' not in request.FILES:
+            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        file = request.FILES['file']
+        user = request.user
+        
+        # Validate file type (only images)
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+        if file.content_type not in allowed_types:
+            return Response({'error': 'Only image files are allowed (JPEG, PNG, GIF, WebP)'}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        # Configure S3 client for Impossible Cloud (same as document_upload)
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net'),
+            aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+        )
+        
+        bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+        
+        # Generate unique file path for signature logos
+        file_extension = os.path.splitext(file.name)[1]
+        file_path = f"email-signatures/{user.id}/{uuid.uuid4().hex[:12]}{file_extension}"
+        
+        # Upload file to Impossible Cloud (same logic as document_upload)
+        file.seek(0)  # Reset file pointer
+        s3_client.upload_fileobj(
+            file,
+            bucket_name,
+            file_path,
+            ExtraArgs={'ContentType': file.content_type}
+        )
+        
+        # Generate public URL (using the endpoint URL format)
+        endpoint = os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net')
+        # Remove trailing slash if present
+        endpoint = endpoint.rstrip('/')
+        file_url = f"{endpoint}/{bucket_name}/{file_path}"
+        
+        # Return proxy URL instead of direct S3 URL to avoid CORS issues
+        # The frontend will use /api/emails/signatures/logo-proxy/<signature_id>/ to load the image
+        return Response({
+            'logoUrl': file_url,  # Keep original URL for reference
+            'logoProxyUrl': f'/api/emails/signatures/logo-proxy/{file_path}',  # Proxy URL for frontend
+            'fileName': file.name,
+            'filePath': file_path
+        }, status=status.HTTP_200_OK)
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error uploading signature logo to Impossible Cloud: {error_details}")
+        return Response({'error': f'Failed to upload logo: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error uploading signature logo: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def email_signature_logo_presigned_url(request):
+    """Generate presigned URL for signature logo to use in emails (publicly accessible)"""
+    try:
+        user = request.user
+        file_path = request.GET.get('filePath')
+        
+        if not file_path:
+            return Response({'error': 'filePath parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate that the file path belongs to the current user
+        if not file_path.startswith(f'email-signatures/{user.id}/'):
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net'),
+            aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+        )
+        
+        bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+        
+        # Generate presigned URL (valid for 7 days - emails may be read later)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket_name, 'Key': file_path},
+            ExpiresIn=604800  # 7 days
+        )
+        
+        return Response({
+            'presignedUrl': presigned_url
+        }, status=status.HTTP_200_OK)
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error generating presigned URL for signature logo: {error_details}")
+        return Response({'error': f'Failed to generate presigned URL: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Unexpected error generating presigned URL: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def email_signature_logo_proxy(request, file_path):
+    """
+    Proxy signature logo images from Impossible Cloud to avoid CORS issues.
+    file_path format: email-signatures/{user_id}/{filename}
+    Note: file_path may contain slashes, so we use path converter in URL
+    """
+    try:
+        user = request.user
+        
+        # Validate that the file path belongs to the current user
+        # file_path should be like "email-signatures/1/filename.png"
+        if not file_path.startswith(f'email-signatures/{user.id}/'):
+            # Also check if it's a different user's signature (for admin access, you might want to allow)
+            # For now, only allow own signatures
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net'),
+            aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
+            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+        )
+        
+        bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
+        
+        # Get the object from S3
+        s3_object = s3_client.get_object(Bucket=bucket_name, Key=file_path)
+        
+        # Create a streaming response
+        def file_iterator():
+            chunk_size = 8192
+            while True:
+                chunk = s3_object['Body'].read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        
+        # Determine content type
+        content_type = s3_object.get('ContentType', 'image/png')
+        
+        # Create streaming response with CORS headers
+        response = StreamingHttpResponse(
+            file_iterator(),
+            content_type=content_type
+        )
+        
+        # Add CORS headers
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET'
+        response['Access-Control-Allow-Headers'] = '*'
+        response['Cache-Control'] = 'public, max-age=31536000'  # Cache for 1 year
+        
+        if 'ContentLength' in s3_object:
+            response['Content-Length'] = str(s3_object['ContentLength'])
+        
+        return response
+        
+    except ClientError as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error proxying signature logo from S3: {error_details}")
+        return Response({'error': f'Failed to load image: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error proxying signature logo: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
