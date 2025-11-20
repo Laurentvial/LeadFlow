@@ -8,7 +8,17 @@ const getEnvVar = (key: string): string | undefined => {
   return import.meta.env[key];
 };
 
-const apiUrl = getEnvVar('VITE_URL') || 'http://127.0.0.1:8000';
+// Use relative URL in production (Vercel proxy) or environment variable for direct backend access
+// In production on Vercel, use relative URLs to leverage the proxy (bypasses CORS)
+// For local development or direct backend access, use VITE_URL environment variable
+const viteUrl = getEnvVar('VITE_URL');
+const isVercelProduction = typeof window !== 'undefined' && 
+  window.location.hostname.includes('vercel.app');
+const apiUrl = viteUrl 
+  ? viteUrl // Use explicit VITE_URL if set (for direct backend access or local dev)
+  : (isVercelProduction 
+    ? '' // Use relative URL (Vercel proxy) in production on Vercel
+    : 'http://127.0.0.1:8000'); // Default to localhost for local development
 
 // Request deduplication: Track ongoing requests to prevent duplicate calls
 const pendingRequests = new Map<string, Promise<any>>();
@@ -49,14 +59,16 @@ async function refreshAccessToken(): Promise<string | null> {
     return null;
   }
 
-  try {
-    const response = await fetch(`${apiUrl}/api/token/refresh/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ refresh: refreshToken }),
-    });
+    try {
+      const response = await fetch(`${apiUrl}/api/token/refresh/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refresh: refreshToken }),
+        mode: 'cors', // Explicitly enable CORS
+        credentials: 'include', // Include credentials if needed
+      });
 
     if (response.ok) {
       const data = await response.json();
@@ -132,6 +144,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         ...options,
         headers,
         signal: controller.signal,
+        mode: 'cors', // Explicitly enable CORS
+        credentials: 'include', // Include credentials (cookies) if needed
       });
       clearTimeout(timeoutId);
     } catch (error: any) {
@@ -182,6 +196,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
             headers: retryHeaders,
             body: options.body, // Ensure body is preserved
             signal: retryController.signal,
+            mode: 'cors', // Explicitly enable CORS
+            credentials: 'include', // Include credentials (cookies) if needed
           });
           clearTimeout(retryTimeoutId);
         } catch (retryError: any) {
