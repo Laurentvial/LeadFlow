@@ -239,7 +239,15 @@ export function EditPersonalInfoModal({
                           })
                           .map((status) => (
                             <SelectItem key={status.id} value={status.id}>
-                              {status.name}
+                              <span 
+                                className="inline-block px-2 py-1 rounded text-sm"
+                                style={{
+                                  backgroundColor: status.color || '#e5e7eb',
+                                  color: status.color ? '#000000' : '#374151'
+                                }}
+                              >
+                                {status.name}
+                              </span>
                             </SelectItem>
                           ))
                       )}

@@ -17,149 +17,23 @@ import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
 import { useSources } from '../hooks/useSources';
-import { useHasPermission } from '../hooks/usePermissions';
-import { useUser } from '../contexts/UserContext';
+// Permission checks removed for Fosse - all users can view and edit all contacts
 import { toast } from 'sonner';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
 
-interface ContactsProps {
+interface FosseProps {
   onSelectContact: (contactId: string) => void;
 }
 
-export function Contacts({ onSelectContact }: ContactsProps) {
+export function Fosse({ onSelectContact }: FosseProps) {
   const navigate = useNavigate();
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { sources, loading: sourcesLoading } = useSources();
   
-  // Permission checks
-  const canCreate = useHasPermission('contacts', 'create');
-  const canEditGeneral = useHasPermission('contacts', 'edit');
-  const canViewGeneral = useHasPermission('contacts', 'view');
-  const canDelete = useHasPermission('contacts', 'delete');
-  
-  // Get all status permissions
-  const { currentUser } = useUser();
-  
-  const statusEditPermissions = React.useMemo(() => {
-    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
-      return new Set<string>();
-    }
-    const editPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
-      .map((p: any) => String(p.statusId).trim());
-    return new Set(editPerms);
-  }, [currentUser?.permissions]);
-  
-  const statusViewPermissions = React.useMemo(() => {
-    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
-      return new Set<string>();
-    }
-    const viewPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
-      .map((p: any) => {
-        // Normalize statusId: convert to string, trim whitespace, handle null/undefined
-        const statusId = p.statusId;
-        if (!statusId) return null;
-        return String(statusId).trim();
-      })
-      .filter((id): id is string => id !== null && id !== '');
-    return new Set(viewPerms);
-  }, [currentUser?.permissions]);
-  
-  // Helper function to check if current user is the teleoperator for a contact
-  const isTeleoperatorForContact = React.useCallback((contact: any): boolean => {
-    if (!currentUser?.id || !contact?.teleoperatorId) {
-      return false;
-    }
-    // Normalize both IDs to strings for comparison
-    const userId = String(currentUser.id).trim();
-    const teleoperatorId = String(contact.teleoperatorId).trim();
-    return userId === teleoperatorId;
-  }, [currentUser?.id]);
-  
-  // Helper function to check if user can view a contact based on its status
-  // Logic:
-  // 1. If user is teleoperator for the contact -> always allow viewing (even without status permission)
-  // 2. If contact has no status -> use general permission
-  // 3. If contact has a status -> user MUST have BOTH:
-  //    - General 'contacts' view permission (required by PermissionsTab validation)
-  //    - Status-specific view permission for this status
-  // This ensures that even with general permission, status-specific permission is required
-  const canViewContact = React.useCallback((contact: any): boolean => {
-    // If user is teleoperator for this contact, they can always view it
-    if (isTeleoperatorForContact(contact)) {
-      return true;
-    }
-    
-    const contactStatusId = contact?.statusId;
-    
-    // Normalize statusId to string for comparison (handle null, undefined, empty string, numbers)
-    let normalizedStatusId: string | null = null;
-    if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
-      const str = String(contactStatusId).trim();
-      if (str !== '') {
-        normalizedStatusId = str;
-      }
-    }
-    
-    // If contact has no status, use general permission
-    if (!normalizedStatusId) {
-      return canViewGeneral;
-    }
-    
-    // If contact has a status, user MUST have:
-    // 1. General 'contacts' view permission (required by PermissionsTab validation)
-    // 2. Status-specific view permission for this status
-    if (!canViewGeneral) {
-      // User doesn't have general permission, so they cannot view
-      // (PermissionsTab ensures status permissions can only be granted if general permission exists)
-      return false;
-    }
-    
-    // Check if user has permission to view this specific status
-    // The Set contains normalized statusIds (trimmed strings)
-    const canViewStatus = statusViewPermissions.has(normalizedStatusId);
-    
-    // User must have BOTH general permission AND status-specific permission
-    return canViewStatus;
-  }, [canViewGeneral, statusViewPermissions, isTeleoperatorForContact]);
-  
-  // Helper function to check if user can edit a contact based on its status
-  // Logic:
-  // 1. If contact has no status -> use general permission
-  // 2. If contact has a status -> user MUST have BOTH:
-  //    - General 'contacts' edit permission (required by PermissionsTab validation)
-  //    - Status-specific edit permission for this status
-  // This ensures that even with general permission, status-specific permission is required
-  const canEditContact = React.useCallback((contact: any, statusIdOverride?: string | null): boolean => {
-    // Use override statusId if provided (for checking new status when updating)
-    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
-    
-    // Normalize statusId to string for comparison
-    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
-    
-    // If contact has no status, use general permission
-    if (!normalizedStatusId) {
-      return canEditGeneral;
-    }
-    
-    // If contact has a status, user MUST have:
-    // 1. General 'contacts' edit permission (required by PermissionsTab validation)
-    // 2. Status-specific edit permission for this status
-    if (!canEditGeneral) {
-      // User doesn't have general permission, so they cannot edit
-      // (PermissionsTab ensures status permissions can only be granted if general permission exists)
-      return false;
-    }
-    
-    // Check if user has permission to edit this specific status
-    const canEditStatus = statusEditPermissions.has(normalizedStatusId);
-    
-    // User must have BOTH general permission AND status-specific permission
-    return canEditStatus;
-  }, [canEditGeneral, statusEditPermissions]);
+  // Fosse page: No permission checks - anyone with access can see and edit all contacts
+  // Permission checks removed - all users can view and edit contacts in Fosse
   const [contacts, setContacts] = useState<any[]>([]);
   const [totalContacts, setTotalContacts] = useState<number>(0);
   const [teams, setTeams] = useState<any[]>([]);
@@ -405,7 +279,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       
       // Load data in parallel for better performance
       const [contactsData, teamsData, statusesData] = await Promise.all([
-        apiCall(`/api/contacts/?${queryParams.toString()}`),
+        apiCall(`/api/contacts/fosse/?${queryParams.toString()}`),
         apiCall('/api/teams/'),
         apiCall('/api/statuses/')
       ]);
@@ -512,12 +386,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     switch (columnId) {
       case 'status':
         return statuses
-          .filter((status) => {
-            if (!status.id || status.id.trim() === '') return false;
-            // Filter by view permissions
-            const normalizedStatusId = String(status.id).trim();
-            return statusViewPermissions.has(normalizedStatusId);
-          })
+          .filter((status) => status.id && status.id.trim() !== '')
           .map(status => ({
           id: status.id,
           label: status.name
@@ -555,59 +424,13 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   };
 
   // Helper function to get status display text for a contact
-  // If user is teleoperator but doesn't have status permission, show "Indisponible - [TYPE]"
-  // Otherwise show the actual status name
+  // Fosse: Always show actual status name (no permission filtering)
   const getStatusDisplayText = React.useCallback((contact: any): string => {
-    const isTeleoperator = isTeleoperatorForContact(contact);
-    const contactStatusId = contact?.statusId;
-    
-    // Normalize statusId
-    let normalizedStatusId: string | null = null;
-    if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
-      const str = String(contactStatusId).trim();
-      if (str !== '') {
-        normalizedStatusId = str;
-      }
-    }
-    
-    // If user is teleoperator and contact has a status
-    if (isTeleoperator && normalizedStatusId) {
-      // Check if user has permission to view this status
-      const hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
-      
-      if (!hasStatusPermission) {
-        // User doesn't have permission, show masked message
-        const statusType = getContactStatusType(contact);
-        if (statusType === 'client') {
-          return 'Indisponible - CLIENT';
-        } else if (statusType === 'lead') {
-          return 'Indisponible - LEAD';
-        } else {
-          // Fallback if status type is unknown
-          return 'Indisponible';
-        }
-      }
-    }
-    
-    // Show actual status name
     return contact.statusName || '-';
-  }, [isTeleoperatorForContact, statusViewPermissions, getContactStatusType]);
+  }, []);
 
-  // Filter contacts based on status view permissions
-  // Backend handles filtering, but we also filter by status view permissions on client side
-  const filteredContacts = React.useMemo(() => {
-    const filtered = contacts.filter(contact => canViewContact(contact));
-    
-    // Debug: Log if there's a discrepancy between total and filtered
-    if (contacts.length !== filtered.length) {
-      const hiddenContacts = contacts.filter(contact => !canViewContact(contact));
-      console.log(`[Contacts] Filtered out ${contacts.length - filtered.length} contact(s) due to permissions:`, 
-        hiddenContacts.map(c => ({ id: c.id, statusId: c.statusId, fullName: c.fullName || `${c.firstName} ${c.lastName}`.trim() }))
-      );
-    }
-    
-    return filtered;
-  }, [contacts, canViewContact]);
+  // Fosse: No filtering by permissions - show all contacts
+  const filteredContacts = contacts;
 
   // Calculate pagination
   const totalPages = Math.ceil(filteredContacts.length / itemsPerPage);
@@ -809,156 +632,75 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       case 'teleoperator':
         return (
           <td key={columnId}>
-            {canEditContact(contact) ? (
-              <Select
-                value={contact.teleoperatorId || contact.managerId || 'none'}
-                onValueChange={async (value) => {
-                  const newTeleoperatorId = value === 'none' ? '' : value;
-                  // Check if user has permission to edit this contact
-                  if (!canEditContact(contact)) {
-                    toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                    return;
-                  }
-                  
-                  try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ teleoperatorId: newTeleoperatorId })
-                    });
-                    toast.success('Téléopérateur mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du téléopérateur');
-                  }
-                }}
-              >
-                <SelectTrigger className="border-none bg-transparent p-0 h-auto w-full text-left shadow-none hover:bg-transparent focus:ring-0 cursor-pointer">
-                  <SelectValue className="cursor-pointer">
-                {truncateText(contact.managerName || contact.teleoperatorName || '-')}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                  {teleoperateurs.map((user) => {
-                    const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                    return (
-                      <SelectItem key={user.id} value={user.id}>
-                        {displayName}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span title={contact.managerName || contact.teleoperatorName || ''}>{truncateText(contact.managerName || contact.teleoperatorName || '-')}</span>
-            )}
+            <Select
+              value={contact.teleoperatorId || contact.managerId || 'none'}
+              onValueChange={async (value) => {
+                const newTeleoperatorId = value === 'none' ? '' : value;
+                try {
+                  await apiCall(`/api/contacts/${contact.id}/`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ teleoperatorId: newTeleoperatorId })
+                  });
+                  toast.success('Téléopérateur mis à jour avec succès');
+                  loadData();
+                } catch (error: any) {
+                  toast.error(error.message || 'Erreur lors de la mise à jour du téléopérateur');
+                }
+              }}
+            >
+              <SelectTrigger className="border-none bg-transparent p-0 h-auto w-full text-left shadow-none hover:bg-transparent focus:ring-0 cursor-pointer">
+                <SelectValue className="cursor-pointer">
+              {truncateText(contact.managerName || contact.teleoperatorName || '-')}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                {teleoperateurs.map((user) => {
+                  const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                  return (
+                    <SelectItem key={user.id} value={user.id}>
+                      {displayName}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
           </td>
         );
       case 'source':
         return <td key={columnId} title={contact.source || ''}>{truncateText(contact.source || '-')}</td>;
       case 'status':
         const statusDisplayText = getStatusDisplayText(contact);
-        const isTeleoperator = isTeleoperatorForContact(contact);
-        const contactStatusId = contact?.statusId;
-        let normalizedStatusId: string | null = null;
-        if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
-          const str = String(contactStatusId).trim();
-          if (str !== '') {
-            normalizedStatusId = str;
-          }
-        }
-        const hasStatusPermission = normalizedStatusId ? statusViewPermissions.has(normalizedStatusId) : true;
-        const canEditStatus = isTeleoperator ? hasStatusPermission : canEditContact(contact);
-        // If status is "Indisponible", don't show the status color
-        const isIndisponible = statusDisplayText.startsWith('Indisponible');
-        const statusBgColor = isIndisponible ? '#e5e7eb' : (contact.statusColor || '#e5e7eb');
-        const statusTextColor = isIndisponible ? '#374151' : (contact.statusColor ? '#000000' : '#374151');
+        const statusBgColor = contact.statusColor || '#e5e7eb';
+        const statusTextColor = contact.statusColor ? '#000000' : '#374151';
         
         return (
           <td key={columnId}>
-            {canEditStatus ? (
-              <Select
-                value={contact.statusId || 'none'}
-                onValueChange={async (value) => {
-                  const newStatusId = value === 'none' ? '' : value;
-                  // Check if user has permission to edit this contact with the CURRENT status
-                  if (!canEditContact(contact)) {
-                    toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                    return;
-                  }
-                  
-                  // Also check if user has permission to edit the NEW status (if status is being changed)
-                  if (newStatusId && newStatusId !== contact.statusId) {
-                    if (!canEditContact(contact, newStatusId)) {
-                      toast.error('Vous n\'avez pas la permission d\'éditer les contacts avec ce statut');
-                      return;
-                    }
-                  }
-                  
-                  try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ statusId: newStatusId })
-                    });
-                    toast.success('Statut mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du statut');
-                  }
-                }}
-              >
-                <SelectTrigger className="border-none bg-transparent p-0 h-auto w-auto min-w-0 shadow-none hover:bg-transparent focus:ring-0">
-                  <SelectValue asChild>
-                <span 
-                      className="contacts-status-badge cursor-pointer"
-                  style={{
-                        backgroundColor: statusBgColor,
-                        color: statusTextColor,
-                    padding: '4px 12px',
-                    borderRadius: '5px',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'inline-block'
-                  }}
-                >
-                      {truncateText(statusDisplayText)}
-                </span>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">
-                    <span className="inline-block px-2 py-1 rounded text-sm">Aucun statut</span>
-                  </SelectItem>
-                  {statuses
-                    .filter((status) => {
-                      if (!status.id || status.id.trim() === '') return false;
-                      // Filter by view permissions
-                      const normalizedStatusId = String(status.id).trim();
-                      return statusViewPermissions.has(normalizedStatusId);
-                    })
-                    .map((status) => (
-                      <SelectItem key={status.id} value={status.id.toString()}>
-                        <span 
-                          className="inline-block px-2 py-1 rounded text-sm"
-                          style={{
-                            backgroundColor: status.color || '#e5e7eb',
-                            color: status.color ? '#000000' : '#374151'
-                          }}
-                        >
-                          {status.name}
-                        </span>
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            ) : (
+            <Select
+              value={contact.statusId || 'none'}
+              onValueChange={async (value) => {
+                const newStatusId = value === 'none' ? '' : value;
+                try {
+                  await apiCall(`/api/contacts/${contact.id}/`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ statusId: newStatusId })
+                  });
+                  toast.success('Statut mis à jour avec succès');
+                  loadData();
+                } catch (error: any) {
+                  toast.error(error.message || 'Erreur lors de la mise à jour du statut');
+                }
+              }}
+            >
+              <SelectTrigger className="border-none bg-transparent p-0 h-auto w-auto min-w-0 shadow-none hover:bg-transparent focus:ring-0">
+                <SelectValue asChild>
               <span 
-                className="contacts-status-badge"
+                    className="contacts-status-badge cursor-pointer"
                 style={{
-                  backgroundColor: statusBgColor,
-                  color: statusTextColor,
+                      backgroundColor: statusBgColor,
+                      color: statusTextColor,
                   padding: '4px 12px',
                   borderRadius: '5px',
                   fontSize: '0.875rem',
@@ -966,38 +708,53 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   display: 'inline-block'
                 }}
               >
-                {statusDisplayText}
+                    {truncateText(statusDisplayText)}
               </span>
-            )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">
+                  <span className="inline-block px-2 py-1 rounded text-sm">Aucun statut</span>
+                </SelectItem>
+                {statuses
+                  .filter((status) => status.id && status.id.trim() !== '')
+                  .map((status) => (
+                    <SelectItem key={status.id} value={status.id.toString()}>
+                      <span 
+                        className="inline-block px-2 py-1 rounded text-sm"
+                        style={{
+                          backgroundColor: status.color || '#e5e7eb',
+                          color: status.color ? '#000000' : '#374151'
+                        }}
+                      >
+                        {status.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
           </td>
         );
       case 'confirmateur':
         return (
           <td key={columnId}>
-            {canEditContact(contact) ? (
-              <Select
-                value={contact.confirmateurId || 'none'}
-                onValueChange={async (value) => {
-                  const newConfirmateurId = value === 'none' ? '' : value;
-                  // Check if user has permission to edit this contact
-                  if (!canEditContact(contact)) {
-                    toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                    return;
-                  }
-                  
-                  try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ confirmateurId: newConfirmateurId })
-                    });
-                    toast.success('Confirmateur mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du confirmateur');
-                  }
-                }}
-              >
+            <Select
+              value={contact.confirmateurId || 'none'}
+              onValueChange={async (value) => {
+                const newConfirmateurId = value === 'none' ? '' : value;
+                try {
+                  await apiCall(`/api/contacts/${contact.id}/`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirmateurId: newConfirmateurId })
+                  });
+                  toast.success('Confirmateur mis à jour avec succès');
+                  loadData();
+                } catch (error: any) {
+                  toast.error(error.message || 'Erreur lors de la mise à jour du confirmateur');
+                }
+              }}
+            >
                 <SelectTrigger className="border-none bg-transparent p-0 h-auto w-full text-left shadow-none hover:bg-transparent focus:ring-0 cursor-pointer">
                   <SelectValue className="cursor-pointer">
                 {truncateText(contact.confirmateurName || '-')}
@@ -1015,9 +772,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   })}
                 </SelectContent>
               </Select>
-            ) : (
-              <span title={contact.confirmateurName || ''}>{truncateText(contact.confirmateurName || '-')}</span>
-            )}
           </td>
         );
       case 'creator':
@@ -1101,20 +855,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   async function handleUpdateStatus() {
     if (!selectedContact) return;
     
-    // Check if user has permission to edit this contact with the CURRENT status
-    if (!canEditContact(selectedContact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
-    
-    // Also check if user has permission to edit the NEW status (if status is being changed)
-    if (selectedStatusId && selectedStatusId !== selectedContact.statusId) {
-      if (!canEditContact(selectedContact, selectedStatusId)) {
-        toast.error('Vous n\'avez pas la permission d\'éditer les contacts avec ce statut');
-        return;
-      }
-    }
-    
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
         method: 'PATCH',
@@ -1133,12 +873,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   async function handleUpdateTeleoperator() {
     if (!selectedContact) return;
     
-    // Check if user has permission to edit this contact
-    if (!canEditContact(selectedContact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
-    
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
         method: 'PATCH',
@@ -1156,12 +890,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
 
   async function handleUpdateConfirmateur() {
     if (!selectedContact) return;
-    
-    // Check if user has permission to edit this contact
-    if (!canEditContact(selectedContact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
     
     try {
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
@@ -1277,7 +1005,6 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                             className="w-80 p-4" 
                             align="start"
                             onClick={(e) => e.stopPropagation()}
-                            style={{ zIndex: 10001 }}
                           >
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1602,28 +1329,14 @@ export function Contacts({ onSelectContact }: ContactsProps) {
     <div className={`contacts-container ${isFullscreen ? 'contacts-container-fullscreen' : ''}`}>
       <div className="contacts-header page-header">
         <div className="page-title-section">
-          <h1 className="page-title">Contacts</h1>
-          <p className="page-subtitle">Gestion de vos contacts</p>
+          <h1 className="page-title">Fosse</h1>
+          <p className="page-subtitle">Contacts non assignés (téléopérateur aucun et confirmateur aucun)</p>
         </div>
         
-        <div className="flex gap-2">
-          {canCreate && (
-            <>
-              <Button variant="outline" onClick={() => navigate('/contacts/import')}>
-                <Upload className="w-4 h-4 mr-2" />
-                Importer CSV
-              </Button>
-              <Button onClick={() => navigate('/contacts/add')}>
-                <Plus className="w-4 h-4 mr-2" />
-                Ajouter un contact
-              </Button>
-            </>
-          )}
-        </div>
       </div>
 
       {/* Filters */}
-      <Card className="contacts-filters-card">
+      <Card>
         <CardContent className="pt-6">
           <div className="contacts-filters">
             <div className="contacts-filter-section contacts-filter-search">
@@ -1732,9 +1445,8 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 </Button>
               </div>
               <div className="contacts-bulk-actions-buttons">
-                {canEditGeneral && (
-                  <>
-                    <div className="contacts-bulk-action-select">
+                <>
+                  <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
                       <Select value={bulkTeleoperatorId} onValueChange={handleBulkAssignTeleoperator}>
                         <SelectTrigger className="w-[200px]">
@@ -1792,27 +1504,24 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                       </Select>
                     </div>
                   </>
-                )}
 
-                {canDelete && (
-                  <Button 
-                    variant="destructive" 
-                    size="sm" 
-                    onClick={handleBulkDelete}
-                    disabled={isDeleting}
-                  >
-                    {isDeleting ? (
-                      <>
-                        <span style={{ marginLeft: '8px' }}>Suppression...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Supprimer
-                      </>
-                    )}
-                  </Button>
-                )}
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={handleBulkDelete}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? (
+                    <>
+                      <span style={{ marginLeft: '8px' }}>Suppression...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Supprimer
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -1824,7 +1533,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
         <CardHeader>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <CardTitle>
-              Liste des contacts ({displayedContacts.length} / {currentUser?.roleName?.toLowerCase() === 'admin' ? totalContacts : filteredContacts.length})
+              Liste des contacts ({itemsPerPage} / {filteredContacts.length})
               {totalPages > 1 && ` - Page ${currentPage} sur ${totalPages}`}
             </CardTitle>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1951,14 +1660,9 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Aucun statut</SelectItem>
-                    {statuses
-                      .filter((status) => {
-                        if (!status.id || status.id.trim() === '') return false;
-                        // Filter by view permissions
-                        const normalizedStatusId = String(status.id).trim();
-                        return statusViewPermissions.has(normalizedStatusId);
-                      })
-                      .map((status) => (
+                      {statuses
+                        .filter((status) => status.id && status.id.trim() !== '')
+                        .map((status) => (
                         <SelectItem key={status.id} value={status.id.toString()}>
                           {status.name}
                         </SelectItem>
@@ -1970,7 +1674,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsStatusModalOpen(false)}>
                   Annuler
                 </Button>
-                {selectedContact && canEditContact(selectedContact) && (
+                {selectedContact && (
                   <Button type="button" onClick={handleUpdateStatus}>
                     Enregistrer
                   </Button>
@@ -2148,7 +1852,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsTeleoperatorModalOpen(false)}>
                   Annuler
                 </Button>
-                {selectedContact && canEditContact(selectedContact) && (
+                {selectedContact && (
                   <Button type="button" onClick={handleUpdateTeleoperator}>
                     Enregistrer
                   </Button>
@@ -2204,7 +1908,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
                 <Button type="button" variant="outline" onClick={() => setIsConfirmateurModalOpen(false)}>
                   Annuler
                 </Button>
-                {selectedContact && canEditContact(selectedContact) && (
+                {selectedContact && (
                   <Button type="button" onClick={handleUpdateConfirmateur}>
                     Enregistrer
                   </Button>
@@ -2218,4 +1922,4 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   );
 }
 
-export default Contacts;
+export default Fosse;

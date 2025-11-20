@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
@@ -12,7 +12,9 @@ import { useSources } from '../hooks/useSources';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import LoadingIndicator from './LoadingIndicator';
+import { Input } from './ui/input';
 import '../styles/PageHeader.css';
+import '../styles/Modal.css';
 
 interface ColumnMapping {
   [key: string]: string; // CRM field -> CSV column
@@ -39,7 +41,7 @@ const CRM_FIELDS = [
 export function CsvImport() {
   const navigate = useNavigate();
   const { statuses, loading: statusesLoading, error: statusesError } = useStatuses();
-  const { sources, loading: sourcesLoading, error: sourcesError } = useSources();
+  const { sources, loading: sourcesLoading, error: sourcesError, reload: reloadSources } = useSources();
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { currentUser } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -56,6 +58,8 @@ export function CsvImport() {
   const [importResults, setImportResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
+  const [newSourceName, setNewSourceName] = useState('');
 
   // Get status view permissions
   const statusViewPermissions = React.useMemo(() => {
@@ -224,6 +228,29 @@ export function CsvImport() {
       fileInputRef.current.value = '';
     }
   };
+
+  async function handleCreateSource() {
+    if (!newSourceName.trim()) {
+      toast.error('Le nom de la source est requis');
+      return;
+    }
+
+    try {
+      const response = await apiCall('/api/sources/create/', {
+        method: 'POST',
+        body: JSON.stringify({ name: newSourceName.trim() }),
+      });
+      
+      toast.success('Source créée avec succès');
+      setNewSourceName('');
+      setIsSourceDialogOpen(false);
+      await reloadSources();
+      // Set the newly created source as selected
+      setDefaultSourceId(response.id);
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la création de la source');
+    }
+  }
 
   // Show loading if hooks are still loading
   if (statusesLoading || sourcesLoading || usersLoading) {
@@ -419,35 +446,37 @@ export function CsvImport() {
                   </div>
                 )}
 
-                <div className="space-y-3 max-h-96 overflow-y-auto border  p-4">
-                  {CRM_FIELDS.filter(field => field.value !== '').map((field) => (
-                    <div key={field.value} className="flex items-center gap-4 py-2">
-                      <Label className="w-48 text-sm font-medium">
-                        {field.label}
-                      </Label>
-                      <Select
-                        value={columnMapping[field.value] || '__none__'}
-                        onValueChange={(value) => {
-                          setColumnMapping({
-                            ...columnMapping,
-                            [field.value]: value === '__none__' ? '' : value,
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="flex-1">
-                          <SelectValue placeholder="Sélectionner une colonne CSV" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">-- Ignorer --</SelectItem>
-                          {csvHeaders.map((header) => (
-                            <SelectItem key={header} value={header}>
-                              {header}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
+                <div className="max-h-96 overflow-y-auto border  p-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {CRM_FIELDS.filter(field => field.value !== '').map((field) => (
+                      <div key={field.value} className="flex items-center gap-3">
+                        <Label className="w-40 text-sm font-medium flex-shrink-0">
+                          {field.label}
+                        </Label>
+                        <Select
+                          value={columnMapping[field.value] || '__none__'}
+                          onValueChange={(value) => {
+                            setColumnMapping({
+                              ...columnMapping,
+                              [field.value]: value === '__none__' ? '' : value,
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="flex-1">
+                            <SelectValue placeholder="Sélectionner une colonne CSV" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">-- Ignorer --</SelectItem>
+                            {csvHeaders.map((header) => (
+                              <SelectItem key={header} value={header}>
+                                {header}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -459,12 +488,39 @@ export function CsvImport() {
                     onValueChange={setDefaultStatusId}
                   >
                     <SelectTrigger id="default-status">
-                      <SelectValue placeholder="Sélectionner un statut" />
+                      {defaultStatusId ? (() => {
+                        const selectedStatus = leadStatuses.find((s: any) => s.id === defaultStatusId);
+                        return selectedStatus ? (
+                          <SelectValue asChild>
+                            <span 
+                              className="inline-block px-2 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: selectedStatus.color || '#e5e7eb',
+                                color: selectedStatus.color ? '#000000' : '#374151'
+                              }}
+                            >
+                              {selectedStatus.name}
+                            </span>
+                          </SelectValue>
+                        ) : (
+                          <SelectValue placeholder="Sélectionner un statut" />
+                        );
+                      })() : (
+                        <SelectValue placeholder="Sélectionner un statut" />
+                      )}
                     </SelectTrigger>
                     <SelectContent>
                       {leadStatuses.map((status) => (
                         <SelectItem key={status.id} value={status.id}>
-                          {status.name}
+                          <span 
+                            className="inline-block px-2 py-1 rounded text-sm"
+                            style={{
+                              backgroundColor: status.color || '#e5e7eb',
+                              color: status.color ? '#000000' : '#374151'
+                            }}
+                          >
+                            {status.name}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -481,7 +537,7 @@ export function CsvImport() {
                       <SelectValue placeholder="Sélectionner un téléopérateur" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">Aucun téléopérateur</SelectItem>
+                      <SelectItem value="__none__">Aucun</SelectItem>
                       {teleoperateurs.map((teleoperator) => (
                         <SelectItem key={teleoperator.id} value={teleoperator.id}>
                           {teleoperator.firstName} {teleoperator.lastName}
@@ -493,22 +549,33 @@ export function CsvImport() {
 
                 <div className="space-y-2">
                   <Label htmlFor="default-source">Source par défaut (optionnel)</Label>
-                  <Select
-                    value={defaultSourceId || '__none__'}
-                    onValueChange={(value) => setDefaultSourceId(value === '__none__' ? '' : value)}
-                  >
-                    <SelectTrigger id="default-source">
-                      <SelectValue placeholder="Sélectionner une source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Aucune source</SelectItem>
-                      {sources.map((source) => (
-                        <SelectItem key={source.id} value={source.id}>
-                          {source.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={defaultSourceId || '__none__'}
+                      onValueChange={(value) => setDefaultSourceId(value === '__none__' ? '' : value)}
+                    >
+                      <SelectTrigger id="default-source" className="flex-1">
+                        <SelectValue placeholder="Sélectionner une source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Aucune source</SelectItem>
+                        {sources.map((source) => (
+                          <SelectItem key={source.id} value={source.id}>
+                            {source.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setIsSourceDialogOpen(true)}
+                      title="Ajouter une nouvelle source"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -677,6 +744,72 @@ export function CsvImport() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Modal for adding new source */}
+      {isSourceDialogOpen && (
+        <div className="modal-overlay" onClick={() => {
+          setIsSourceDialogOpen(false);
+          setNewSourceName('');
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Ajouter une nouvelle source</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => {
+                  setIsSourceDialogOpen(false);
+                  setNewSourceName('');
+                }}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleCreateSource();
+              }}
+              className="modal-form"
+            >
+              <div className="modal-form-field">
+                <Label htmlFor="newSourceName">Nom de la source</Label>
+                <Input
+                  id="newSourceName"
+                  value={newSourceName}
+                  onChange={(e) => setNewSourceName(e.target.value)}
+                  placeholder="Ex: Site web, Référencement, etc."
+                  required
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCreateSource();
+                    }
+                  }}
+                />
+              </div>
+              <div className="modal-form-actions">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsSourceDialogOpen(false);
+                    setNewSourceName('');
+                  }}
+                >
+                  Annuler
+                </Button>
+                <Button type="submit">
+                  <Plus className="planning-icon-md" style={{ marginRight: '4px' }} />
+                  Créer
+                </Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

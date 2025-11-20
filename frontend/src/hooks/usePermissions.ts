@@ -57,3 +57,29 @@ export function useComponentPermissions(component: string): Permission[] {
   return permissions.filter((perm) => perm.component === component);
 }
 
+/**
+ * Hook to check if user has permission to view the statuses management page
+ * Returns true only if user has the general 'statuses' view permission (no statusId)
+ * Note: This is different from contact status permissions (with statusId) which are
+ * for viewing contacts with specific statuses, not for managing statuses
+ * @returns boolean indicating if user has statuses management permission
+ */
+export function useHasStatusesPermission(): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has the general 'statuses' view permission (statusId must be null)
+  // This is for managing statuses, not for viewing contacts with specific statuses
+  return permissions.some((perm) => {
+    return perm.component === 'statuses' && 
+           perm.action === 'view' && 
+           !perm.fieldName && // Exclude field-level permissions
+           !perm.statusId; // Only general statuses permission, not contact status permissions
+  });
+}
+

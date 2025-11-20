@@ -223,7 +223,31 @@ export function AddContact() {
                   required
                 >
                   <SelectTrigger id="statusId">
-                    <SelectValue placeholder="Sélectionner un statut" />
+                    {formData.statusId ? (() => {
+                      const filteredStatuses = statuses.filter((status) => {
+                        if (!status.id || status.id.trim() === '') return false;
+                        const normalizedStatusId = String(status.id).trim();
+                        return statusViewPermissions.has(normalizedStatusId);
+                      });
+                      const selectedStatus = filteredStatuses.find((s: any) => s.id === formData.statusId);
+                      return selectedStatus ? (
+                        <SelectValue asChild>
+                          <span 
+                            className="inline-block px-2 py-1 rounded text-sm"
+                            style={{
+                              backgroundColor: selectedStatus.color || '#e5e7eb',
+                              color: selectedStatus.color ? '#000000' : '#374151'
+                            }}
+                          >
+                            {selectedStatus.name}
+                          </span>
+                        </SelectValue>
+                      ) : (
+                        <SelectValue placeholder="Sélectionner un statut" />
+                      );
+                    })() : (
+                      <SelectValue placeholder="Sélectionner un statut" />
+                    )}
                   </SelectTrigger>
                   <SelectContent>
                     {statuses.length === 0 ? (
@@ -240,7 +264,15 @@ export function AddContact() {
                         })
                         .map((status) => (
                           <SelectItem key={status.id} value={status.id}>
-                            {status.name}
+                            <span 
+                              className="inline-block px-2 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: status.color || '#e5e7eb',
+                                color: status.color ? '#000000' : '#374151'
+                              }}
+                            >
+                              {status.name}
+                            </span>
                           </SelectItem>
                         ))
                     )}
@@ -394,36 +426,36 @@ export function AddContact() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="sourceId">Source</Label>
+              <Label htmlFor="sourceId">Source</Label>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={formData.sourceId || 'none'}
+                  onValueChange={(value) => setFormData({ ...formData, sourceId: value === 'none' ? '' : value })}
+                >
+                  <SelectTrigger id="sourceId" className="flex-1">
+                    <SelectValue placeholder="Sélectionner une source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucune</SelectItem>
+                    {sources
+                      .filter((source) => source.id && source.id.trim() !== '')
+                      .map((source) => (
+                        <SelectItem key={source.id} value={source.id}>
+                          {source.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
+                  size="icon"
                   onClick={() => setIsSourceDialogOpen(true)}
+                  title="Ajouter une nouvelle source"
                 >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Ajouter
+                  <Plus className="w-4 h-4" />
                 </Button>
               </div>
-              <Select
-                value={formData.sourceId || 'none'}
-                onValueChange={(value) => setFormData({ ...formData, sourceId: value === 'none' ? '' : value })}
-              >
-                <SelectTrigger id="sourceId">
-                  <SelectValue placeholder="Sélectionner une source" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Aucune</SelectItem>
-                  {sources
-                    .filter((source) => source.id && source.id.trim() !== '')
-                    .map((source) => (
-                      <SelectItem key={source.id} value={source.id}>
-                        {source.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
             </div>
 
             <div className="space-y-2">

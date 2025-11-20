@@ -6,6 +6,7 @@ interface UserContextType {
   currentUser: any;
   loading: boolean;
   refreshUser: () => Promise<void>;
+  token?: string;
 }
 
 // Provide a default value to avoid undefined context
@@ -93,8 +94,11 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await getCurrentUser();
   };
 
+  // Get token from localStorage
+  const token = localStorage.getItem(ACCESS_TOKEN) || undefined;
+
   return (
-    <UserContext.Provider value={{ currentUser, loading, refreshUser }}>
+    <UserContext.Provider value={{ currentUser, loading, refreshUser, token }}>
       {children}
     </UserContext.Provider>
   );

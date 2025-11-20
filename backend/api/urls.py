@@ -8,6 +8,7 @@ urlpatterns = [
     path('notes/create/', api_views.NoteListCreateView.as_view(), name='note-create'),
     # Contacts endpoints
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),
+    path('contacts/fosse/', api_views.FosseContactView.as_view(), name='fosse-contact-list'),
     path('contacts/create/', api_views.contact_create, name='contact-create'),
     path('contacts/csv-import-preview/', api_views.csv_import_preview, name='csv-import-preview'),
     path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
@@ -84,4 +85,15 @@ urlpatterns = [
     path('emails/<str:email_id>/update/', api_views.email_update, name='email-update'),
     path('emails/<str:email_id>/delete/', api_views.email_delete, name='email-delete'),
     path('emails/<str:email_id>/', api_views.email_detail, name='email-detail'),
+    # Chat endpoints
+    path('chat/rooms/', api_views.chat_rooms, name='chat-rooms'),
+    path('chat/rooms/<str:chat_room_id>/', api_views.chat_room_detail, name='chat-room-detail'),
+    path('chat/rooms/<str:chat_room_id>/messages/', api_views.chat_messages, name='chat-messages'),
+    path('chat/rooms/<str:chat_room_id>/read/', api_views.mark_messages_read, name='mark-messages-read'),
+    path('chat/users/', api_views.chat_users, name='chat-users'),
+    # Notifications endpoints
+    path('notifications/', api_views.notification_list, name='notification-list'),
+    path('notifications/unread-count/', api_views.notification_unread_count, name='notification-unread-count'),
+    path('notifications/<str:notification_id>/read/', api_views.notification_mark_read, name='notification-mark-read'),
+    path('notifications/mark-all-read/', api_views.notification_mark_all_read, name='notification-mark-all-read'),
 ]

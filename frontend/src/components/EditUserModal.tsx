@@ -47,8 +47,8 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
         lastName: user.lastName || '',
         email: user.email || '',
         phone: user.phone || '',
-        role: user.role || '',
-        teamId: user.teamId || '',
+        role: user.role ? String(user.role) : '',
+        teamId: user.teamId ? String(user.teamId) : '',
       });
     }
   }, [user, isOpen]);
@@ -78,7 +78,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           last_name: formData.lastName,
           email: formData.email,
           phone: formData.phone,
-          roleId: formData.role,
+          roleId: formData.role || null,
           teamId: formData.teamId || null,
         }),
       });
@@ -170,7 +170,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           <div className="modal-form-field">
             <Label htmlFor="edit-role">Rôle</Label>
             <Select
-              value={formData.role || undefined}
+              value={formData.role ? String(formData.role) : undefined}
               onValueChange={(value) =>
                 setFormData({ ...formData, role: value })
               }
@@ -202,7 +202,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           <div className="modal-form-field">
             <Label htmlFor="edit-teamId">Équipe (optionnel)</Label>
             <Select
-              value={formData.teamId || "none"}
+              value={formData.teamId ? String(formData.teamId) : "none"}
               onValueChange={(value) =>
                 setFormData({
                   ...formData,

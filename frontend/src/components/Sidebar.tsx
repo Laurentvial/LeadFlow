@@ -14,10 +14,11 @@ import {
   UserCircle, 
   Settings as SettingsIcon,
   Mail,
+  MessageSquare,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
 
 interface SidebarProps {
   currentPage: string;
@@ -49,10 +50,11 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const hasContactsPermission = useHasPermission('contacts', 'view');
   const hasUsersPermission = useHasPermission('users', 'view');
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
-  const hasStatusesPermission = useHasPermission('statuses', 'view');
+  const hasStatusesPermission = useHasStatusesPermission();
   const hasMailsPermission = useHasPermission('mails', 'view');
   // Settings page is accessible if user has access to either permissions or statuses
   const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission;
+  // Chat doesn't require permission check - available to all authenticated users
 
   const menuItems = [
     { 
@@ -86,6 +88,16 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       permissionAction: 'view' as const,
     },
     { 
+      id: 'fosse', 
+      label: 'Fosse', 
+      icon: UserCircle, 
+      roles: ['admin', 'teamleader', 'gestionnaire'], 
+      path: '/fosse',
+      requiresPermission: false, // Fosse is accessible to all authenticated users
+      permissionComponent: 'contacts',
+      permissionAction: 'view' as const,
+    },
+    { 
       id: 'mails', 
       label: 'Mails', 
       icon: Mail, 
@@ -93,6 +105,16 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       path: '/mails',
       requiresPermission: true,
       permissionComponent: 'mails',
+      permissionAction: 'view' as const,
+    },
+    { 
+      id: 'chat', 
+      label: 'Messages', 
+      icon: MessageSquare, 
+      roles: ['admin', 'teamleader', 'gestionnaire'], 
+      path: '/chat',
+      requiresPermission: false, // Chat is available to all authenticated users
+      permissionComponent: 'chat',
       permissionAction: 'view' as const,
     },
     { 
@@ -132,6 +154,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     if (component === 'planning') return hasPlanningPermission;
     if (component === 'contacts') return hasContactsPermission;
     if (component === 'mails') return hasMailsPermission;
+    if (component === 'chat') return true; // Chat is available to all authenticated users
     if (component === 'users') return hasUsersPermission;
     if (component === 'settings') return hasSettingsPermission; // This checks permissions OR statuses
     

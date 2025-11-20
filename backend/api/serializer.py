@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature
+from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -325,6 +325,8 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
+        # Add django_user.id for compatibility with other endpoints that use Django User ID
+        ret['djangoUserId'] = instance.django_user.id if instance.django_user else None
         # Handle role as ForeignKey
         if instance.role:
             ret['role'] = instance.role.id
@@ -835,6 +837,111 @@ class EmailSignatureSerializer(serializers.ModelSerializer):
         ret['logoProxyUrl'] = self.get_logoProxyUrl(instance)  # Proxy URL for preview
         ret['logoPosition'] = instance.logo_position or 'left'
         ret['isDefault'] = instance.is_default
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class MessageSerializer(serializers.ModelSerializer):
+    senderId = serializers.CharField(source='sender.id', read_only=True)
+    senderName = serializers.SerializerMethodField()
+    chatRoomId = serializers.CharField(source='chat_room.id', read_only=True)
+    isRead = serializers.BooleanField(source='is_read')
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = Message
+        fields = ['id', 'chatRoomId', 'senderId', 'senderName', 'content', 'isRead', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def get_senderName(self, obj):
+        if obj.sender:
+            first_name = obj.sender.first_name or ''
+            last_name = obj.sender.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.sender.username or ''
+        return ''
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['chatRoomId'] = instance.chat_room.id if instance.chat_room else None
+        ret['senderId'] = instance.sender.id if instance.sender else None
+        ret['senderName'] = self.get_senderName(instance)
+        ret['isRead'] = instance.is_read
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class ChatRoomSerializer(serializers.ModelSerializer):
+    participants = serializers.SerializerMethodField()
+    lastMessage = serializers.SerializerMethodField()
+    unreadCount = serializers.SerializerMethodField()
+    otherParticipant = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = ChatRoom
+        fields = ['id', 'participants', 'otherParticipant', 'lastMessage', 'unreadCount', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def get_participants(self, obj):
+        """Get list of participant IDs"""
+        return [user.id for user in obj.participants.all()]
+    
+    def get_otherParticipant(self, obj):
+        """Get the other participant (not the current user)"""
+        request = self.context.get('request')
+        if request and request.user:
+            other_participants = obj.participants.exclude(id=request.user.id)
+            if other_participants.exists():
+                other_user = other_participants.first()
+                first_name = other_user.first_name or ''
+                last_name = other_user.last_name or ''
+                name = f"{first_name} {last_name}".strip() if (first_name or last_name) else other_user.username
+                return {
+                    'id': other_user.id,
+                    'username': other_user.username,
+                    'name': name,
+                    'email': other_user.email or ''
+                }
+        return None
+    
+    def get_lastMessage(self, obj):
+        """Get the last message in the chat room"""
+        last_msg = obj.messages.order_by('-created_at').first()
+        if last_msg:
+            return MessageSerializer(last_msg).data
+        return None
+    
+    def get_unreadCount(self, obj):
+        """Get count of unread messages for current user"""
+        request = self.context.get('request')
+        if request and request.user:
+            return obj.messages.filter(is_read=False).exclude(sender=request.user).count()
+        return 0
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['participants'] = self.get_participants(instance)
+        ret['otherParticipant'] = self.get_otherParticipant(instance)
+        ret['lastMessage'] = self.get_lastMessage(instance)
+        ret['unreadCount'] = self.get_unreadCount(instance)
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for Notification model"""
+    
+    class Meta:
+        model = Notification
+        fields = ['id', 'type', 'title', 'message', 'message_id', 'email_id', 'contact_id', 'event_id', 'data', 'is_read', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret

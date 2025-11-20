@@ -78,12 +78,45 @@ class UserDetails(models.Model):
         return f"{self.django_user.username} - {self.role_id.name if self.role_id else 'No Role'}"
 
 class Notification(models.Model):
+    """Notifications for users"""
+    NOTIFICATION_TYPES = [
+        ('message', 'Nouveau message'),
+        ('email', 'Nouvel email'),
+        ('contact', 'Contact mis à jour'),
+        ('event', 'Nouvel événement'),
+        ('system', 'Notification système'),
+    ]
+    
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
-    type = models.CharField(max_length=50, default="")
-    messageId = models.CharField(max_length=12, default="")
-    transactionId = models.CharField(max_length=12, default="")
+    user = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='notifications')
+    type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, default='system')
+    title = models.CharField(max_length=200, default="")
+    message = models.TextField(default="")
+    
+    # Related objects (optional)
+    message_id = models.CharField(max_length=12, default="", blank=True)  # For chat messages
+    email_id = models.CharField(max_length=12, default="", blank=True)  # For emails
+    contact_id = models.CharField(max_length=12, default="", blank=True)  # For contacts
+    event_id = models.CharField(max_length=12, default="", blank=True)  # For events
+    
+    # Status
+    is_read = models.BooleanField(default=False)
+    
+    # Additional data as JSON
+    data = models.JSONField(default=dict, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'is_read']),
+        ]
+    
+    def __str__(self):
+        return f"Notification {self.id} - {self.type} for {self.user.username}"
 
 class Status(models.Model):
     """Statuses for leads and contacts"""
@@ -352,3 +385,41 @@ class EmailSignature(models.Model):
     
     def __str__(self):
         return f"Signature {self.name} - {self.user.username}"
+
+class ChatRoom(models.Model):
+    """Chat rooms for conversations between users"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    participants = models.ManyToManyField(DjangoUser, related_name='chat_rooms')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['-updated_at']),
+        ]
+    
+    def __str__(self):
+        participant_names = ', '.join([u.username for u in self.participants.all()[:3]])
+        return f"Chat {self.id} - {participant_names}"
+
+class Message(models.Model):
+    """Messages in chat rooms"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    chat_room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='sent_messages')
+    content = models.TextField(default="")
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['chat_room', 'created_at']),
+            models.Index(fields=['sender', 'created_at']),
+            models.Index(fields=['is_read']),
+        ]
+    
+    def __str__(self):
+        return f"Message {self.id} from {self.sender.username}"

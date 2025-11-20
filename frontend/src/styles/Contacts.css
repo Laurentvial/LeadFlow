@@ -10,6 +10,19 @@
   min-width: 0; /* Permet au flex item de se rétrécir en dessous de sa taille de contenu */
 }
 
+.contacts-container-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: white;
+  z-index: 1000;
+  padding: 1.5rem;
+  overflow-y: auto;
+  gap: 1rem;
+}
+
 .contacts-header {
   position: sticky;
   top: 0;
@@ -17,7 +30,12 @@
   z-index: 30;
   padding: 0;
   margin-bottom: 1rem;
-  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Ensure card-content has higher z-index than layout header (z-index: 50) */
+.contacts-container [data-slot="card-content"] {
+  position: relative;
+  z-index: 51;
 }
 
 /* Header title/subtitle styles moved to PageHeader.css */
@@ -26,7 +44,7 @@
   position: sticky;
   top: 80px; /* Ajuster selon la hauteur du header */
   background-color: white;
-  z-index: 20;
+  z-index: 40;
   margin-bottom: 1rem;
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
 }
@@ -39,7 +57,7 @@
 
 @media (min-width: 768px) {
   .contacts-filters {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: 2fr 1fr 1fr 1fr;
   }
 }
 
@@ -512,4 +530,65 @@
 .column-drag-item.drag-over {
   border-color: #3b82f6 !important;
   background-color: #eff6ff !important;
+}
+
+/* Fullscreen styles */
+.contacts-fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: white;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.contacts-fullscreen-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: white;
+  flex-shrink: 0;
+}
+
+.contacts-fullscreen-content {
+  flex: 1;
+  overflow: hidden;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.contacts-table-wrapper-fullscreen {
+  height: calc(100vh - 400px) !important;
+  min-height: 400px !important;
+  flex: 1;
+  overflow: auto;
+}
+
+/* When in fullscreen, adjust header and filters */
+.contacts-container-fullscreen .contacts-header {
+  position: relative;
+  top: 0;
+  z-index: auto;
+}
+
+.contacts-container-fullscreen .contacts-header .page-title-section {
+  display: none;
+}
+
+.contacts-container-fullscreen .contacts-filters-card {
+  position: relative !important;
+  top: 0 !important;
+  z-index: 1 !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  background-color: white !important;
+  margin-bottom: 1rem !important;
 }

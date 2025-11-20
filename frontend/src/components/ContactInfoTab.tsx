@@ -65,6 +65,17 @@ export function ContactInfoTab({
       .map((p: any) => String(p.statusId).trim());
     return new Set(viewPerms);
   }, [currentUser?.permissions]);
+
+  // Helper function to check if current user is the teleoperator for a contact
+  const isTeleoperatorForContact = React.useCallback((contactData: any): boolean => {
+    if (!currentUser?.id || !contactData?.teleoperatorId) {
+      return false;
+    }
+    // Normalize both IDs to strings for comparison
+    const userId = String(currentUser.id).trim();
+    const teleoperatorId = String(contactData.teleoperatorId).trim();
+    return userId === teleoperatorId;
+  }, [currentUser?.id]);
   
   // Helper function to check if user can edit this contact based on its status
   // Logic:
@@ -107,6 +118,46 @@ export function ContactInfoTab({
   // Statuses and sources
   const [statuses, setStatuses] = useState<any[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+
+  // Helper function to get status display text for a contact
+  // If user is teleoperator but doesn't have status permission, show "Indisponible - [TYPE]"
+  // Otherwise show the actual status name
+  const getStatusDisplayText = React.useCallback((contactData: any): string => {
+    const isTeleoperator = isTeleoperatorForContact(contactData);
+    const contactStatusId = contactData?.statusId;
+    
+    // Normalize statusId
+    let normalizedStatusId: string | null = null;
+    if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
+      const str = String(contactStatusId).trim();
+      if (str !== '') {
+        normalizedStatusId = str;
+      }
+    }
+    
+    // If user is teleoperator and contact has a status
+    if (isTeleoperator && normalizedStatusId) {
+      // Check if user has permission to view this status
+      const hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
+      
+      if (!hasStatusPermission) {
+        // User doesn't have permission, show masked message
+        const status = statuses.find(s => s.id === normalizedStatusId);
+        const statusType = status?.type;
+        if (statusType === 'client') {
+          return 'Indisponible - CLIENT';
+        } else if (statusType === 'lead') {
+          return 'Indisponible - LEAD';
+        } else {
+          // Fallback if status type is unknown
+          return 'Indisponible';
+        }
+      }
+    }
+    
+    // Show actual status name
+    return contactData.statusName || '-';
+  }, [isTeleoperatorForContact, statusViewPermissions, statuses]);
   
   // Editing states
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -641,7 +692,9 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Sélectionner un statut" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Aucun</SelectItem>
+                      <SelectItem value="none">
+                        <span className="inline-block px-2 py-1 rounded text-sm">Aucun</span>
+                      </SelectItem>
                       {statuses
                         .filter((status) => {
                           if (!status.id || status.id.trim() === '') return false;
@@ -651,7 +704,15 @@ export function ContactInfoTab({
                         })
                         .map((status) => (
                           <SelectItem key={status.id} value={status.id}>
-                            {status.name}
+                            <span 
+                              className="inline-block px-2 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: status.color || '#e5e7eb',
+                                color: status.color ? '#000000' : '#374151'
+                              }}
+                            >
+                              {status.name}
+                            </span>
                           </SelectItem>
                         ))}
                     </SelectContent>
@@ -662,17 +723,41 @@ export function ContactInfoTab({
               ) : (
                 <div 
                   className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('statusId', contact.statusId)}
+                  onClick={() => {
+                    // Only allow editing if user has permission or is teleoperator with status permission
+                    const isTeleoperator = isTeleoperatorForContact(contact);
+                    const contactStatusId = contact?.statusId;
+                    let normalizedStatusId: string | null = null;
+                    if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
+                      const str = String(contactStatusId).trim();
+                      if (str !== '') {
+                        normalizedStatusId = str;
+                      }
+                    }
+                    const hasStatusPermission = normalizedStatusId ? statusViewPermissions.has(normalizedStatusId) : true;
+                    if (canEdit || (isTeleoperator && hasStatusPermission)) {
+                      startEditing('statusId', contact.statusId);
+                    }
+                  }}
                 >
-                  <span 
-                    className="contact-status-badge"
-                    style={{
-                      backgroundColor: contact.statusColor || '#e5e7eb',
-                      color: contact.statusColor ? '#000000' : '#374151'
-                    }}
-                  >
-                    {contact.statusName || '-'}
-                  </span>
+                  {(() => {
+                    const statusText = getStatusDisplayText(contact);
+                    const isIndisponible = statusText.startsWith('Indisponible');
+                    const statusBgColor = isIndisponible ? '#e5e7eb' : (contact.statusColor || '#e5e7eb');
+                    const statusTextColor = isIndisponible ? '#374151' : (contact.statusColor ? '#000000' : '#374151');
+                    
+                    return (
+                      <span 
+                        className="contact-status-badge"
+                        style={{
+                          backgroundColor: statusBgColor,
+                          color: statusTextColor
+                        }}
+                      >
+                        {statusText}
+                      </span>
+                    );
+                  })()}
                 </div>
               )}
             </div>

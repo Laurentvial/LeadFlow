@@ -80,10 +80,15 @@ export function getAccessibleRoute(currentUser: any): string {
     let hasPermission = false;
     
     // Special case for settings: check if user has permission for either permissions or statuses
+    // For statuses, check for general statuses management permission only (statusId must be null)
     if (route.component === 'settings') {
-      hasPermission = permissions.some(
-        (perm: any) => (perm.component === 'permissions' || perm.component === 'statuses') && perm.action === 'view'
+      const hasPermissionsPermission = permissions.some(
+        (perm: any) => perm.component === 'permissions' && perm.action === 'view' && !perm.fieldName
       );
+      const hasStatusesPermission = permissions.some(
+        (perm: any) => perm.component === 'statuses' && perm.action === 'view' && !perm.fieldName && !perm.statusId
+      );
+      hasPermission = hasPermissionsPermission || hasStatusesPermission;
     } else {
       // Check if user has view permission for this component
       hasPermission = permissions.some(

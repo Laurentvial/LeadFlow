@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { 
   TrendingUp, 
@@ -139,18 +140,16 @@ export function Dashboard({ user: userProp }: DashboardProps) {
           <div className="dashboard-filters-grid">
             <div className="dashboard-filter-field">
               <Label>Du</Label>
-              <Input 
-                type="date" 
+              <DateInput 
                 value={dateFrom} 
-                onChange={(e) => setDateFrom(e.target.value)} 
+                onChange={(value) => setDateFrom(value)} 
               />
             </div>
             <div className="dashboard-filter-field">
               <Label>Au</Label>
-              <Input 
-                type="date" 
+              <DateInput 
                 value={dateTo} 
-                onChange={(e) => setDateTo(e.target.value)} 
+                onChange={(value) => setDateTo(value)} 
               />
             </div>
             <div className="dashboard-filter-field">

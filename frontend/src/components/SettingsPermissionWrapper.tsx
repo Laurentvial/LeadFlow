@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUser } from '../contexts/UserContext';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
 import { getAccessibleRoute } from '../utils/getAccessibleRoute';
 
 interface SettingsPermissionWrapperProps {
@@ -15,7 +15,7 @@ interface SettingsPermissionWrapperProps {
 export function SettingsPermissionWrapper({ children }: SettingsPermissionWrapperProps) {
   const { currentUser, loading } = useUser();
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
-  const hasStatusesPermission = useHasPermission('statuses', 'view');
+  const hasStatusesPermission = useHasStatusesPermission();
   
   // User has access if they can view either permissions or statuses
   const hasAccess = hasPermissionsPermission || hasStatusesPermission;

@@ -6,11 +6,13 @@ import NotFound from './components/NotFound';
 import UsersAndTeams from './components/UsersTeams';
 import Planning from './components/PlanningCalendar';
 import Contacts from './components/Contacts';
+import Fosse from './components/Fosse';
 import AddContact from './components/AddContact';
 import { CsvImport } from './components/CsvImport';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
+import Chat from './components/Chat';
 import { UserProvider } from './contexts/UserContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import PermissionProtectedRoute from './components/PermissionProtectedRoute';
@@ -87,6 +89,13 @@ function App() {
                             </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
+                    <Route path="/fosse" element={
+                        <ProtectedRoute>
+                            <Layout>
+                                <Fosse onSelectContact={() => {}} />
+                            </Layout>
+                        </ProtectedRoute>
+                    } />
                     <Route path="/contacts/add" element={
                         <ProtectedRoute>
                             <PermissionProtectedRoute component="contacts" action="create">
@@ -125,6 +134,13 @@ function App() {
                         <ProtectedRoute>
                             <Layout>
                                 <Mails />
+                            </Layout>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/chat" element={
+                        <ProtectedRoute>
+                            <Layout>
+                                <Chat />
                             </Layout>
                         </ProtectedRoute>
                     } />

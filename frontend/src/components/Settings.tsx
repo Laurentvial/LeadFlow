@@ -4,11 +4,11 @@ import '../styles/UsersTeam.css';
 import '../styles/PageHeader.css';
 import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
 
 export function Settings() {
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
-  const hasStatusesPermission = useHasPermission('statuses', 'view');
+  const hasStatusesPermission = useHasStatusesPermission();
   
   // Determine default tab based on available permissions
   const getDefaultTab = () => {

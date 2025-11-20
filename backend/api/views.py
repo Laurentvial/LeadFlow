@@ -10,12 +10,12 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature
+from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
-    SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer
+    SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -44,6 +44,8 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.header import decode_header
 import re
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
 
 def get_client_ip(request):
@@ -509,27 +511,96 @@ class ContactView(generics.ListAPIView):
                     queryset = queryset.filter(status__type=status_type)
                 
                 # Apply column filters
-                for key, value in request.query_params.items():
-                    if key.startswith('filter_') and value:
-                        column_id = key.replace('filter_', '')
-                        # Map frontend column IDs to model fields
+                # First, collect date range filters separately
+                date_range_filters = {}
+                # Collect multi-select filters (same key can appear multiple times)
+                multi_select_filters = {}
+                
+                # Process all filter parameters
+                for key in request.query_params.keys():
+                    if key.startswith('filter_'):
+                        if key.endswith('_from') or key.endswith('_to'):
+                            # This is a date range filter
+                            base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
+                            value = request.query_params.get(key)
+                            if value:
+                                if base_column not in date_range_filters:
+                                    date_range_filters[base_column] = {}
+                                if key.endswith('_from'):
+                                    date_range_filters[base_column]['from'] = value
+                                elif key.endswith('_to'):
+                                    date_range_filters[base_column]['to'] = value
+                        else:
+                            # Regular filter - check if it's a multi-select column
+                            column_id = key.replace('filter_', '')
+                            # Multi-select columns: status, creator, teleoperator, confirmateur, source
+                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source']:
+                                # Use getlist to get all values for this key
+                                values = request.query_params.getlist(key)
+                                if values:
+                                    multi_select_filters[column_id] = values
+                            else:
+                                # Single value filter
+                                value = request.query_params.get(key)
+                                if value:
+                                    if column_id == 'email':
+                                        queryset = queryset.filter(email__icontains=value)
+                                    elif column_id == 'phone':
+                                        queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
+                                    elif column_id == 'city':
+                                        queryset = queryset.filter(city__icontains=value)
+                                    # Add more column filters as needed
+                
+                # Apply multi-select filters
+                for column_id, values in multi_select_filters.items():
+                    if values:
                         if column_id == 'status':
-                            queryset = queryset.filter(status_id=value)
+                            queryset = queryset.filter(status_id__in=values)
                         elif column_id == 'source':
-                            queryset = queryset.filter(source_id=value)
+                            queryset = queryset.filter(source_id__in=values)
                         elif column_id == 'teleoperator':
-                            queryset = queryset.filter(teleoperator_id=value)
+                            queryset = queryset.filter(teleoperator_id__in=values)
                         elif column_id == 'confirmateur':
-                            queryset = queryset.filter(confirmateur_id=value)
+                            queryset = queryset.filter(confirmateur_id__in=values)
                         elif column_id == 'creator':
-                            queryset = queryset.filter(creator_id=value)
-                        elif column_id == 'email':
-                            queryset = queryset.filter(email__icontains=value)
-                        elif column_id == 'phone':
-                            queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
-                        elif column_id == 'city':
-                            queryset = queryset.filter(city__icontains=value)
-                        # Add more column filters as needed
+                            queryset = queryset.filter(creator_id__in=values)
+                
+                # Apply date range filters
+                for column_id, date_range in date_range_filters.items():
+                    try:
+                        if column_id == 'createdAt':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                # Filter contacts created on or after this date (start of day)
+                                queryset = queryset.filter(created_at__date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                # Filter contacts created on or before this date (end of day)
+                                # Use __lt with next day to ensure we only include contacts up to end of selected day
+                                date_to_next = date_to + timedelta(days=1)
+                                queryset = queryset.filter(created_at__date__lt=date_to_next)
+                        elif column_id == 'updatedAt':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(updated_at__date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                # Use __lt with next day to ensure we only include contacts up to end of selected day
+                                date_to_next = date_to + timedelta(days=1)
+                                queryset = queryset.filter(updated_at__date__lt=date_to_next)
+                        elif column_id == 'birthDate':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(birth_date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(birth_date__lte=date_to)
+                    except (ValueError, TypeError) as e:
+                        # Invalid date format, skip this filter
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Invalid date format in filter {column_id}: {e}")
+                        pass
                 
                 # Get total count after applying filters
                 total_count = queryset.count()
@@ -588,6 +659,208 @@ class ContactView(generics.ListAPIView):
                 'total': total_count,
                 'limit': 1000
             })
+
+
+class FosseContactView(generics.ListAPIView):
+    """
+    View for "Fosse" page - shows all contacts that are not assigned to anyone
+    (teleoperator is null AND confirmateur is null).
+    Bypasses status permission filtering - anyone with access can see all contacts regardless of status.
+    """
+    queryset = Contact.objects.all()
+    serializer_class = ContactSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Filter contacts to only show unassigned contacts (teleoperator=null AND confirmateur=null).
+        Bypasses all permission-based filtering - shows all contacts regardless of status.
+        """
+        # Start with all contacts
+        queryset = Contact.objects.all()
+        
+        # Filter for unassigned contacts only (teleoperator is null AND confirmateur is null)
+        queryset = queryset.filter(
+            teleoperator__isnull=True,
+            confirmateur__isnull=True
+        )
+        
+        # Optimize queries with select_related for ForeignKey relationships
+        queryset = queryset.select_related(
+            'status',
+            'source',
+            'teleoperator',
+            'confirmateur',
+            'creator'
+        )
+        
+        # Prefetch related user_details and team_memberships for teleoperator
+        queryset = queryset.prefetch_related(
+            'teleoperator__user_details__team_memberships__team'
+        )
+        
+        # Order by created_at descending (most recent first)
+        queryset = queryset.order_by('-created_at')
+        
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        # Check if limit is requested (for performance - limits number of contacts returned)
+        limit = request.query_params.get('limit')
+        if limit:
+            try:
+                limit = int(limit)
+                # Ensure limit is reasonable (max 10000)
+                if limit > 10000:
+                    limit = 10000
+                if limit < 1:
+                    limit = 1
+                # Get base queryset
+                queryset = self.get_queryset()
+                
+                # Apply search filter
+                search = request.query_params.get('search', '').strip()
+                if search:
+                    queryset = queryset.filter(
+                        models.Q(fname__icontains=search) |
+                        models.Q(lname__icontains=search) |
+                        models.Q(email__icontains=search)
+                    )
+                
+                # Apply team filter (filter by teleoperator's team)
+                # Note: For fosse, this won't apply much since contacts are unassigned,
+                # but we keep it for consistency with the regular contacts view
+                team_id = request.query_params.get('team')
+                if team_id and team_id != 'all':
+                    # Get team members
+                    team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
+                    queryset = queryset.filter(
+                        models.Q(teleoperator__id__in=team_user_ids) |
+                        models.Q(confirmateur__id__in=team_user_ids) |
+                        models.Q(creator__id__in=team_user_ids)
+                    )
+                
+                # Apply status type filter
+                status_type = request.query_params.get('status_type')
+                if status_type and status_type != 'all':
+                    queryset = queryset.filter(status__type=status_type)
+                
+                # Apply column filters
+                # First, collect date range filters separately
+                date_range_filters = {}
+                # Collect multi-select filters (same key can appear multiple times)
+                multi_select_filters = {}
+                
+                # Process all filter parameters
+                for key in request.query_params.keys():
+                    if key.startswith('filter_'):
+                        if key.endswith('_from') or key.endswith('_to'):
+                            # This is a date range filter
+                            base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
+                            value = request.query_params.get(key)
+                            if value:
+                                if base_column not in date_range_filters:
+                                    date_range_filters[base_column] = {}
+                                if key.endswith('_from'):
+                                    date_range_filters[base_column]['from'] = value
+                                elif key.endswith('_to'):
+                                    date_range_filters[base_column]['to'] = value
+                        else:
+                            # Regular filter - check if it's a multi-select column
+                            column_id = key.replace('filter_', '')
+                            # Multi-select columns: status, creator, teleoperator, confirmateur, source
+                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source']:
+                                # Use getlist to get all values for this key
+                                values = request.query_params.getlist(key)
+                                if values:
+                                    multi_select_filters[column_id] = values
+                            else:
+                                # Single value filter
+                                value = request.query_params.get(key)
+                                if value:
+                                    if column_id == 'email':
+                                        queryset = queryset.filter(email__icontains=value)
+                                    elif column_id == 'phone':
+                                        queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
+                                    elif column_id == 'city':
+                                        queryset = queryset.filter(city__icontains=value)
+                                    # Add more column filters as needed
+                
+                # Apply multi-select filters
+                for column_id, values in multi_select_filters.items():
+                    if values:
+                        if column_id == 'status':
+                            queryset = queryset.filter(status_id__in=values)
+                        elif column_id == 'source':
+                            queryset = queryset.filter(source_id__in=values)
+                        elif column_id == 'teleoperator':
+                            queryset = queryset.filter(teleoperator_id__in=values)
+                        elif column_id == 'confirmateur':
+                            queryset = queryset.filter(confirmateur_id__in=values)
+                        elif column_id == 'creator':
+                            queryset = queryset.filter(creator_id__in=values)
+                
+                # Apply date range filters
+                for column_id, date_range in date_range_filters.items():
+                    try:
+                        if column_id == 'createdAt':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(created_at__date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                date_to_next = date_to + timedelta(days=1)
+                                queryset = queryset.filter(created_at__date__lt=date_to_next)
+                        elif column_id == 'updatedAt':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(updated_at__date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                date_to_next = date_to + timedelta(days=1)
+                                queryset = queryset.filter(updated_at__date__lt=date_to_next)
+                        elif column_id == 'birthDate':
+                            if 'from' in date_range and date_range['from']:
+                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(birth_date__gte=date_from)
+                            if 'to' in date_range and date_range['to']:
+                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                                queryset = queryset.filter(birth_date__lte=date_to)
+                    except (ValueError, TypeError) as e:
+                        # Invalid date format, skip this filter
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Invalid date format in filter {column_id}: {e}")
+                        pass
+                
+                # Get total count after applying filters
+                total_count = queryset.count()
+                
+                # Apply limit to queryset before serialization
+                queryset = queryset[:limit]
+                serializer = self.get_serializer(queryset, many=True, context={'request': request})
+                return Response({
+                    'contacts': serializer.data,
+                    'total': total_count,
+                    'limit': limit
+                })
+            except (ValueError, TypeError):
+                # Invalid limit, fall through to default behavior
+                pass
+            except Exception as e:
+                # Log the error and return a proper error response
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error in FosseContactView.list with limit: {error_details}")
+                return Response({'error': str(e), 'details': error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Default behavior: return all contacts (no limit)
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response({
+            'contacts': serializer.data,
+            'total': queryset.count()
+        })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -1309,6 +1582,7 @@ def get_current_user(request):
         # Still include first_name and last_name from Django Auth
         return Response({
             'id': str(django_user.id),
+            'djangoUserId': django_user.id,  # Add djangoUserId for consistency
             'username': django_user.username,
             'email': django_user.email or '',
             'firstName': django_user.first_name or '',
@@ -2506,9 +2780,11 @@ def get_stats(request):
         if date_to:
             try:
                 date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
-                contacts_qs = contacts_qs.filter(created_at__date__lte=date_to_obj)
-                notes_qs = notes_qs.filter(created_at__date__lte=date_to_obj)
-                events_qs = events_qs.filter(created_at__date__lte=date_to_obj)
+                # Use __lt with next day to ensure we only include items up to end of selected day
+                date_to_next = date_to_obj + timedelta(days=1)
+                contacts_qs = contacts_qs.filter(created_at__date__lt=date_to_next)
+                notes_qs = notes_qs.filter(created_at__date__lt=date_to_next)
+                events_qs = events_qs.filter(created_at__date__lt=date_to_next)
             except ValueError:
                 pass
         
@@ -3452,4 +3728,258 @@ def email_signature_logo_proxy(request, file_path):
         error_details = traceback.format_exc()
         print(f"Error proxying signature logo: {error_details}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+# Chat endpoints
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def chat_rooms(request):
+    """List all chat rooms for the current user or create a new one"""
+    if request.method == 'GET':
+        # Get all chat rooms where the user is a participant
+        chat_rooms = ChatRoom.objects.filter(participants=request.user).distinct()
+        serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    elif request.method == 'POST':
+        # Create a new chat room
+        participant_ids = request.data.get('participants', [])
+        
+        # Ensure current user is included
+        if request.user.id not in participant_ids:
+            participant_ids.append(request.user.id)
+        
+        # Check if a chat room already exists with these exact participants
+        existing_rooms = ChatRoom.objects.filter(participants__in=[request.user.id]).distinct()
+        for room in existing_rooms:
+            room_participant_ids = set(room.participants.values_list('id', flat=True))
+            if room_participant_ids == set(participant_ids):
+                # Room already exists, return it
+                serializer = ChatRoomSerializer(room, context={'request': request})
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # Create new chat room
+        chat_room_id = uuid.uuid4().hex[:12]
+        while ChatRoom.objects.filter(id=chat_room_id).exists():
+            chat_room_id = uuid.uuid4().hex[:12]
+        
+        chat_room = ChatRoom.objects.create(id=chat_room_id)
+        
+        # Add participants
+        for participant_id in participant_ids:
+            try:
+                participant = DjangoUser.objects.get(id=participant_id)
+                chat_room.participants.add(participant)
+            except DjangoUser.DoesNotExist:
+                continue
+        
+        serializer = ChatRoomSerializer(chat_room, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def chat_room_detail(request, chat_room_id):
+    """Get details of a specific chat room"""
+    try:
+        chat_room = ChatRoom.objects.get(id=chat_room_id)
+        
+        # Check if user is a participant
+        if request.user not in chat_room.participants.all():
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        serializer = ChatRoomSerializer(chat_room, context={'request': request})
+        return Response(serializer.data)
+    except ChatRoom.DoesNotExist:
+        return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def chat_messages(request, chat_room_id):
+    """Get messages for a chat room or send a new message"""
+    try:
+        chat_room = ChatRoom.objects.get(id=chat_room_id)
+        
+        # Check if user is a participant
+        if request.user not in chat_room.participants.all():
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        if request.method == 'GET':
+            # Get all messages for this chat room
+            messages = Message.objects.filter(chat_room=chat_room).order_by('created_at')
+            serializer = MessageSerializer(messages, many=True)
+            return Response(serializer.data)
+        
+        elif request.method == 'POST':
+            # Send a new message
+            content = request.data.get('content', '').strip()
+            if not content:
+                return Response({'error': 'Message content is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            message_id = uuid.uuid4().hex[:12]
+            while Message.objects.filter(id=message_id).exists():
+                message_id = uuid.uuid4().hex[:12]
+            
+            message = Message.objects.create(
+                id=message_id,
+                chat_room=chat_room,
+                sender=request.user,
+                content=content
+            )
+            
+            # Update chat room's updated_at timestamp
+            chat_room.save()
+            
+            # Send message via WebSocket to chat room
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                message_data = {
+                    'id': message.id,
+                    'chatRoomId': message.chat_room.id,
+                    'senderId': message.sender.id,
+                    'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                    'content': message.content,
+                    'isRead': message.is_read,
+                    'createdAt': message.created_at.isoformat(),
+                }
+                
+                async_to_sync(channel_layer.group_send)(
+                    f'chat_{chat_room.id}',
+                    {
+                        'type': 'chat_message',
+                        'message': message_data,
+                        'sender_id': request.user.id
+                    }
+                )
+                
+                # Create notifications for other participants
+                participants = chat_room.participants.exclude(id=request.user.id)
+                for participant in participants:
+                    notification_id = uuid.uuid4().hex[:12]
+                    while Notification.objects.filter(id=notification_id).exists():
+                        notification_id = uuid.uuid4().hex[:12]
+                    
+                    notification = Notification.objects.create(
+                        id=notification_id,
+                        user=participant,
+                        type='message',
+                        title='Nouveau message',
+                        message=f"{message.sender.first_name or message.sender.username}: {message.content[:50]}",
+                        message_id=message.id,
+                        data={
+                            'chat_room_id': chat_room.id,
+                            'sender_id': message.sender.id,
+                            'sender_name': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                        }
+                    )
+                    
+                    # Send notification via WebSocket
+                    async_to_sync(channel_layer.group_send)(
+                        f'notifications_{participant.id}',
+                        {
+                            'type': 'send_notification',
+                            'notification': {
+                                'id': notification.id,
+                                'type': notification.type,
+                                'title': notification.title,
+                                'message': notification.message,
+                                'message_id': notification.message_id,
+                                'data': notification.data,
+                                'is_read': notification.is_read,
+                                'created_at': notification.created_at.isoformat(),
+                            },
+                            'unread_count': Notification.objects.filter(user=participant, is_read=False).count()
+                        }
+                    )
+            
+            serializer = MessageSerializer(message)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+    except ChatRoom.DoesNotExist:
+        return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_messages_read(request, chat_room_id):
+    """Mark all messages in a chat room as read for the current user"""
+    try:
+        chat_room = ChatRoom.objects.get(id=chat_room_id)
+        
+        # Check if user is a participant
+        if request.user not in chat_room.participants.all():
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Mark all unread messages (except those sent by the user) as read
+        Message.objects.filter(
+            chat_room=chat_room,
+            is_read=False
+        ).exclude(sender=request.user).update(is_read=True)
+        
+        return Response({'success': True})
+    except ChatRoom.DoesNotExist:
+        return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def chat_users(request):
+    """Get list of users that can be chatted with"""
+    users = DjangoUser.objects.filter(is_active=True).exclude(id=request.user.id)
+    user_list = []
+    for user in users:
+        user_details = getattr(user, 'user_details', None)
+        first_name = user.first_name or ''
+        last_name = user.last_name or ''
+        name = f"{first_name} {last_name}".strip() if (first_name or last_name) else user.username
+        user_list.append({
+            'id': user.id,
+            'username': user.username,
+            'name': name,
+            'email': user.email or ''
+        })
+    return Response(user_list)
+
+# Notification views
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notification_list(request):
+    """Get all notifications for the current user"""
+    notifications = Notification.objects.filter(user=request.user).order_by('-created_at')
+    
+    # Pagination
+    limit = int(request.query_params.get('limit', 50))
+    offset = int(request.query_params.get('offset', 0))
+    
+    notifications = notifications[offset:offset + limit]
+    
+    serializer = NotificationSerializer(notifications, many=True)
+    return Response({
+        'notifications': serializer.data,
+        'total': Notification.objects.filter(user=request.user).count()
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notification_unread_count(request):
+    """Get unread notifications count for the current user"""
+    count = Notification.objects.filter(user=request.user, is_read=False).count()
+    return Response({'unread_count': count})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def notification_mark_read(request, notification_id):
+    """Mark a notification as read"""
+    try:
+        notification = Notification.objects.get(id=notification_id, user=request.user)
+        notification.is_read = True
+        notification.save()
+        
+        serializer = NotificationSerializer(notification)
+        return Response(serializer.data)
+    except Notification.DoesNotExist:
+        return Response({'error': 'Notification not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def notification_mark_all_read(request):
+    """Mark all notifications as read for the current user"""
+    Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+    return Response({'success': True})
 

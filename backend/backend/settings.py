@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'api.apps.ApiConfig',
     'rest_framework',
     'corsheaders',
+    'channels',
 ]
 
 MIDDLEWARE = [
@@ -85,6 +86,33 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
+
+# Channels configuration for WebSockets
+ASGI_APPLICATION = 'backend.asgi.application'
+
+# Channel layers configuration
+# For production, use Redis. For development, use in-memory channel layer
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [(
+                os.getenv('REDIS_HOST', 'localhost'),
+                int(os.getenv('REDIS_PORT', 6379))
+            )],
+            "capacity": 1500,  # default 100
+            "expiry": 10,  # default 60
+        },
+    },
+}
+
+# Fallback to in-memory channel layer if Redis is not available (for local dev)
+if os.getenv('USE_REDIS', 'False') != 'True':
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 
 # Database

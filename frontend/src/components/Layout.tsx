@@ -22,14 +22,11 @@ export function Layout({ children }: LayoutProps) {
     if (path === '/dashboard') return 'dashboard';
     if (path === '/users') return 'users-teams';
     if (path === '/contacts') return 'contacts';
+    if (path === '/fosse') return 'fosse';
     if (path === '/planning') return 'planning';
     if (path === '/mails') return 'mails';
+    if (path === '/chat') return 'chat';
     if (path === '/settings') return 'settings';
-    if (path === '/transactions') return 'transactions';
-    if (path === '/placements') return 'placements';
-    if (path === '/manage/ribs') return 'manage-ribs';
-    if (path === '/manage/assets') return 'manage-assets';
-    if (path === '/manage/useful-links') return 'manage-links';
     return 'dashboard';
   };
 

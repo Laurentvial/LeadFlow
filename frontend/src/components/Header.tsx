@@ -10,6 +10,7 @@ import {
 } from './ui/dropdown-menu';
 import { Bell, User, LogOut } from 'lucide-react';
 import React from 'react';
+import Notifications from './Notifications';
 import '../styles/Header.css';
 
 interface HeaderProps {
@@ -54,21 +55,7 @@ export function Header({ user }: HeaderProps) {
           
           <div className="header-actions">
             {/* Notifications */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button className="header-button header-button-notifications">
-                  <Bell className="header-icon" />
-                  {/* Notifications badge logic could go here */}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="header-dropdown" align="end">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <div className="header-notification-empty">
-                  Aucune notification
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Notifications />
 
             {/* User Menu */}
             <DropdownMenu>
