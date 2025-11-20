@@ -1,18 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://leadflow-backend-eu-8d20fb5efc7b.herokuapp.com/api/:path*"
-    },
-    {
-      "source": "/health/:path*",
-      "destination": "https://leadflow-backend-eu-8d20fb5efc7b.herokuapp.com/health/:path*"
-    },
-    {
-      "source": "/cors-test/:path*",
-      "destination": "https://leadflow-backend-eu-8d20fb5efc7b.herokuapp.com/cors-test/:path*"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

@@ -8,17 +8,11 @@ const getEnvVar = (key: string): string | undefined => {
   return import.meta.env[key];
 };
 
-// Use relative URL in production (Vercel proxy) or environment variable for direct backend access
-// In production on Vercel, use relative URLs to leverage the proxy (bypasses CORS)
-// For local development or direct backend access, use VITE_URL environment variable
-const viteUrl = getEnvVar('VITE_URL');
-const isVercelProduction = typeof window !== 'undefined' && 
-  window.location.hostname.includes('vercel.app');
-const apiUrl = viteUrl 
-  ? viteUrl // Use explicit VITE_URL if set (for direct backend access or local dev)
-  : (isVercelProduction 
-    ? '' // Use relative URL (Vercel proxy) in production on Vercel
-    : 'http://127.0.0.1:8000'); // Default to localhost for local development
+// Direct API URL - always use direct backend URL (no proxy)
+// Set VITE_URL environment variable in Vercel to your Heroku backend URL
+// For production: VITE_URL=https://leadflow-backend-eu-8d20fb5efc7b.herokuapp.com
+// For local development: VITE_URL=http://127.0.0.1:8000 or leave unset for default
+const apiUrl = getEnvVar('VITE_URL') || 'http://127.0.0.1:8000';
 
 // Request deduplication: Track ongoing requests to prevent duplicate calls
 const pendingRequests = new Map<string, Promise<any>>();
