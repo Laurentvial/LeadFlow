@@ -199,17 +199,17 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['fullName'] = f"{instance.fname} {instance.lname}".strip()
         ret['createdAt'] = instance.created_at
         ret['source'] = instance.source.name if instance.source else ''
-        ret['sourceId'] = instance.source.id if instance.source else None
-        ret['statusId'] = instance.status.id if instance.status else None
+        ret['sourceId'] = instance.source_id if hasattr(instance, 'source_id') else (instance.source.id if instance.source else None)
+        ret['statusId'] = instance.status_id if hasattr(instance, 'status_id') else (instance.status.id if instance.status else None)
         ret['statusName'] = instance.status.name if instance.status else ''
         ret['statusColor'] = instance.status.color if instance.status else ''
         ret['addressComplement'] = instance.address_complement or ''
         ret['campaign'] = instance.campaign or ''
-        ret['teleoperatorId'] = instance.teleoperator.id if instance.teleoperator else None
+        ret['teleoperatorId'] = instance.teleoperator_id if hasattr(instance, 'teleoperator_id') else (instance.teleoperator.id if instance.teleoperator else None)
         ret['teleoperatorName'] = f"{instance.teleoperator.first_name} {instance.teleoperator.last_name}".strip() if instance.teleoperator else ''
-        ret['confirmateurId'] = instance.confirmateur.id if instance.confirmateur else None
+        ret['confirmateurId'] = instance.confirmateur_id if hasattr(instance, 'confirmateur_id') else (instance.confirmateur.id if instance.confirmateur else None)
         ret['confirmateurName'] = f"{instance.confirmateur.first_name} {instance.confirmateur.last_name}".strip() if instance.confirmateur else ''
-        ret['creatorId'] = instance.creator.id if instance.creator else None
+        ret['creatorId'] = instance.creator_id if hasattr(instance, 'creator_id') else (instance.creator.id if instance.creator else None)
         ret['creatorName'] = f"{instance.creator.first_name} {instance.creator.last_name}".strip() if instance.creator else ''
         
         # Manager is the teleoperator (the one selected in teleoperateur select during creation)
@@ -663,7 +663,7 @@ class PermissionSerializer(serializers.ModelSerializer):
         ret = super().to_representation(instance)
         ret['fieldName'] = instance.field_name if instance.field_name else None
         ret['action'] = instance.action
-        ret['statusId'] = instance.status.id if instance.status else None
+        ret['statusId'] = instance.status_id if hasattr(instance, 'status_id') else (instance.status.id if instance.status else None)
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
