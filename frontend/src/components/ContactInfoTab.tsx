@@ -145,7 +145,7 @@ export function ContactInfoTab({
         const status = statuses.find(s => s.id === normalizedStatusId);
         const statusType = status?.type;
         if (statusType === 'client') {
-          return 'Indisponible - CLIENT';
+          return 'CLIENT EN COURS';
         } else if (statusType === 'lead') {
           return 'Indisponible - LEAD';
         } else {
@@ -226,22 +226,38 @@ export function ContactInfoTab({
   async function handleFieldUpdate(fieldName: string, value: any) {
     if (!canEdit || !contactId) return;
     
-    // Check if user has permission to edit this contact with the CURRENT status
-    if (!canEditContact(contact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
-    
-    // If updating status, also check permission for the NEW status
+    // If updating status, check permissions differently
     if (fieldName === 'statusId') {
       const newStatusId = value === '' || value === 'none' ? null : value;
-      if (newStatusId && newStatusId !== contact.statusId) {
-        // Create a temporary contact object with the new status to check permissions
-        const tempContact = { ...contact, statusId: newStatusId };
-        if (!canEditContact(tempContact)) {
-          toast.error('Vous n\'avez pas la permission d\'éditer les contacts avec ce statut');
+      
+      // If status is being changed, check permissions
+      if (newStatusId !== contact.statusId) {
+        // Check if user has EDIT permission for CURRENT status (to allow changing it)
+        if (contact.statusId && !canEditContact(contact)) {
+          toast.error('Vous n\'avez pas la permission de modifier le statut de ce contact');
           return;
         }
+        
+        // Check if user has VIEW permission for NEW status (to allow assigning it)
+        if (newStatusId) {
+          const normalizedNewStatusId = String(newStatusId).trim();
+          if (!statusViewPermissions.has(normalizedNewStatusId)) {
+            toast.error('Vous n\'avez pas la permission d\'assigner ce statut');
+            return;
+          }
+        }
+      } else {
+        // Status not changing, just check if user can edit this contact
+        if (!canEditContact(contact)) {
+          toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+          return;
+        }
+      }
+    } else {
+      // For other fields, check if user has permission to edit this contact with CURRENT status
+      if (!canEditContact(contact)) {
+        toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+        return;
       }
     }
     
@@ -734,17 +750,18 @@ export function ContactInfoTab({
                         normalizedStatusId = str;
                       }
                     }
-                    const hasStatusPermission = normalizedStatusId ? statusViewPermissions.has(normalizedStatusId) : true;
-                    if (canEdit || (isTeleoperator && hasStatusPermission)) {
+                    // User can change status if they have EDIT permission for the CURRENT status
+                    // (They can assign any status they can VIEW, but need EDIT permission for current to change it)
+                    if (canEdit && canEditContact(contact)) {
                       startEditing('statusId', contact.statusId);
                     }
                   }}
                 >
                   {(() => {
                     const statusText = getStatusDisplayText(contact);
-                    const isIndisponible = statusText.startsWith('Indisponible');
-                    const statusBgColor = isIndisponible ? '#e5e7eb' : (contact.statusColor || '#e5e7eb');
-                    const statusTextColor = isIndisponible ? '#374151' : (contact.statusColor ? '#000000' : '#374151');
+                    const isMaskedStatus = statusText === 'CLIENT EN COURS' || statusText.startsWith('Indisponible');
+                    const statusBgColor = statusText === 'CLIENT EN COURS' ? '#22c55e' : (isMaskedStatus ? '#e5e7eb' : (contact.statusColor || '#e5e7eb'));
+                    const statusTextColor = statusText === 'CLIENT EN COURS' ? '#ffffff' : (isMaskedStatus ? '#374151' : (contact.statusColor ? '#000000' : '#374151'));
                     
                     return (
                       <span 

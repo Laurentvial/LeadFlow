@@ -33,14 +33,16 @@ export function Dashboard({ user: userProp }: DashboardProps) {
   const user = userProp || currentUser;
   const [stats, setStats] = useState<any>(null);
   const [teams, setTeams] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
+  const [selectedUser, setSelectedUser] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadData();
-  }, [selectedTeam, dateFrom, dateTo]);
+  }, [selectedTeam, selectedUser, dateFrom, dateTo]);
 
   async function loadData() {
     try {
@@ -49,15 +51,18 @@ export function Dashboard({ user: userProp }: DashboardProps) {
       if (dateFrom) params.append('dateFrom', dateFrom);
       if (dateTo) params.append('dateTo', dateTo);
       if (selectedTeam !== 'all') params.append('teamId', selectedTeam);
+      if (selectedUser !== 'all') params.append('userId', selectedUser);
       
       const url = `/api/stats/${params.toString() ? '?' + params.toString() : ''}`;
-      const [statsResponse, teamsResponse] = await Promise.all([
+      const [statsResponse, teamsResponse, usersResponse] = await Promise.all([
         apiCall(url),
-        apiCall('/api/teams/')
+        apiCall('/api/teams/'),
+        apiCall('/api/users/')
       ]);
       
       setStats(statsResponse);
       setTeams(teamsResponse?.teams || teamsResponse || []);
+      setUsers(usersResponse?.users || usersResponse || []);
     } catch (error) {
       console.error('Error loading dashboard:', error);
     } finally {
@@ -165,6 +170,27 @@ export function Dashboard({ user: userProp }: DashboardProps) {
                       {team.name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="dashboard-filter-field">
+              <Label>Utilisateur</Label>
+              <Select value={selectedUser} onValueChange={setSelectedUser}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Tous les utilisateurs" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tous les utilisateurs</SelectItem>
+                  {users.map((user) => {
+                    const userName = user.firstName && user.lastName 
+                      ? `${user.firstName} ${user.lastName}`.trim()
+                      : user.username || user.email || 'Utilisateur';
+                    return (
+                      <SelectItem key={user.id} value={user.djangoUserId || user.id}>
+                        {userName}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>

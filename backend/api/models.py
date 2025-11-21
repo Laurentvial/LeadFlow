@@ -43,10 +43,23 @@ class Contact(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+class NoteCategory(models.Model):
+    """Categories for notes"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    name = models.CharField(max_length=100, unique=True, default="")
+    color = models.CharField(max_length=20, default="#3b82f6", blank=True)  # Default blue color
+    order_index = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return self.name
+
 class Note(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     contactId = models.ForeignKey(Contact, on_delete=models.CASCADE, null=True, blank=True, related_name='contact_notes')
     userId = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='notes')
+    categ_id = models.ForeignKey('NoteCategory', on_delete=models.SET_NULL, null=True, blank=True, related_name='notes')
     text = models.TextField(default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

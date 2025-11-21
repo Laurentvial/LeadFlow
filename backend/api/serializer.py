@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -131,14 +131,36 @@ class UserSerializer(serializers.ModelSerializer):
         
         return user
 
+class NoteCategorySerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    orderIndex = serializers.IntegerField(source='order_index', required=False)
+    
+    class Meta:
+        model = NoteCategory
+        fields = ['id', 'name', 'color', 'orderIndex', 'createdAt', 'updatedAt']
+        extra_kwargs = {
+            'id': {'required': False}
+        }
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        ret['orderIndex'] = instance.order_index
+        return ret
+
 class NoteSerializer(serializers.ModelSerializer):
     contactId = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), required=False, allow_null=True)
+    categId = serializers.PrimaryKeyRelatedField(queryset=NoteCategory.objects.all(), required=False, allow_null=True, source='categ_id')
     createdBy = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    categoryName = serializers.SerializerMethodField()
+    categoryColor = serializers.SerializerMethodField()
     
     class Meta:
         model = Note
-        fields = ['id', 'contactId', 'userId', 'text', 'created_at', 'updated_at', 'createdBy', 'createdAt']
+        fields = ['id', 'contactId', 'userId', 'categId', 'text', 'created_at', 'updated_at', 'createdBy', 'createdAt', 'categoryName', 'categoryColor']
         extra_kwargs = {
             'userId': {'read_only': True},
             'id': {'required': False}
@@ -154,12 +176,23 @@ class NoteSerializer(serializers.ModelSerializer):
             return obj.userId.username or ''
         return ''
     
+    def get_categoryName(self, obj):
+        """Get the category name"""
+        return obj.categ_id.name if obj.categ_id else None
+    
+    def get_categoryColor(self, obj):
+        """Get the category color"""
+        return obj.categ_id.color if obj.categ_id else None
+    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        # Expose contactId as string ID in API response
+        # Expose contactId and categId as string IDs in API response
         ret['contactId'] = instance.contactId.id if instance.contactId else None
+        ret['categId'] = instance.categ_id.id if instance.categ_id else None
         ret['createdBy'] = self.get_createdBy(instance)
         ret['createdAt'] = instance.created_at
+        ret['categoryName'] = self.get_categoryName(instance)
+        ret['categoryColor'] = self.get_categoryColor(instance)
         return ret
     
     def to_internal_value(self, data):

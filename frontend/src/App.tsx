@@ -91,9 +91,11 @@ function App() {
                     } />
                     <Route path="/fosse" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <Fosse onSelectContact={() => {}} />
-                            </Layout>
+                            <PermissionProtectedRoute component="fosse" action="view">
+                                <Layout>
+                                    <Fosse onSelectContact={() => {}} />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/contacts/add" element={

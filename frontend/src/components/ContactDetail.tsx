@@ -32,9 +32,22 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
         eventsData
       ] = await Promise.all([
         apiCall(`/api/contacts/${contactId}/`),
-        apiCall(`/api/notes/?contactId=${contactId}`),
-        apiCall(`/api/events/?contactId=${contactId}`)
+        apiCall(`/api/notes/?contactId=${contactId}`).catch(err => {
+          console.error('Error loading notes:', err);
+          return []; // Return empty array if notes fail to load
+        }),
+        apiCall(`/api/events/?contactId=${contactId}`).catch(err => {
+          console.error('Error loading events:', err);
+          return { events: [] }; // Return empty events if fail to load
+        })
       ]);
+      
+      // Check if contactData has an error or if contact is missing
+      if (!contactData || (contactData as any).error) {
+        console.error('Error loading contact:', (contactData as any).error);
+        setContact(null);
+        return;
+      }
       
       setContact((contactData as any).contact);
       // Notes API now returns array filtered by contactId
@@ -46,6 +59,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       setAppointments(eventsArray);
     } catch (error) {
       console.error('Error loading contact data:', error);
+      setContact(null);
     } finally {
       setLoading(false);
     }

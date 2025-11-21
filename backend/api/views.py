@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404
 from django.db import models
 from rest_framework import generics, status
 from .models import Contact
-from .models import Note
+from .models import Note, NoteCategory
 from .models import UserDetails
 from .models import Team
 from .models import Event
@@ -12,7 +12,7 @@ from .models import TeamMember
 from .models import Log
 from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
 from .serializer import (
-    UserSerializer, ContactSerializer, NoteSerializer,
+    UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer
@@ -333,15 +333,100 @@ class NoteListCreateView(generics.ListCreateAPIView):
     serializer_class = NoteSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_user_accessible_category_ids(self, user):
+        """Get list of note category IDs the user has view permission for"""
+        try:
+            user_details = UserDetails.objects.select_related('role').get(django_user=user)
+            if not user_details.role:
+                # No role - return empty list (no access)
+                return []
+            
+            # Check if user has general note_categories view permission (no field_name, no status)
+            general_permission = Permission.objects.filter(
+                component='note_categories',
+                action='view',
+                field_name__isnull=True,
+                status__isnull=True
+            ).first()
+            
+            if general_permission and PermissionRole.objects.filter(role=user_details.role, permission=general_permission).exists():
+                # User has general permission - can see all categories
+                return None
+            
+            # Get specific category permissions (category ID stored in field_name)
+            category_permissions = Permission.objects.filter(
+                component='note_categories',
+                action='view',
+                field_name__isnull=False
+            )
+            
+            # Get category IDs the user has access to
+            accessible_category_ids = []
+            for perm in category_permissions:
+                if PermissionRole.objects.filter(role=user_details.role, permission=perm).exists():
+                    # field_name contains the category ID
+                    if perm.field_name:
+                        accessible_category_ids.append(perm.field_name)
+            
+            return accessible_category_ids
+        except UserDetails.DoesNotExist:
+            # User has no UserDetails - return empty list (no access)
+            return []
+        except Exception as e:
+            # If there's any error (e.g., NoteCategory doesn't exist yet), allow all notes
+            # This prevents errors when the database hasn't been migrated yet
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error checking note category permissions: {e}")
+            return None  # Allow all notes if there's an error
+
     def get_queryset(self):
         # Allow filtering by contactId if provided as query parameter
         contact_id = self.request.query_params.get('contactId', None)
-        if contact_id:
-            # Return all notes for this contact (all users can see notes for contacts they have access to)
-            return Note.objects.filter(contactId=contact_id).select_related('userId').order_by('-created_at')
-        # If no contactId, return current user's notes (for backward compatibility)
         user = self.request.user
-        return Note.objects.filter(userId=user).select_related('userId').order_by('-created_at')
+        
+        try:
+            # Get accessible category IDs for the user
+            accessible_category_ids = self.get_user_accessible_category_ids(user)
+        except Exception as e:
+            # If there's an error (e.g., NoteCategory table doesn't exist yet), allow all notes
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error getting accessible category IDs: {e}")
+            accessible_category_ids = None  # Allow all notes if there's an error
+        
+        try:
+            queryset = Note.objects.select_related('userId', 'categ_id').order_by('-created_at')
+        except Exception as e:
+            # If select_related fails (e.g., categ_id field doesn't exist yet), use basic queryset
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error with select_related on categ_id: {e}")
+            queryset = Note.objects.select_related('userId').order_by('-created_at')
+        
+        if contact_id:
+            queryset = queryset.filter(contactId=contact_id)
+        else:
+            # If no contactId, return current user's notes (for backward compatibility)
+            queryset = queryset.filter(userId=user)
+        
+        # Filter by category permissions if user doesn't have access to all categories
+        if accessible_category_ids is not None:
+            try:
+                # User has specific category permissions - filter notes
+                # Include notes with null category (no category assigned) and notes with accessible categories
+                queryset = queryset.filter(
+                    models.Q(categ_id__isnull=True) | models.Q(categ_id__id__in=accessible_category_ids)
+                )
+            except Exception as e:
+                # If filtering fails (e.g., categ_id field doesn't exist), just return all notes
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error filtering notes by category: {e}")
+                pass
+        # If accessible_category_ids is None, user has general permission - show all notes
+        
+        return queryset
 
     def perform_create(self, serializer):
         # serializer is already validated at this point
@@ -359,7 +444,8 @@ class NoteListCreateView(generics.ListCreateAPIView):
         serializer.save(
             id=note_id,
             userId=self.request.user, 
-            contactId=validated_data.get('contactId')  # Can be None/null
+            contactId=validated_data.get('contactId'),  # Can be None/null
+            categ_id=validated_data.get('categ_id')  # Can be None/null
         )
 
 class NoteDeleteView(generics.DestroyAPIView):
@@ -533,8 +619,8 @@ class ContactView(generics.ListAPIView):
                         else:
                             # Regular filter - check if it's a multi-select column
                             column_id = key.replace('filter_', '')
-                            # Multi-select columns: status, creator, teleoperator, confirmateur, source
-                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source']:
+                            # Multi-select columns: status, creator, teleoperator, confirmateur, source, postalCode, nationality, campaign, civility, managerTeam
+                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
                                 # Use getlist to get all values for this key
                                 values = request.query_params.getlist(key)
                                 if values:
@@ -564,6 +650,12 @@ class ContactView(generics.ListAPIView):
                             queryset = queryset.filter(confirmateur_id__in=values)
                         elif column_id == 'creator':
                             queryset = queryset.filter(creator_id__in=values)
+                        elif column_id == 'postalCode':
+                            queryset = queryset.filter(postal_code__in=values)
+                        elif column_id == 'nationality':
+                            queryset = queryset.filter(nationality__in=values)
+                        elif column_id == 'campaign':
+                            queryset = queryset.filter(campaign__in=values)
                 
                 # Apply date range filters
                 for column_id, date_range in date_range_filters.items():
@@ -665,7 +757,7 @@ class FosseContactView(generics.ListAPIView):
     """
     View for "Fosse" page - shows all contacts that are not assigned to anyone
     (teleoperator is null AND confirmateur is null).
-    Bypasses status permission filtering - anyone with access can see all contacts regardless of status.
+    No permission filtering - shows all unassigned contacts to authenticated users.
     """
     queryset = Contact.objects.all()
     serializer_class = ContactSerializer
@@ -727,18 +819,15 @@ class FosseContactView(generics.ListAPIView):
                         models.Q(email__icontains=search)
                     )
                 
-                # Apply team filter (filter by teleoperator's team)
-                # Note: For fosse, this won't apply much since contacts are unassigned,
-                # but we keep it for consistency with the regular contacts view
+                # Apply team filter (filter by creator's team for Fosse contacts)
+                # Note: For fosse, contacts are unassigned (teleoperator and confirmateur are null),
+                # so we only filter by creator's team
                 team_id = request.query_params.get('team')
                 if team_id and team_id != 'all':
                     # Get team members
                     team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
-                    queryset = queryset.filter(
-                        models.Q(teleoperator__id__in=team_user_ids) |
-                        models.Q(confirmateur__id__in=team_user_ids) |
-                        models.Q(creator__id__in=team_user_ids)
-                    )
+                    # For Fosse, only filter by creator since teleoperator and confirmateur are null
+                    queryset = queryset.filter(creator__id__in=team_user_ids)
                 
                 # Apply status type filter
                 status_type = request.query_params.get('status_type')
@@ -768,8 +857,8 @@ class FosseContactView(generics.ListAPIView):
                         else:
                             # Regular filter - check if it's a multi-select column
                             column_id = key.replace('filter_', '')
-                            # Multi-select columns: status, creator, teleoperator, confirmateur, source
-                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source']:
+                            # Multi-select columns: status, creator, teleoperator, confirmateur, source, postalCode, nationality, campaign, civility, managerTeam
+                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
                                 # Use getlist to get all values for this key
                                 values = request.query_params.getlist(key)
                                 if values:
@@ -794,11 +883,29 @@ class FosseContactView(generics.ListAPIView):
                         elif column_id == 'source':
                             queryset = queryset.filter(source_id__in=values)
                         elif column_id == 'teleoperator':
-                            queryset = queryset.filter(teleoperator_id__in=values)
+                            # For Fosse, teleoperator is always null, so this filter would exclude all contacts
+                            # Skip this filter - return empty queryset since no Fosse contacts have teleoperator
+                            queryset = queryset.none()
                         elif column_id == 'confirmateur':
-                            queryset = queryset.filter(confirmateur_id__in=values)
+                            # For Fosse, confirmateur is always null, so this filter would exclude all contacts
+                            # Skip this filter - return empty queryset since no Fosse contacts have confirmateur
+                            queryset = queryset.none()
                         elif column_id == 'creator':
                             queryset = queryset.filter(creator_id__in=values)
+                        elif column_id == 'postalCode':
+                            queryset = queryset.filter(postal_code__in=values)
+                        elif column_id == 'nationality':
+                            queryset = queryset.filter(nationality__in=values)
+                        elif column_id == 'campaign':
+                            queryset = queryset.filter(campaign__in=values)
+                        elif column_id == 'civility':
+                            queryset = queryset.filter(civility__in=values)
+                        elif column_id == 'managerTeam':
+                            # Filter by creator's team for Fosse contacts
+                            # Since Fosse contacts have null teleoperator/confirmateur, filter by creator's team
+                            # Get team members for the specified teams
+                            team_user_ids = TeamMember.objects.filter(team_id__in=values).values_list('user__django_user__id', flat=True)
+                            queryset = queryset.filter(creator_id__in=team_user_ids)
                 
                 # Apply date range filters
                 for column_id, date_range in date_range_filters.items():
@@ -2443,6 +2550,55 @@ def source_delete(request, source_id):
     source_obj.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+# Note Categories endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def note_category_list(request):
+    """List all note categories"""
+    categories = NoteCategory.objects.all().order_by('order_index', 'name')
+    serializer = NoteCategorySerializer(categories, many=True)
+    return Response({'categories': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def note_category_create(request):
+    """Create a new note category"""
+    serializer = NoteCategorySerializer(data=request.data)
+    if serializer.is_valid():
+        # Generate category ID
+        category_id = uuid.uuid4().hex[:12]
+        while NoteCategory.objects.filter(id=category_id).exists():
+            category_id = uuid.uuid4().hex[:12]
+        
+        # Auto-assign orderIndex: get the max orderIndex and add 1
+        max_order = NoteCategory.objects.aggregate(
+            max_order=models.Max('order_index')
+        )['max_order'] or -1
+        order_index = max_order + 1
+        
+        category = serializer.save(id=category_id, order_index=order_index)
+        return Response(NoteCategorySerializer(category).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def note_category_update(request, category_id):
+    """Update a note category"""
+    category = get_object_or_404(NoteCategory, id=category_id)
+    serializer = NoteCategorySerializer(category, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(NoteCategorySerializer(category).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def note_category_delete(request, category_id):
+    """Delete a note category"""
+    category = get_object_or_404(NoteCategory, id=category_id)
+    category.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def contact_logs(request, contact_id):
@@ -2756,16 +2912,132 @@ def status_reorder(request):
 def get_stats(request):
     """Get dashboard statistics"""
     try:
+        user = request.user
+        
         # Get filter parameters
         date_from = request.GET.get('dateFrom')
         date_to = request.GET.get('dateTo')
         team_id = request.GET.get('teamId')
+        user_id = request.GET.get('userId')
         
         # Base querysets
         contacts_qs = Contact.objects.all()
         notes_qs = Note.objects.all()
         events_qs = Event.objects.all()
         users_qs = UserDetails.objects.filter(active=True)
+        
+        # Apply data_access filtering based on user's role
+        try:
+            user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                print(f"[DEBUG] User {user.username} has data_access: {data_access}")
+                
+                if data_access == 'all':
+                    # User has access to all data, no filtering needed
+                    print(f"[DEBUG] data_access is 'all', no filtering applied")
+                    pass
+                elif data_access == 'own_only':
+                    # Show only data where user is assigned as teleoperator or confirmateur
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    if is_teleoperateur and is_confirmateur:
+                        # User is both: show contacts where user is teleoperator OR confirmateur
+                        contacts_qs = contacts_qs.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user)
+                        )
+                        # For notes and events, filter by contacts accessible to user
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user)
+                        ).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                    elif is_teleoperateur:
+                        # Teleoperateur with own_only: only show contacts where user is teleoperator
+                        contacts_qs = contacts_qs.filter(teleoperator=user)
+                        accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                    elif is_confirmateur:
+                        # Confirmateur with own_only: only show contacts where user is confirmateur
+                        contacts_qs = contacts_qs.filter(confirmateur=user)
+                        accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                    else:
+                        # Default behavior: show contacts where user is teleoperator, confirmateur, or creator
+                        contacts_qs = contacts_qs.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        )
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        ).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                        
+                elif data_access == 'team_only':
+                    # Show data linked to teleoperateurs of the team the user is in
+                    team_member = user_details.team_memberships.select_related('team').first()
+                    if team_member:
+                        team = team_member.team
+                        # Get all users in the same team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Show contacts where:
+                        # - User is teleoperator, confirmateur, or creator
+                        # - OR contact's teleoperator/confirmateur/creator is in the same team
+                        contacts_qs = contacts_qs.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user) |
+                            models.Q(teleoperator__id__in=team_user_ids) |
+                            models.Q(confirmateur__id__in=team_user_ids) |
+                            models.Q(creator__id__in=team_user_ids)
+                        )
+                        # For notes and events, filter by contacts accessible to user or team
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user) |
+                            models.Q(teleoperator__id__in=team_user_ids) |
+                            models.Q(confirmateur__id__in=team_user_ids) |
+                            models.Q(creator__id__in=team_user_ids)
+                        ).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        contacts_qs = contacts_qs.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        )
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user)
+                        ).values_list('id', flat=True)
+                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
+                        events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
+                # If user_details.role is None or data_access is 'all', show all data (no filtering)
+            else:
+                print(f"[DEBUG] User {user.username} has no role, no filtering applied")
+            # If user_details.role is None, no filtering is applied (show all data)
+        except UserDetails.DoesNotExist:
+            # If user has no UserDetails, show no data (safety default)
+            print(f"[DEBUG] User {user.username} has no UserDetails, showing no data")
+            contacts_qs = Contact.objects.none()
+            notes_qs = Note.objects.none()
+            events_qs = Event.objects.none()
+        
+        # Debug: Print queryset counts before date filters
+        print(f"[DEBUG] After data_access filtering - Contacts: {contacts_qs.count()}, Notes: {notes_qs.count()}, Events: {events_qs.count()}")
         
         # Apply date filters
         if date_from:
@@ -2801,6 +3073,22 @@ def get_stats(request):
                 notes_qs = notes_qs.filter(userId__in=team_members)
                 events_qs = events_qs.filter(userId__in=team_members)
             except Team.DoesNotExist:
+                pass
+        
+        # Apply user filter
+        if user_id and user_id != 'all':
+            try:
+                user_filter = DjangoUser.objects.get(id=user_id)
+                # Filter contacts where user is creator, teleoperator, or confirmateur
+                contacts_qs = contacts_qs.filter(
+                    Q(creator=user_filter) | 
+                    Q(teleoperator=user_filter) | 
+                    Q(confirmateur=user_filter)
+                )
+                # Filter notes and events by user
+                notes_qs = notes_qs.filter(userId=user_filter)
+                events_qs = events_qs.filter(userId=user_filter)
+            except DjangoUser.DoesNotExist:
                 pass
         
         # Calculate statistics

@@ -10,6 +10,7 @@ const routePermissions: Array<{
   action: 'view' | 'create' | 'edit' | 'delete';
 }> = [
   { path: '/contacts', component: 'contacts', action: 'view' },
+  { path: '/fosse', component: 'fosse', action: 'view' },
   { path: '/planning', component: 'planning', action: 'view' },
   { path: '/users', component: 'users', action: 'view' },
   { path: '/settings', component: 'settings', action: 'view' },
@@ -70,6 +71,7 @@ export function getAccessibleRoute(currentUser: any): string {
   // Check routes in order of preference (most common first)
   const routeChecks = [
     { path: '/contacts', component: 'contacts' },
+    { path: '/fosse', component: 'fosse' },
     { path: '/planning', component: 'planning' },
     { path: '/users', component: 'users' },
     { path: '/settings', component: 'settings' },

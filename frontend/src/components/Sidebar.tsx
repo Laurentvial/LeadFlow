@@ -48,6 +48,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const hasDashboardPermission = useHasPermission('dashboard', 'view');
   const hasPlanningPermission = useHasPermission('planning', 'view');
   const hasContactsPermission = useHasPermission('contacts', 'view');
+  const hasFossePermission = useHasPermission('fosse', 'view');
   const hasUsersPermission = useHasPermission('users', 'view');
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
   const hasStatusesPermission = useHasStatusesPermission();
@@ -93,8 +94,8 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       icon: UserCircle, 
       roles: ['admin', 'teamleader', 'gestionnaire'], 
       path: '/fosse',
-      requiresPermission: false, // Fosse is accessible to all authenticated users
-      permissionComponent: 'contacts',
+      requiresPermission: true,
+      permissionComponent: 'fosse',
       permissionAction: 'view' as const,
     },
     { 
@@ -153,6 +154,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     if (component === 'dashboard') return hasDashboardPermission;
     if (component === 'planning') return hasPlanningPermission;
     if (component === 'contacts') return hasContactsPermission;
+    if (component === 'fosse') return hasFossePermission;
     if (component === 'mails') return hasMailsPermission;
     if (component === 'chat') return true; // Chat is available to all authenticated users
     if (component === 'users') return hasUsersPermission;

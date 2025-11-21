@@ -21,6 +21,7 @@ import '../styles/Modal.css';
 const componentNameMap: Record<string, string> = {
   dashboard: 'Tableau de bord',
   contacts: 'Contacts',
+  fosse: 'Fosse',
   users: 'Utilisateurs',
   teams: 'Équipes',
   planning: 'Planning',
@@ -215,6 +216,7 @@ export function PermissionsTab() {
   const predefinedComponents = [
     'dashboard',
     'contacts',
+    'fosse',
     'users',
     'teams',
     'planning',
@@ -364,6 +366,53 @@ export function PermissionsTab() {
     });
   }
 
+  // Toggle all permissions in a row for Pages table
+  function toggleAllRowPermissions(displayComponentLabel: string) {
+    if (!selectedRoleForPermissions) return;
+    
+    const dbComponentName = getDbComponentName(displayComponentLabel);
+    const roleId = selectedRoleForPermissions.id;
+    const isDashboard = dbComponentName === 'dashboard';
+    
+    // Get current state of all permissions for this component
+    const viewPermissionId = getPermissionId(dbComponentName, 'view');
+    const createPermissionId = getPermissionId(dbComponentName, 'create');
+    const editPermissionId = getPermissionId(dbComponentName, 'edit');
+    const deletePermissionId = getPermissionId(dbComponentName, 'delete');
+    
+    const hasView = hasPermission(roleId, viewPermissionId, dbComponentName, 'view');
+    const hasCreate = hasPermission(roleId, createPermissionId, dbComponentName, 'create');
+    const hasEdit = hasPermission(roleId, editPermissionId, dbComponentName, 'edit');
+    const hasDelete = hasPermission(roleId, deletePermissionId, dbComponentName, 'delete');
+    
+    // Check if all permissions are selected (for dashboard, only view matters)
+    const allSelected = isDashboard ? hasView : (hasView && hasCreate && hasEdit && hasDelete);
+    
+    // Toggle all permissions: if all selected, unselect all; otherwise select all
+    const actions: Array<'view' | 'create' | 'edit' | 'delete'> = isDashboard 
+      ? ['view'] 
+      : ['view', 'create', 'edit', 'delete'];
+    
+    setPendingPermissionChanges(prev => {
+      const newMap = new Map(prev);
+      
+      for (const action of actions) {
+        const permissionId = getPermissionId(dbComponentName, action);
+        let changeKey: string;
+        if (!permissionId) {
+          changeKey = `${roleId}-${dbComponentName}-${action}-none`;
+        } else {
+          changeKey = `${roleId}-${permissionId}`;
+        }
+        
+        // Set to opposite of allSelected state
+        newMap.set(changeKey, !allSelected);
+      }
+      
+      return newMap;
+    });
+  }
+
   // Toggle all permissions in a column for Pages table
   function toggleAllPagesColumn(action: 'view' | 'create' | 'edit' | 'delete') {
     if (!selectedRoleForPermissions) return;
@@ -410,6 +459,60 @@ export function PermissionsTab() {
         
         // Set to opposite of allChecked state
         newMap.set(changeKey, !allChecked);
+      }
+      
+      return newMap;
+    });
+  }
+
+  // Toggle all permissions in a row for Status table
+  function toggleAllStatusRowPermissions(statusId: string) {
+    if (!selectedRoleForPermissions) return;
+    
+    const roleId = selectedRoleForPermissions.id;
+    
+    // Check if role has the corresponding general contact permission
+    const contactViewPermissionId = getPermissionId('contacts', 'view');
+    const hasContactView = hasPermission(roleId, contactViewPermissionId);
+    
+    if (!hasContactView) {
+      toast.error(
+        'Le rôle doit d\'abord avoir la permission "voir" pour les contacts avant de pouvoir avoir cette permission pour un statut spécifique'
+      );
+      return;
+    }
+    
+    // Get current state of all permissions for this status
+    const viewPermissionId = getPermissionId('statuses', 'view', statusId);
+    const createPermissionId = getPermissionId('statuses', 'create', statusId);
+    const editPermissionId = getPermissionId('statuses', 'edit', statusId);
+    const deletePermissionId = getPermissionId('statuses', 'delete', statusId);
+    
+    const hasView = hasPermission(roleId, viewPermissionId, 'statuses', 'view', statusId);
+    const hasCreate = hasPermission(roleId, createPermissionId, 'statuses', 'create', statusId);
+    const hasEdit = hasPermission(roleId, editPermissionId, 'statuses', 'edit', statusId);
+    const hasDelete = hasPermission(roleId, deletePermissionId, 'statuses', 'delete', statusId);
+    
+    // Check if all permissions are selected
+    const allSelected = hasView && hasCreate && hasEdit && hasDelete;
+    
+    // Toggle all permissions
+    const actions: Array<'view' | 'create' | 'edit' | 'delete'> = ['view', 'create', 'edit', 'delete'];
+    
+    setPendingPermissionChanges(prev => {
+      const newMap = new Map(prev);
+      
+      for (const action of actions) {
+        const permissionId = getPermissionId('statuses', action, statusId);
+        let changeKey: string;
+        if (!permissionId) {
+          changeKey = `${roleId}-statuses-${action}-${statusId}`;
+        } else {
+          changeKey = `${roleId}-${permissionId}`;
+        }
+        
+        // Set to opposite of allSelected state
+        newMap.set(changeKey, !allSelected);
       }
       
       return newMap;
@@ -1191,17 +1294,23 @@ export function PermissionsTab() {
                           const createPermissionId = getPermissionId(dbComponent, 'create');
                           const editPermissionId = getPermissionId(dbComponent, 'edit');
                           const deletePermissionId = getPermissionId(dbComponent, 'delete');
-                          const hasView = hasPermission(selectedRoleForPermissions.id, viewPermissionId);
-                          const hasCreate = hasPermission(selectedRoleForPermissions.id, createPermissionId);
-                          const hasEdit = hasPermission(selectedRoleForPermissions.id, editPermissionId);
-                          const hasDelete = hasPermission(selectedRoleForPermissions.id, deletePermissionId);
+                          const hasView = hasPermission(selectedRoleForPermissions.id, viewPermissionId, dbComponent, 'view');
+                          const hasCreate = hasPermission(selectedRoleForPermissions.id, createPermissionId, dbComponent, 'create');
+                          const hasEdit = hasPermission(selectedRoleForPermissions.id, editPermissionId, dbComponent, 'edit');
+                          const hasDelete = hasPermission(selectedRoleForPermissions.id, deletePermissionId, dbComponent, 'delete');
                           
                           // Dashboard only has view permission
                           const isDashboard = dbComponent === 'dashboard';
 
                           return (
                             <tr key={dbComponent} className="border-b hover:bg-slate-50">
-                              <td className="p-3 font-medium">{displayLabel}</td>
+                              <td 
+                                className="p-3 font-medium cursor-pointer hover:text-blue-600"
+                                onClick={() => toggleAllRowPermissions(displayLabel)}
+                                title="Cliquer pour sélectionner/désélectionner toute la ligne"
+                              >
+                                {displayLabel}
+                              </td>
                               <td className="p-3 text-center">
                                 <input
                                   type="checkbox"
@@ -1303,24 +1412,28 @@ export function PermissionsTab() {
                             const createPermissionId = getPermissionId('statuses', 'create', status.id);
                             const editPermissionId = getPermissionId('statuses', 'edit', status.id);
                             const deletePermissionId = getPermissionId('statuses', 'delete', status.id);
-                            const hasView = hasPermission(selectedRoleForPermissions.id, viewPermissionId);
-                            const hasCreate = hasPermission(selectedRoleForPermissions.id, createPermissionId);
-                            const hasEdit = hasPermission(selectedRoleForPermissions.id, editPermissionId);
-                            const hasDelete = hasPermission(selectedRoleForPermissions.id, deletePermissionId);
+                            const hasView = hasPermission(selectedRoleForPermissions.id, viewPermissionId, 'statuses', 'view', status.id);
+                            const hasCreate = hasPermission(selectedRoleForPermissions.id, createPermissionId, 'statuses', 'create', status.id);
+                            const hasEdit = hasPermission(selectedRoleForPermissions.id, editPermissionId, 'statuses', 'edit', status.id);
+                            const hasDelete = hasPermission(selectedRoleForPermissions.id, deletePermissionId, 'statuses', 'delete', status.id);
                             
                             // Check if role has general contact permissions
                             const contactViewPermissionId = getPermissionId('contacts', 'view');
                             const contactCreatePermissionId = getPermissionId('contacts', 'create');
                             const contactEditPermissionId = getPermissionId('contacts', 'edit');
                             const contactDeletePermissionId = getPermissionId('contacts', 'delete');
-                            const hasContactView = hasPermission(selectedRoleForPermissions.id, contactViewPermissionId);
-                            const hasContactCreate = hasPermission(selectedRoleForPermissions.id, contactCreatePermissionId);
-                            const hasContactEdit = hasPermission(selectedRoleForPermissions.id, contactEditPermissionId);
-                            const hasContactDelete = hasPermission(selectedRoleForPermissions.id, contactDeletePermissionId);
+                            const hasContactView = hasPermission(selectedRoleForPermissions.id, contactViewPermissionId, 'contacts', 'view');
+                            const hasContactCreate = hasPermission(selectedRoleForPermissions.id, contactCreatePermissionId, 'contacts', 'create');
+                            const hasContactEdit = hasPermission(selectedRoleForPermissions.id, contactEditPermissionId, 'contacts', 'edit');
+                            const hasContactDelete = hasPermission(selectedRoleForPermissions.id, contactDeletePermissionId, 'contacts', 'delete');
 
                             return (
                               <tr key={status.id} className="border-b hover:bg-slate-50">
-                                <td className="p-3">
+                                <td 
+                                  className="p-3 cursor-pointer hover:text-blue-600"
+                                  onClick={() => toggleAllStatusRowPermissions(status.id)}
+                                  title="Cliquer pour sélectionner/désélectionner toute la ligne"
+                                >
                                   <div className="flex items-center gap-2">
                                     <div
                                       className="w-3 h-3 rounded-full"
