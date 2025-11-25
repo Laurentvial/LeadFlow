@@ -8,7 +8,7 @@ import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2 } from 'lucide-react';
-import { useHasPermission, useHasNoteCategoryPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
+// Permissions are now computed directly from currentUser.permissions for better performance
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { apiCall } from '../utils/api';
@@ -28,16 +28,16 @@ interface NoteCategory {
   orderIndex: number;
 }
 
+
 interface NoteItemCompactProps {
   note: any;
   onDelete: (noteId: string) => void;
   onEdit: (noteId: string, newText: string) => Promise<void>;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdit }) => {
-  const noteCategoryId = note.categId || null;
-  const canDelete = useHasNoteCategoryPermission(noteCategoryId, 'delete');
-  const canEdit = useHasNoteCategoryPermission(noteCategoryId, 'edit');
+const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdit, canEdit = false, canDelete = false }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(note.text);
   const [isSaving, setIsSaving] = useState(false);
@@ -187,12 +187,52 @@ export function ContactInfoTab({
   contactId = '',
   onRefresh = () => {}
 }: ContactInfoTabProps) {
-  const canEditGeneral = useHasPermission('contacts', 'edit');
-  const canCreatePlanning = useHasPermission('planning', 'create');
-  const canEditPlanning = useHasPermission('planning', 'edit');
-  const canDeletePlanning = useHasPermission('planning', 'delete');
   const { currentUser, loading: loadingUser } = useUser();
-  const { users } = useUsers();
+  
+  // Memoize permission checks to avoid recalculating on every render
+  const canEditGeneral = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    return currentUser.permissions.some((p: any) => 
+      p.component === 'contacts' && p.action === 'edit' && !p.fieldName && !p.statusId
+    );
+  }, [currentUser?.permissions]);
+  
+  const canCreatePlanning = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    return currentUser.permissions.some((p: any) => 
+      p.component === 'planning' && p.action === 'create' && !p.fieldName && !p.statusId
+    );
+  }, [currentUser?.permissions]);
+  
+  const canEditPlanning = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    return currentUser.permissions.some((p: any) => 
+      p.component === 'planning' && p.action === 'edit' && !p.fieldName && !p.statusId
+    );
+  }, [currentUser?.permissions]);
+  
+  const canDeletePlanning = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    return currentUser.permissions.some((p: any) => 
+      p.component === 'planning' && p.action === 'delete' && !p.fieldName && !p.statusId
+    );
+  }, [currentUser?.permissions]);
+  
+  // Lazy load users only when modals are opened
+  const [users, setUsers] = React.useState<any[]>([]);
+  const [usersLoaded, setUsersLoaded] = React.useState(false);
+  
+  const loadUsersIfNeeded = React.useCallback(async () => {
+    if (usersLoaded) return;
+    try {
+      const response = await apiCall('/api/users/');
+      const usersList = response?.users || response || [];
+      setUsers(usersList);
+      setUsersLoaded(true);
+    } catch (error) {
+      console.error('Error loading users:', error);
+    }
+  }, [usersLoaded]);
   
   // Get status permissions
   const statusEditPermissions = React.useMemo(() => {
@@ -338,7 +378,7 @@ export function ContactInfoTab({
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [categories, setCategories] = useState<NoteCategory[]>([]);
-  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(false); // Start as false - don't block display
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [localNotes, setLocalNotes] = useState<any[]>(notes);
   
@@ -347,8 +387,43 @@ export function ContactInfoTab({
     setLocalNotes(notes);
   }, [notes]);
   
-  // Get accessible category IDs based on view permissions
-  const accessibleCategoryIds = useAccessibleNoteCategoryIds();
+  // Get accessible category IDs based on view permissions (already available from currentUser.permissions)
+  // Memoize to avoid recalculating on every render
+  const accessibleCategoryIds = React.useMemo(() => {
+    if (!currentUser?.permissions) return [];
+    const categoryIds = currentUser.permissions
+      .filter((p: any) => 
+        p.component === 'note_categories' && 
+        p.action === 'view' && 
+        p.fieldName !== null &&
+        !p.statusId
+      )
+      .map((p: any) => p.fieldName)
+      .filter((id): id is string => id !== null);
+    return Array.from(new Set(categoryIds));
+  }, [currentUser?.permissions]);
+  
+  // Check if user has general view permission (can see all notes regardless of category)
+  // This is available immediately from currentUser.permissions, no need to wait
+  const hasGeneralViewPermission = React.useMemo(() => {
+    return currentUser?.permissions?.some((p: any) => 
+      p.component === 'note_categories' && 
+      p.action === 'view' && 
+      !p.fieldName && 
+      !p.statusId
+    ) || false;
+  }, [currentUser?.permissions]);
+  
+  // Check if user has any view permissions (critical - needed to show notes)
+  // This is available immediately from currentUser.permissions, no need to wait
+  const hasAnyViewPermission = React.useMemo(() => {
+    // If user has general permission, they can see all notes
+    if (hasGeneralViewPermission) {
+      return true;
+    }
+    // Otherwise check if they have any specific category view permissions
+    return accessibleCategoryIds.length > 0;
+  }, [hasGeneralViewPermission, accessibleCategoryIds]);
   
   // Filter categories to only show those user has view permission for
   const accessibleCategories = React.useMemo(() => {
@@ -356,24 +431,64 @@ export function ContactInfoTab({
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [categories, accessibleCategoryIds]);
   
-  // Check if user has any view permissions
-  const hasAnyViewPermission = accessibleCategories.length > 0;
+  // Pre-compute note permissions map for all notes to avoid calling hooks in NoteItemCompact
+  const notePermissionsMap = React.useMemo(() => {
+    if (!currentUser?.permissions) return new Map<string, { canEdit: boolean; canDelete: boolean }>();
+    
+    const map = new Map<string, { canEdit: boolean; canDelete: boolean }>();
+    
+    // Process all notes at once
+    localNotes.forEach(note => {
+      const noteCategoryId = note.categId || null;
+      if (!noteCategoryId) {
+        map.set(note.id, { canEdit: false, canDelete: false });
+        return;
+      }
+      
+      const canEdit = currentUser.permissions.some((p: any) => 
+        p.component === 'note_categories' && 
+        p.action === 'edit' && 
+        p.fieldName === noteCategoryId &&
+        !p.statusId
+      );
+      
+      const canDelete = currentUser.permissions.some((p: any) => 
+        p.component === 'note_categories' && 
+        p.action === 'delete' && 
+        p.fieldName === noteCategoryId &&
+        !p.statusId
+      );
+      
+      map.set(note.id, { canEdit, canDelete });
+    });
+    
+    return map;
+  }, [currentUser?.permissions, localNotes]);
   
-  // Check create permission for selected category
-  const canCreateInSelectedCategory = useHasNoteCategoryPermission(selectedCategoryId, 'create');
+  // Check create permission for selected category (lazy - only when needed)
+  const canCreateInSelectedCategory = React.useMemo(() => {
+    if (!currentUser?.permissions || !selectedCategoryId || selectedCategoryId === 'all') {
+      return false;
+    }
+    return currentUser.permissions.some((p: any) => 
+      p.component === 'note_categories' && 
+      p.action === 'create' && 
+      p.fieldName === selectedCategoryId &&
+      !p.statusId
+    );
+  }, [currentUser?.permissions, selectedCategoryId]);
   
   // Load statuses, sources, and categories lazily (only when needed)
-  // These are loaded after initial render to not block contact display
+  // Categories are loaded separately and don't block notes display
   useEffect(() => {
-    // Use setTimeout to defer loading until after initial render
-    const timer = setTimeout(() => {
-      Promise.all([
-        loadStatuses(),
-        loadSources(),
-        loadCategories()
-      ]).catch(err => console.error('Error loading dropdown data:', err));
-    }, 0);
-    return () => clearTimeout(timer);
+    // Load categories separately - non-blocking for notes display
+    loadCategories().catch(err => console.error('Error loading categories:', err));
+    
+    // Load statuses and sources (also non-blocking)
+    Promise.all([
+      loadStatuses(),
+      loadSources()
+    ]).catch(err => console.error('Error loading dropdown data:', err));
   }, []);
 
   useEffect(() => {
@@ -422,6 +537,13 @@ export function ContactInfoTab({
     }
   }
 
+  // Load users when modals open (lazy loading)
+  useEffect(() => {
+    if (isAppointmentModalOpen || isEditAppointmentModalOpen) {
+      loadUsersIfNeeded();
+    }
+  }, [isAppointmentModalOpen, isEditAppointmentModalOpen, loadUsersIfNeeded]);
+  
   // Initialize userId with current user when modal opens
   useEffect(() => {
     if (isAppointmentModalOpen && currentUser?.id && !appointmentFormData.userId) {
@@ -768,8 +890,8 @@ export function ContactInfoTab({
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          {/* Show loading indicator while permissions are loading */}
-          {loadingCategories || loadingUser ? (
+          {/* Show loading indicator only while user is loading AND we don't have permissions yet */}
+          {loadingUser && !currentUser?.permissions ? (
             <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
           ) : (
             <>
@@ -882,25 +1004,30 @@ export function ContactInfoTab({
           <CardTitle className="text-lg">Notes</CardTitle>
         </CardHeader>
         <CardContent className="pt-0 space-y-3">
-          {/* Show loading indicator while categories or permissions are loading */}
-          {loadingCategories || loadingUser ? (
+          {/* Show notes immediately if user has view permissions - don't wait for categories */}
+          {/* Only show loading if user is actually loading AND we don't have permissions yet */}
+          {loadingUser && !currentUser?.permissions ? (
             <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
+          ) : !hasAnyViewPermission ? (
+            <p className="text-sm text-slate-500 text-center py-4">Aucune permission pour voir les notes</p>
           ) : (
             <>
-              {/* Show category tabs only if user has access to categories */}
-              {accessibleCategories.length > 0 && (
-            <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2">
-              <TabsList className="h-8">
-                {accessibleCategories.map((category) => (
-                  <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1">
-                    {category.name}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          )}
+              {/* Show category tabs only if categories are loaded and user has access */}
+              {loadingCategories ? (
+                <p className="text-xs text-slate-400 text-center py-2">Chargement des catégories...</p>
+              ) : accessibleCategories.length > 0 ? (
+                <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2">
+                  <TabsList className="h-8">
+                    {accessibleCategories.map((category) => (
+                      <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1">
+                        {category.name}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              ) : null}
           
-          {/* Show form only if user has create permission */}
+          {/* Show form only if user has create permission (checked lazily, already available) */}
           {canCreateInSelectedCategory && (
             <form onSubmit={handleCreateNote} className="space-y-2">
               <div className="flex gap-2 items-stretch">
@@ -937,6 +1064,10 @@ export function ContactInfoTab({
                 
                 // Filter to only show notes from categories user has view permission for
                 filteredNotes = filteredNotes.filter(note => {
+                  // If user has general view permission, show all notes
+                  if (hasGeneralViewPermission) {
+                    return true;
+                  }
                   // If note has no category, show it (null category notes are accessible)
                   if (!note.categId) {
                     return true;
@@ -954,14 +1085,19 @@ export function ContactInfoTab({
                         return dateB - dateA; // Descending order (most recent first)
                       })
                       .slice(0, showAllNotes ? filteredNotes.length : 3)
-                      .map((note) => (
-                        <NoteItemCompact 
-                          key={note.id}
-                          note={note}
-                          onDelete={handleDeleteNote}
-                          onEdit={handleEditNote}
-                        />
-                      ))}
+                      .map((note) => {
+                        const permissions = notePermissionsMap.get(note.id) || { canEdit: false, canDelete: false };
+                        return (
+                          <NoteItemCompact 
+                            key={note.id}
+                            note={note}
+                            onDelete={handleDeleteNote}
+                            onEdit={handleEditNote}
+                            canEdit={permissions.canEdit}
+                            canDelete={permissions.canDelete}
+                          />
+                        );
+                      })}
                     {filteredNotes.length > 3 && !showAllNotes && (
                       <p 
                         className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"

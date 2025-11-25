@@ -63,6 +63,14 @@ class Note(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['contactId', '-created_at']),  # Optimize queries filtering by contact
+            models.Index(fields=['categ_id', '-created_at']),  # Optimize queries filtering by category
+            models.Index(fields=['userId', '-created_at']),  # Optimize queries filtering by user
+        ]
+        ordering = ['-created_at']  # Default ordering
+
     def __str__(self):
         return self.text
 

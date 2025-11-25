@@ -46,31 +46,43 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
     }
   }
 
-  // Load notes and events separately (non-blocking)
+  // Load notes and events in parallel (non-blocking)
   async function loadNotesAndEvents() {
-    // Load notes
     setLoadingNotes(true);
-    try {
-      const notesData = await apiCall(`/api/notes/?contactId=${contactId}`);
-      const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).notes || notesData || []);
-      setNotes(notesArray);
-    } catch (err) {
-      console.error('Error loading notes:', err);
-      setNotes([]);
-    } finally {
-      setLoadingNotes(false);
-    }
-
-    // Load events
     setLoadingEvents(true);
+    
+    // Load notes and events in parallel for better performance
     try {
-      const eventsData = await apiCall(`/api/events/?contactId=${contactId}`);
-      const eventsArray = (eventsData as any).events || [];
-      setAppointments(eventsArray);
+      const [notesResult, eventsResult] = await Promise.allSettled([
+        apiCall(`/api/notes/?contactId=${contactId}`),
+        apiCall(`/api/events/?contactId=${contactId}`)
+      ]);
+
+      // Handle notes result
+      if (notesResult.status === 'fulfilled') {
+        const notesData = notesResult.value;
+        const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).notes || notesData || []);
+        setNotes(notesArray);
+      } else {
+        console.error('Error loading notes:', notesResult.reason);
+        setNotes([]);
+      }
+
+      // Handle events result
+      if (eventsResult.status === 'fulfilled') {
+        const eventsData = eventsResult.value;
+        const eventsArray = (eventsData as any).events || [];
+        setAppointments(eventsArray);
+      } else {
+        console.error('Error loading events:', eventsResult.reason);
+        setAppointments([]);
+      }
     } catch (err) {
-      console.error('Error loading events:', err);
+      console.error('Error loading notes and events:', err);
+      setNotes([]);
       setAppointments([]);
     } finally {
+      setLoadingNotes(false);
       setLoadingEvents(false);
     }
   }

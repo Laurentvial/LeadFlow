@@ -332,53 +332,73 @@ class UserCreateView(generics.CreateAPIView):
 class NoteListCreateView(generics.ListCreateAPIView):
     serializer_class = NoteSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Request-level cache for permissions (cleared after each request)
+    _request_cache = {}
 
     def get_user_accessible_category_ids(self, user):
         """Get list of note category IDs the user has view permission for"""
+        # Use request-level cache to avoid re-querying permissions on every request
+        cache_key = f"accessible_categories_{user.id}"
+        if hasattr(self, '_request_cache') and cache_key in self._request_cache:
+            return self._request_cache[cache_key]
+        
         try:
-            user_details = UserDetails.objects.select_related('role').get(django_user=user)
-            if not user_details.role:
+            # Optimize query with select_related and prefetch_related
+            user_details = UserDetails.objects.select_related('role_id').prefetch_related(
+                'role_id__permission_roles__permission'
+            ).get(django_user=user)
+            
+            if not user_details.role_id:
                 # No role - return empty list (no access)
-                return []
-            
-            # Check if user has general note_categories view permission (no field_name, no status)
-            general_permission = Permission.objects.filter(
-                component='note_categories',
-                action='view',
-                field_name__isnull=True,
-                status__isnull=True
-            ).first()
-            
-            if general_permission and PermissionRole.objects.filter(role=user_details.role, permission=general_permission).exists():
-                # User has general permission - can see all categories
-                return None
-            
-            # Get specific category permissions (category ID stored in field_name)
-            category_permissions = Permission.objects.filter(
-                component='note_categories',
-                action='view',
-                field_name__isnull=False
-            )
-            
-            # Get category IDs the user has access to
-            accessible_category_ids = []
-            for perm in category_permissions:
-                if PermissionRole.objects.filter(role=user_details.role, permission=perm).exists():
-                    # field_name contains the category ID
-                    if perm.field_name:
-                        accessible_category_ids.append(perm.field_name)
-            
-            return accessible_category_ids
+                result = []
+            else:
+                role = user_details.role_id
+                
+                # Get all permission roles for this role - already prefetched, so no additional query
+                permission_roles = role.permission_roles.all()
+                
+                # Build sets of permission IDs for faster lookup
+                category_permission_field_names = set()
+                
+                for perm_role in permission_roles:
+                    # Permission is already prefetched, so this won't cause additional queries
+                    perm = perm_role.permission
+                    if (perm.component == 'note_categories' and 
+                        perm.action == 'view' and 
+                        perm.field_name is None and 
+                        perm.status is None):
+                        # User has general permission - can see all categories
+                        result = None
+                        break
+                    elif (perm.component == 'note_categories' and 
+                          perm.action == 'view' and 
+                          perm.field_name is not None):
+                        # Specific category permission
+                        category_permission_field_names.add(perm.field_name)
+                
+                # If we have specific category permissions, return them
+                if category_permission_field_names:
+                    result = list(category_permission_field_names)
+                else:
+                    # No permissions found - return empty list
+                    result = []
         except UserDetails.DoesNotExist:
             # User has no UserDetails - return empty list (no access)
-            return []
+            result = []
         except Exception as e:
             # If there's any error (e.g., NoteCategory doesn't exist yet), allow all notes
             # This prevents errors when the database hasn't been migrated yet
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"Error checking note category permissions: {e}")
-            return None  # Allow all notes if there's an error
+            result = None  # Allow all notes if there's an error
+        
+        # Cache the result for this request
+        if not hasattr(self, '_request_cache'):
+            self._request_cache = {}
+        self._request_cache[cache_key] = result
+        return result
 
     def get_queryset(self):
         # Allow filtering by contactId if provided as query parameter
@@ -1840,8 +1860,13 @@ def contact_delete(request, contact_id):
 def get_current_user(request):
     django_user = request.user
     try:
-        # Try to get the user details profile
-        user_details = UserDetails.objects.get(django_user=django_user)
+        # Optimize query with prefetch_related to load permissions efficiently
+        # This loads all permissions in one query instead of N+1 queries
+        user_details = UserDetails.objects.select_related(
+            'role_id'
+        ).prefetch_related(
+            'role_id__permission_roles__permission__status'
+        ).get(django_user=django_user)
         # Use UserDetailsSerializer to ensure consistent format with other endpoints
         serializer = UserDetailsSerializer(user_details)
         return Response(serializer.data)
