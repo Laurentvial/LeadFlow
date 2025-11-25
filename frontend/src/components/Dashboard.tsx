@@ -19,7 +19,6 @@ import {
   ArrowUpRight
 } from 'lucide-react';
 import { apiCall } from '../utils/api';
-import LoadingIndicator from './LoadingIndicator';
 import { useUser } from '../contexts/UserContext';
 import '../styles/Dashboard.css';
 import '../styles/PageHeader.css';
@@ -38,15 +37,12 @@ export function Dashboard({ user: userProp }: DashboardProps) {
   const [selectedUser, setSelectedUser] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     loadData();
   }, [selectedTeam, selectedUser, dateFrom, dateTo]);
 
   async function loadData() {
     try {
-      setLoading(true);
       const params = new URLSearchParams();
       if (dateFrom) params.append('dateFrom', dateFrom);
       if (dateTo) params.append('dateTo', dateTo);
@@ -65,17 +61,7 @@ export function Dashboard({ user: userProp }: DashboardProps) {
       setUsers(usersResponse?.users || usersResponse || []);
     } catch (error) {
       console.error('Error loading dashboard:', error);
-    } finally {
-      setLoading(false);
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="dashboard-loading">
-        <LoadingIndicator />
-      </div>
-    );
   }
 
   const statCards = [

@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2 } from 'lucide-react';
-import LoadingIndicator from './LoadingIndicator';
 import {
   Popover,
   PopoverContent,
@@ -354,11 +353,13 @@ export function ContactList({
     }
   }, [users, usersLoading, usersError]);
 
-  useEffect(() => {
-    loadData();
-  }, [itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters]); // Reload when filters or itemsPerPage change
+  // Create a stable string representation of appliedColumnFilters for dependency comparison
+  const appliedColumnFiltersKey = useMemo(() => {
+    return JSON.stringify(appliedColumnFilters);
+  }, [appliedColumnFilters]);
 
-  async function loadData() {
+  // Memoize loadData to prevent unnecessary re-renders
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       // Calculate limit: request enough contacts to cover multiple pages
@@ -411,12 +412,17 @@ export function ContactList({
       setTotalContacts(contactsData.total || contactsList.length);
       setTeams(teamsData.teams || []);
       setStatuses(statusesData.statuses || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading contacts:', error);
+      toast.error(error?.message || 'Erreur lors du chargement des contacts');
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]); // Reload when loadData changes (which depends on filters and itemsPerPage)
   
   // Apply filters - called when user clicks "Filtrer" button
   function handleApplyFilters() {
@@ -1287,11 +1293,10 @@ export function ContactList({
   // Helper function to render table content (reused in normal and fullscreen views)
   const renderTableContent = (fullscreen: boolean = false) => (
     <>
-          {(isLoading || isDeleting) ? (
-            <div className="contacts-loading">
-              <LoadingIndicator />
-              <p className="contacts-loading-text">
-                {isDeleting ? 'Suppression des contacts en cours...' : 'Chargement des contacts...'}
+          {isLoading ? (
+            <div className="contacts-loading" style={{ padding: '40px', textAlign: 'center' }}>
+              <p className="contacts-loading-text" style={{ color: '#64748b' }}>
+                Chargement...
               </p>
             </div>
           ) : filteredContacts.length > 0 ? (

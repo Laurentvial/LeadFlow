@@ -16,7 +16,6 @@ import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
 import '../styles/PageHeader.css';
 import { toast } from 'sonner';
-import LoadingIndicator from './LoadingIndicator';
 
 export function PlanningCalendar() {
   const { currentUser } = useUser();
@@ -193,22 +192,6 @@ export function PlanningCalendar() {
       const eventDate = new Date(event.datetime).toISOString().split('T')[0];
       return eventDate === dateStr;
     });
-  }
-
-  if (loading) {
-    return (
-      <div className="planning-container">
-        <div className="page-header-section">
-          <div className="page-title-section">
-            <h1 className="page-title">Planning</h1>
-            <p className="page-subtitle">Gestion des rendez-vous</p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
-          <LoadingIndicator />
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -633,7 +616,13 @@ export function PlanningCalendar() {
             </div>
           </CardHeader>
           <CardContent>
-            {(() => {
+            {loading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px' }}>
+                <p style={{ color: '#64748b', fontSize: '14px' }}>
+                  Chargement...
+                </p>
+              </div>
+            ) : (() => {
               // Filter events by selected day if a day is selected
               let filteredEvents = events;
               if (selectedDay !== null) {
