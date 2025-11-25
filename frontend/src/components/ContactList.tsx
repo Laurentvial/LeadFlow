@@ -522,9 +522,9 @@ export function ContactList({
             return statusViewPermissions.has(normalizedStatusId);
           })
           .map(status => ({
-            id: status.id,
-            label: status.name
-          }));
+          id: status.id,
+          label: status.name
+        }));
         options.push(...statusOptions);
         break;
       case 'creator':
@@ -1492,57 +1492,57 @@ export function ContactList({
                                       }
                                       
                                       return filteredOptions.map(option => {
-                                        const currentValue = pendingColumnFilters[columnId];
-                                        const selectedValues = Array.isArray(currentValue) ? currentValue : 
-                                                             (typeof currentValue === 'string' && currentValue ? [currentValue] : []);
-                                        const isChecked = selectedValues.includes(option.id);
-                                        
-                                        return (
-                                          <div
-                                            key={option.id}
-                                            className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
-                                            onClick={() => {
-                                              setPendingColumnFilters(prev => {
-                                                const current = prev[columnId];
-                                                const currentArray = Array.isArray(current) ? current : 
-                                                                   (typeof current === 'string' && current ? [current] : []);
-                                                
-                                                let newArray: string[];
-                                                if (isChecked) {
-                                                  newArray = currentArray.filter(id => id !== option.id);
-                                                } else {
-                                                  newArray = [...currentArray, option.id];
-                                                }
-                                                
-                                                return {
-                                                  ...prev,
-                                                  [columnId]: newArray.length > 0 ? newArray : ''
-                                                };
-                                              });
-                                            }}
-                                          >
-                                            <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
-                                              {isChecked && (
-                                                <Check className="h-4 w-4" />
-                                              )}
-                                            </span>
+                                      const currentValue = pendingColumnFilters[columnId];
+                                      const selectedValues = Array.isArray(currentValue) ? currentValue : 
+                                                           (typeof currentValue === 'string' && currentValue ? [currentValue] : []);
+                                      const isChecked = selectedValues.includes(option.id);
+                                      
+                                      return (
+                                        <div
+                                          key={option.id}
+                                          className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                          onClick={() => {
+                                            setPendingColumnFilters(prev => {
+                                              const current = prev[columnId];
+                                              const currentArray = Array.isArray(current) ? current : 
+                                                                 (typeof current === 'string' && current ? [current] : []);
+                                              
+                                              let newArray: string[];
+                                              if (isChecked) {
+                                                newArray = currentArray.filter(id => id !== option.id);
+                                              } else {
+                                                newArray = [...currentArray, option.id];
+                                              }
+                                              
+                                              return {
+                                                ...prev,
+                                                [columnId]: newArray.length > 0 ? newArray : ''
+                                              };
+                                            });
+                                          }}
+                                        >
+                                          <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+                                            {isChecked && (
+                                              <Check className="h-4 w-4" />
+                                            )}
+                                          </span>
                                             {option.id === '__empty__' ? (
                                               <span className="text-muted-foreground italic">{option.label}</span>
                                             ) : columnId === 'status' ? (
-                                              <span 
-                                                className="inline-block px-2 py-1 rounded text-sm"
-                                                style={{
-                                                  backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
-                                                  color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
-                                                }}
-                                              >
-                                                {option.label}
-                                              </span>
-                                            ) : (
-                                              <span>{option.label}</span>
-                                            )}
-                                          </div>
-                                        );
+                                            <span 
+                                              className="inline-block px-2 py-1 rounded text-sm"
+                                              style={{
+                                                backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
+                                                color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
+                                              }}
+                                            >
+                                              {option.label}
+                                            </span>
+                                          ) : (
+                                            <span>{option.label}</span>
+                                          )}
+                                        </div>
+                                      );
                                       });
                                     })()}
                                   </div>

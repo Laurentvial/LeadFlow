@@ -245,17 +245,33 @@ class ContactSerializer(serializers.ModelSerializer):
             ret['manager'] = str(instance.teleoperator.id)
             ret['managerName'] = ret['teleoperatorName']
             ret['managerEmail'] = instance.teleoperator.email or ''
+            # Optimize: Use prefetched data efficiently
             try:
-                teleoperator_user_details = instance.teleoperator.user_details
-                ret['managerUserDetailsId'] = teleoperator_user_details.id if teleoperator_user_details else None
-                teleoperator_team_member = teleoperator_user_details.team_memberships.first() if teleoperator_user_details else None
-                if teleoperator_team_member:
-                    ret['managerTeamId'] = teleoperator_team_member.team.id
-                    ret['managerTeamName'] = teleoperator_team_member.team.name
+                user_details = getattr(instance.teleoperator, 'user_details', None)
+                ret['managerUserDetailsId'] = user_details.id if user_details else None
+                
+                # Use prefetched team_memberships if available
+                if user_details:
+                    # Check if team_memberships is prefetched
+                    prefetched = getattr(user_details, '_prefetched_objects_cache', {})
+                    team_memberships = prefetched.get('team_memberships', None)
+                    
+                    if team_memberships is None:
+                        # Not prefetched, try to access directly (may cause query)
+                        team_memberships = list(user_details.team_memberships.all()) if hasattr(user_details, 'team_memberships') else []
+                    
+                    teleoperator_team_member = team_memberships[0] if team_memberships else None
+                    if teleoperator_team_member:
+                        ret['managerTeamId'] = teleoperator_team_member.team.id if hasattr(teleoperator_team_member, 'team') else None
+                        ret['managerTeamName'] = teleoperator_team_member.team.name if hasattr(teleoperator_team_member, 'team') else ''
+                    else:
+                        ret['managerTeamId'] = None
+                        ret['managerTeamName'] = ''
                 else:
                     ret['managerTeamId'] = None
                     ret['managerTeamName'] = ''
-            except:
+            except Exception:
+                # Silently fail and set defaults
                 ret['managerUserDetailsId'] = None
                 ret['managerTeamId'] = None
                 ret['managerTeamName'] = ''

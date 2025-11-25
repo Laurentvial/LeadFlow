@@ -35,19 +35,19 @@ export function Layout({ children }: LayoutProps) {
     // This is just a placeholder for the onNavigate prop
   };
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
-        <div>Chargement...</div>
-      </div>
-    );
-  }
-
-  // For contact detail pages, render without Header and Sidebar
+  // For contact detail pages, render without Header and Sidebar (and without loading check)
   if (isContactDetailPage) {
     return (
       <div style={{ display: 'block', minHeight: '100vh' }}>
         {children}
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <div>Chargement...</div>
       </div>
     );
   }

@@ -191,7 +191,7 @@ export function ContactInfoTab({
   const canCreatePlanning = useHasPermission('planning', 'create');
   const canEditPlanning = useHasPermission('planning', 'edit');
   const canDeletePlanning = useHasPermission('planning', 'delete');
-  const { currentUser } = useUser();
+  const { currentUser, loading: loadingUser } = useUser();
   const { users } = useUsers();
   
   // Get status permissions
@@ -338,6 +338,7 @@ export function ContactInfoTab({
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [categories, setCategories] = useState<NoteCategory[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [localNotes, setLocalNotes] = useState<any[]>(notes);
   
@@ -361,11 +362,18 @@ export function ContactInfoTab({
   // Check create permission for selected category
   const canCreateInSelectedCategory = useHasNoteCategoryPermission(selectedCategoryId, 'create');
   
-  // Load statuses, sources, and categories
+  // Load statuses, sources, and categories lazily (only when needed)
+  // These are loaded after initial render to not block contact display
   useEffect(() => {
-    loadStatuses();
-    loadSources();
-    loadCategories();
+    // Use setTimeout to defer loading until after initial render
+    const timer = setTimeout(() => {
+      Promise.all([
+        loadStatuses(),
+        loadSources(),
+        loadCategories()
+      ]).catch(err => console.error('Error loading dropdown data:', err));
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -383,6 +391,7 @@ export function ContactInfoTab({
 
   async function loadCategories() {
     try {
+      setLoadingCategories(true);
       const data = await apiCall('/api/note-categories/');
       const sortedCategories = (data.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
         a.orderIndex - b.orderIndex
@@ -390,6 +399,8 @@ export function ContactInfoTab({
       setCategories(sortedCategories);
     } catch (error: any) {
       console.error('Error loading categories:', error);
+    } finally {
+      setLoadingCategories(false);
     }
   }
 
@@ -757,124 +768,140 @@ export function ContactInfoTab({
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          {appointments.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
-              {[...appointments]
-                .sort((a, b) => {
-                  const dateA = new Date(a.datetime).getTime();
-                  const dateB = new Date(b.datetime).getTime();
-                  return dateB - dateA; // Descending order (most recent first)
-                })
-                .slice(0, 6)
-                .map((apt) => {
-                const datetime = new Date(apt.datetime);
-                const isPast = datetime < new Date();
-                return (
-                  <div 
-                    key={apt.id} 
-                    className={`contact-appointment-card ${isPast ? 'past' : ''}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Calendar className={`contact-icon-calendar ${isPast ? 'past' : ''}`} />
-                          <span className={`font-medium ${isPast ? 'contact-text-past' : ''}`}>
-                            {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                          </span>
-                          <Clock className={`contact-icon-clock ml-1 ${isPast ? 'past' : ''}`} />
-                          <span className={isPast ? 'contact-text-past' : ''}>
-                            {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                          </span>
-                        </div>
-                        {apt.comment && (
-                          <p className={`contact-text-comment ${isPast ? 'past' : ''}`}>
-                            {apt.comment}
-                          </p>
-                        )}
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                              {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
-                                day: '2-digit', 
-                                month: '2-digit', 
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              }) : '-'}
-                            </span>
-                            {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
-                              <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                                • {apt.createdBy || apt.userId?.username || apt.user?.username}
+          {/* Show loading indicator while permissions are loading */}
+          {loadingCategories || loadingUser ? (
+            <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
+          ) : (
+            <>
+              {appointments.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {[...appointments]
+                    .sort((a, b) => {
+                      const dateA = new Date(a.datetime).getTime();
+                      const dateB = new Date(b.datetime).getTime();
+                      return dateB - dateA; // Descending order (most recent first)
+                    })
+                    .slice(0, 6)
+                    .map((apt) => {
+                    const datetime = new Date(apt.datetime);
+                    const isPast = datetime < new Date();
+                    return (
+                      <div 
+                        key={apt.id} 
+                        className={`contact-appointment-card ${isPast ? 'past' : ''}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Calendar className={`contact-icon-calendar ${isPast ? 'past' : ''}`} />
+                              <span className={`font-medium ${isPast ? 'contact-text-past' : ''}`}>
+                                {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                               </span>
+                              <Clock className={`contact-icon-clock ml-1 ${isPast ? 'past' : ''}`} />
+                              <span className={isPast ? 'contact-text-past' : ''}>
+                                {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                              </span>
+                            </div>
+                            {apt.comment && (
+                              <p className={`contact-text-comment ${isPast ? 'past' : ''}`}>
+                                {apt.comment}
+                              </p>
                             )}
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
+                                  {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
+                                    day: '2-digit', 
+                                    month: '2-digit', 
+                                    year: 'numeric',
+                                    hour: '2-digit', 
+                                    minute: '2-digit'
+                                  }) : '-'}
+                                </span>
+                                {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
+                                  <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
+                                    • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                                  </span>
+                                )}
+                              </div>
+                              {apt.assignedTo && (
+                                <div className="flex items-center gap-2">
+                                  <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
+                                    Assigné à: <span className="font-medium">{apt.assignedTo}</span>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          {apt.assignedTo && (
-                            <div className="flex items-center gap-2">
-                              <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                                Assigné à: <span className="font-medium">{apt.assignedTo}</span>
-                              </span>
+                          {(canEditPlanning || canDeletePlanning) && (
+                            <div className="flex gap-2 flex-shrink-0">
+                              {canEditPlanning && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditAppointment(apt)}
+                                  className={`contact-tab-button-modify cursor-pointer text-slate-600 ${isPast ? 'past' : ''}`}
+                                >
+                                  Modifier
+                                </Button>
+                              )}
+                              {canDeletePlanning && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteAppointment(apt.id)}
+                                  className={`contact-tab-button-delete text-red-600 cursor-pointer ${isPast ? 'past' : ''}`}
+                                >
+                                  Supprimer
+                                </Button>
+                              )}
                             </div>
                           )}
                         </div>
                       </div>
-                      {(canEditPlanning || canDeletePlanning) && (
-                        <div className="flex gap-2 flex-shrink-0">
-                          {canEditPlanning && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditAppointment(apt)}
-                              className={`contact-tab-button-modify cursor-pointer text-slate-600 ${isPast ? 'past' : ''}`}
-                            >
-                              Modifier
-                            </Button>
-                          )}
-                          {canDeletePlanning && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteAppointment(apt.id)}
-                              className={`contact-tab-button-delete text-red-600 cursor-pointer ${isPast ? 'past' : ''}`}
-                            >
-                              Supprimer
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              {appointments.length > 3 && (
-                <p className="text-xs text-slate-500 text-center pt-1">
-                  + {appointments.length - 3} autre(s) rendez-vous
-                </p>
+                    );
+                  })}
+                  {appointments.length > 3 && (
+                    <p className="text-xs text-slate-500 text-center pt-1">
+                      + {appointments.length - 3} autre(s) rendez-vous
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Aucun rendez-vous</p>
               )}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">Aucun rendez-vous</p>
+            </>
           )}
         </CardContent>
       </Card>
 
       {/* Notes - Compact */}
-      {hasAnyViewPermission && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Notes</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-3">
-            {accessibleCategories.length > 0 && (
-              <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2">
-                <TabsList className="h-8">
-                  {accessibleCategories.map((category) => (
-                    <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1">
-                      {category.name}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-            )}
+      {/* Always show Notes component */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Notes</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          {/* Show loading indicator while categories or permissions are loading */}
+          {loadingCategories || loadingUser ? (
+            <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
+          ) : (
+            <>
+              {/* Show category tabs only if user has access to categories */}
+              {accessibleCategories.length > 0 && (
+            <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2">
+              <TabsList className="h-8">
+                {accessibleCategories.map((category) => (
+                  <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1">
+                    {category.name}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
+          
+          {/* Show form only if user has create permission */}
+          {canCreateInSelectedCategory && (
             <form onSubmit={handleCreateNote} className="space-y-2">
               <div className="flex gap-2 items-stretch">
                 <Textarea
@@ -885,82 +912,83 @@ export function ContactInfoTab({
                   className="resize-none text-sm flex-1"
                   disabled={isSubmittingNote}
                 />
-                {canCreateInSelectedCategory && (
-                  <Button 
-                    type="submit" 
-                    size="sm" 
-                    disabled={isSubmittingNote || !noteText.trim()}
-                    className="contact-tab-button-save-note"
-                  >
-                    <Send className="w-3 h-3 mr-1" />
-                    {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
-                  </Button>
-                )}
+                <Button 
+                  type="submit" 
+                  size="sm" 
+                  disabled={isSubmittingNote || !noteText.trim()}
+                  className="contact-tab-button-save-note"
+                >
+                  <Send className="w-3 h-3 mr-1" />
+                  {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
+                </Button>
               </div>
             </form>
-            
-            {(() => {
-              // Filter notes by selected category and view permissions
-              let filteredNotes = localNotes;
-              
-              // Filter by selected category
-              if (selectedCategoryId !== 'all') {
-                filteredNotes = filteredNotes.filter(note => note.categId === selectedCategoryId);
-              }
-              
-              // Filter to only show notes from categories user has view permission for
-              filteredNotes = filteredNotes.filter(note => {
-                // If note has no category, show it (null category notes are accessible)
-                if (!note.categId) {
-                  return true;
+          )}
+          
+          {/* Show notes list */}
+          {(() => {
+                // Filter notes by selected category and view permissions
+                let filteredNotes = localNotes;
+                
+                // Filter by selected category
+                if (selectedCategoryId !== 'all') {
+                  filteredNotes = filteredNotes.filter(note => note.categId === selectedCategoryId);
                 }
-                // Only show if user has view permission for this category
-                return accessibleCategoryIds.includes(note.categId);
-              });
-              
-              return filteredNotes.length > 0 ? (
-                <div className="space-y-2 pt-2">
-                  {[...filteredNotes]
-                    .sort((a, b) => {
-                      const dateA = new Date(a.createdAt || a.created_at).getTime();
-                      const dateB = new Date(b.createdAt || b.created_at).getTime();
-                      return dateB - dateA; // Descending order (most recent first)
-                    })
-                    .slice(0, showAllNotes ? filteredNotes.length : 3)
-                    .map((note) => (
-                      <NoteItemCompact 
-                        key={note.id}
-                        note={note}
-                        onDelete={handleDeleteNote}
-                        onEdit={handleEditNote}
-                      />
-                    ))}
-                  {filteredNotes.length > 3 && !showAllNotes && (
-                    <p 
-                      className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
-                      onClick={() => setShowAllNotes(true)}
-                    >
-                      + {filteredNotes.length - 3} autre(s) note(s)
-                    </p>
-                  )}
-                  {showAllNotes && filteredNotes.length > 3 && (
-                    <p 
-                      className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
-                      onClick={() => setShowAllNotes(false)}
-                    >
-                      Afficher moins
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500">
-                  Aucune note dans cette catégorie
-                </p>
-              );
-            })()}
-          </CardContent>
-        </Card>
-      )}
+                
+                // Filter to only show notes from categories user has view permission for
+                filteredNotes = filteredNotes.filter(note => {
+                  // If note has no category, show it (null category notes are accessible)
+                  if (!note.categId) {
+                    return true;
+                  }
+                  // Only show if user has view permission for this category
+                  return accessibleCategoryIds.includes(note.categId);
+                });
+                
+                return filteredNotes.length > 0 ? (
+                  <div className="space-y-2 pt-2">
+                    {[...filteredNotes]
+                      .sort((a, b) => {
+                        const dateA = new Date(a.createdAt || a.created_at).getTime();
+                        const dateB = new Date(b.createdAt || b.created_at).getTime();
+                        return dateB - dateA; // Descending order (most recent first)
+                      })
+                      .slice(0, showAllNotes ? filteredNotes.length : 3)
+                      .map((note) => (
+                        <NoteItemCompact 
+                          key={note.id}
+                          note={note}
+                          onDelete={handleDeleteNote}
+                          onEdit={handleEditNote}
+                        />
+                      ))}
+                    {filteredNotes.length > 3 && !showAllNotes && (
+                      <p 
+                        className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                        onClick={() => setShowAllNotes(true)}
+                      >
+                        + {filteredNotes.length - 3} autre(s) note(s)
+                      </p>
+                    )}
+                    {showAllNotes && filteredNotes.length > 3 && (
+                      <p 
+                        className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                        onClick={() => setShowAllNotes(false)}
+                      >
+                        Afficher moins
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    Aucune note dans cette catégorie
+                  </p>
+                );
+              })()}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 1. Informations générales */}
       <Card>

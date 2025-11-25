@@ -4,7 +4,6 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
-import LoadingIndicator from './LoadingIndicator';
 import '../styles/Modal.css';
 import '../styles/ContactTab.css';
 
@@ -24,7 +23,6 @@ interface Log {
 
 export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
   const [logs, setLogs] = useState<Log[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState<Log | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -34,13 +32,10 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
 
   async function loadLogs() {
     try {
-      setLoading(true);
       const data = await apiCall(`/api/contacts/${contactId}/logs/`);
       setLogs(data.logs || []);
     } catch (error) {
       console.error('Error loading logs:', error);
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -143,9 +138,6 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
     setSelectedLog(null);
   }
 
-  if (loading) {
-    return <LoadingIndicator />;
-  }
 
   return (
     <>

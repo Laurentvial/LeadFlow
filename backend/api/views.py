@@ -396,13 +396,17 @@ class NoteListCreateView(generics.ListCreateAPIView):
             accessible_category_ids = None  # Allow all notes if there's an error
         
         try:
-            queryset = Note.objects.select_related('userId', 'categ_id').order_by('-created_at')
+            # Optimize query with select_related to avoid N+1 queries
+            queryset = Note.objects.select_related('userId', 'categ_id', 'contactId').order_by('-created_at')
         except Exception as e:
             # If select_related fails (e.g., categ_id field doesn't exist yet), use basic queryset
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"Error with select_related on categ_id: {e}")
-            queryset = Note.objects.select_related('userId').order_by('-created_at')
+            try:
+                queryset = Note.objects.select_related('userId', 'contactId').order_by('-created_at')
+            except:
+                queryset = Note.objects.select_related('userId').order_by('-created_at')
         
         if contact_id:
             queryset = queryset.filter(contactId=contact_id)
@@ -1008,17 +1012,17 @@ class FosseContactView(generics.ListAPIView):
                                 # Only allow empty option for confirmateur in Fosse
                                 queryset = queryset.none()
                                 break
-                            elif column_id == 'creator':
+                        elif column_id == 'creator':
                                 q_objects.append(models.Q(creator_id__in=regular_values))
-                            elif column_id == 'postalCode':
+                        elif column_id == 'postalCode':
                                 q_objects.append(models.Q(postal_code__in=regular_values))
-                            elif column_id == 'nationality':
+                        elif column_id == 'nationality':
                                 q_objects.append(models.Q(nationality__in=regular_values))
-                            elif column_id == 'campaign':
+                        elif column_id == 'campaign':
                                 q_objects.append(models.Q(campaign__in=regular_values))
-                            elif column_id == 'civility':
+                        elif column_id == 'civility':
                                 q_objects.append(models.Q(civility__in=regular_values))
-                            elif column_id == 'managerTeam':
+                        elif column_id == 'managerTeam':
                                 # For Fosse, contacts have no team, so regular values would exclude all
                                 # Only allow empty option for managerTeam in Fosse
                                 queryset = queryset.none()
@@ -1580,7 +1584,35 @@ def contact_detail(request, contact_id):
     Users with team_only can access contacts from their team.
     Users with all can access any contact.
     """
-    contact = get_object_or_404(Contact, id=contact_id)
+    # Optimize query with select_related and prefetch_related to avoid N+1 queries
+    try:
+        from django.db.models import Prefetch
+        contact = Contact.objects.select_related(
+            'status',
+            'source',
+            'teleoperator',
+            'confirmateur',
+            'creator'
+        ).prefetch_related(
+            Prefetch(
+                'teleoperator__user_details__team_memberships',
+                queryset=TeamMember.objects.select_related('team')
+            ),
+            Prefetch(
+                'confirmateur__user_details__team_memberships',
+                queryset=TeamMember.objects.select_related('team')
+            ),
+            Prefetch(
+                'creator__user_details__team_memberships',
+                queryset=TeamMember.objects.select_related('team')
+            )
+        ).get(id=contact_id)
+    except Contact.DoesNotExist:
+        return Response(
+            {'error': 'Contact non trouvé'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
     user = request.user
     
     # Check data access restrictions

@@ -6,7 +6,6 @@ import { Input } from './ui/input';
 import { Upload, FileText, Download, X, Eye } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
-import LoadingIndicator from './LoadingIndicator';
 import { useHasPermission } from '../hooks/usePermissions';
 import {
   Select,
@@ -43,7 +42,6 @@ const DOCUMENT_TYPES = [
 
 export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string>('');
@@ -58,14 +56,11 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
 
   async function loadDocuments() {
     try {
-      setLoading(true);
       const data = await apiCall(`/api/contacts/${contactId}/documents/`);
       setDocuments(data.documents || []);
     } catch (error) {
       console.error('Error loading documents:', error);
       toast.error('Erreur lors du chargement des documents');
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -196,10 +191,6 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
       console.error('Error deleting document:', error);
       toast.error(error.message || 'Erreur lors de la suppression du document');
     }
-  }
-
-  if (loading) {
-    return <LoadingIndicator />;
   }
 
   return (
