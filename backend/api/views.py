@@ -4357,43 +4357,23 @@ def chat_messages(request, chat_room_id):
                     }
                 )
                 
-                # Create notifications for other participants
+                # Send message notification via WebSocket (no database notification for messages)
+                # This allows real-time popup without cluttering notifications
                 participants = chat_room.participants.exclude(id=request.user.id)
                 for participant in participants:
-                    notification_id = uuid.uuid4().hex[:12]
-                    while Notification.objects.filter(id=notification_id).exists():
-                        notification_id = uuid.uuid4().hex[:12]
-                    
-                    notification = Notification.objects.create(
-                        id=notification_id,
-                        user=participant,
-                        type='message',
-                        title='Nouveau message',
-                        message=f"{message.sender.first_name or message.sender.username}: {message.content[:50]}",
-                        message_id=message.id,
-                        data={
-                            'chat_room_id': chat_room.id,
-                            'sender_id': message.sender.id,
-                            'sender_name': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
-                        }
-                    )
-                    
-                    # Send notification via WebSocket
                     async_to_sync(channel_layer.group_send)(
-                        f'notifications_{participant.id}',
+                        f'chat_message_{participant.id}',
                         {
-                            'type': 'send_notification',
-                            'notification': {
-                                'id': notification.id,
-                                'type': notification.type,
-                                'title': notification.title,
-                                'message': notification.message,
-                                'message_id': notification.message_id,
-                                'data': notification.data,
-                                'is_read': notification.is_read,
-                                'created_at': notification.created_at.isoformat(),
+                            'type': 'new_message',
+                            'message': {
+                                'id': message.id,
+                                'chatRoomId': chat_room.id,
+                                'senderId': message.sender.id,
+                                'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                                'content': message.content,
+                                'createdAt': message.created_at.isoformat(),
                             },
-                            'unread_count': Notification.objects.filter(user=participant, is_read=False).count()
+                            'chat_room_id': chat_room.id,
                         }
                     )
             

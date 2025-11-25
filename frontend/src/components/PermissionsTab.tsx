@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Plus, Pencil, Trash2, Shield, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
+import { useUser } from '../contexts/UserContext';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import {
@@ -75,12 +76,19 @@ interface NoteCategory {
 }
 
 export function PermissionsTab() {
+  const { currentUser } = useUser();
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionRoles, setPermissionRoles] = useState<PermissionRole[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [noteCategories, setNoteCategories] = useState<NoteCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataLoaded, setDataLoaded] = useState({
+    roles: false,
+    permissions: false,
+    statuses: false,
+    noteCategories: false,
+  });
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditRoleModalOpen, setIsEditRoleModalOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
@@ -98,9 +106,65 @@ export function PermissionsTab() {
   // Map: "roleId-permissionId" -> boolean (true = add, false = remove, undefined = no change)
   const [pendingPermissionChanges, setPendingPermissionChanges] = useState<Map<string, boolean>>(new Map());
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
+  
+  // Collapsible sections state
+  const [expandedSections, setExpandedSections] = useState({
+    pages: false,
+    statuses: false,
+    noteCategories: false,
+  });
+
+  // Check current user permissions (same logic as useHasStatusesPermission)
+  const canViewPermissions = React.useMemo(() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  }, [currentUser]);
+
+  const canCreatePermissions = React.useMemo(() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'create' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  }, [currentUser]);
+
+  const canEditPermissions = React.useMemo(() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'edit' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  }, [currentUser]);
+
+  const canDeletePermissions = React.useMemo(() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'delete' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  }, [currentUser]);
 
   useEffect(() => {
-    loadData();
+    loadEssentialData();
   }, []);
   
   // Reset pending changes when role changes
@@ -116,6 +180,60 @@ export function PermissionsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roles]);
 
+  // Load essential data (roles, permissions) on mount
+  async function loadEssentialData() {
+    setLoading(true);
+    try {
+      const [rolesData, permissionsData, permissionRolesData] = await Promise.all([
+        apiCall('/api/roles/'),
+        apiCall('/api/permissions/'),
+        apiCall('/api/permission-roles/'),
+      ]);
+
+      setRoles(rolesData.roles || []);
+      setPermissions(permissionsData.permissions || []);
+      setPermissionRoles(permissionRolesData.permissionRoles || []);
+      setDataLoaded(prev => ({ ...prev, roles: true, permissions: true }));
+    } catch (error: any) {
+      toast.error('Erreur lors du chargement des données');
+      console.error('Error loading essential data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load statuses data when statuses section is expanded
+  async function loadStatuses() {
+    if (dataLoaded.statuses) return; // Already loaded
+    
+    try {
+      const statusesData = await apiCall('/api/statuses/');
+      setStatuses(statusesData.statuses || []);
+      setDataLoaded(prev => ({ ...prev, statuses: true }));
+    } catch (error: any) {
+      toast.error('Erreur lors du chargement des statuts');
+      console.error('Error loading statuses:', error);
+    }
+  }
+
+  // Load note categories data when note categories section is expanded
+  async function loadNoteCategories() {
+    if (dataLoaded.noteCategories) return; // Already loaded
+    
+    try {
+      const categoriesData = await apiCall('/api/note-categories/');
+      const sortedCategories = (categoriesData.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
+        a.orderIndex - b.orderIndex
+      );
+      setNoteCategories(sortedCategories);
+      setDataLoaded(prev => ({ ...prev, noteCategories: true }));
+    } catch (error: any) {
+      toast.error('Erreur lors du chargement des catégories de notes');
+      console.error('Error loading note categories:', error);
+    }
+  }
+
+  // Legacy function for reloading all data (used after saves)
   async function loadData() {
     setLoading(true);
     try {
@@ -123,18 +241,22 @@ export function PermissionsTab() {
         apiCall('/api/roles/'),
         apiCall('/api/permissions/'),
         apiCall('/api/permission-roles/'),
-        apiCall('/api/statuses/'),
-        apiCall('/api/note-categories/'),
+        dataLoaded.statuses ? apiCall('/api/statuses/') : Promise.resolve({ statuses: [] }),
+        dataLoaded.noteCategories ? apiCall('/api/note-categories/') : Promise.resolve({ categories: [] }),
       ]);
 
       setRoles(rolesData.roles || []);
       setPermissions(permissionsData.permissions || []);
       setPermissionRoles(permissionRolesData.permissionRoles || []);
-      setStatuses(statusesData.statuses || []);
-      const sortedCategories = (categoriesData.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
-        a.orderIndex - b.orderIndex
-      );
-      setNoteCategories(sortedCategories);
+      if (dataLoaded.statuses) {
+        setStatuses(statusesData.statuses || []);
+      }
+      if (dataLoaded.noteCategories) {
+        const sortedCategories = (categoriesData.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
+          a.orderIndex - b.orderIndex
+        );
+        setNoteCategories(sortedCategories);
+      }
     } catch (error: any) {
       toast.error('Erreur lors du chargement des données');
       console.error('Error loading data:', error);
@@ -791,13 +913,16 @@ export function PermissionsTab() {
         const afterRoleId = changeKey.substring(roleId.length + 1);
         
         // Check if it's an existing permission (format: roleId-permissionId)
-        // Existing permissions have format "roleId-{12charId}" where ID doesn't contain hyphens
-        const existingParts = afterRoleId.split('-');
-        if (existingParts.length === 1 && existingParts[0].length === 12) {
+        // First, check if afterRoleId is a valid permission ID (exists in permissions list)
+        // This handles IDs of any length, not just 12 characters
+        const isValidPermissionId = permissions.some(p => p.id === afterRoleId);
+        
+        if (isValidPermissionId) {
           // This is an existing permission ID
-          permissionId = existingParts[0];
+          permissionId = afterRoleId;
         } else {
-          // This is a new permission (format: component-action-statusId/category)
+          // This might be a new permission (format: component-action-statusId/category)
+          // or an ID that doesn't exist yet - try to parse it
           const parts = afterRoleId.split('-');
           
           if (parts.length >= 2) {
@@ -1128,10 +1253,23 @@ export function PermissionsTab() {
     return <LoadingIndicator />;
   }
 
+  // If user doesn't have view permission, show message
+  if (!canViewPermissions) {
+    return (
+      <div className="p-4 text-center text-slate-500">
+        Vous n'avez pas la permission de voir les permissions.
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="users-teams-action-bar">
-        <Button onClick={() => setIsRoleModalOpen(true)}>
+        <Button 
+          onClick={() => setIsRoleModalOpen(true)}
+          disabled={!canCreatePermissions}
+          title={!canCreatePermissions ? "Vous n'avez pas la permission de créer des rôles" : ""}
+        >
           <Plus className="users-teams-icon users-teams-icon-with-margin" />
           Créer un rôle
         </Button>
@@ -1451,37 +1589,50 @@ export function PermissionsTab() {
               <div className="space-y-6">
                 {/* Pages Permissions Table */}
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">Pages</h3>
+                  <div 
+                    className="flex items-center justify-between cursor-pointer mb-4 p-2 hover:bg-slate-50 rounded transition-colors"
+                    onClick={() => setExpandedSections(prev => ({ ...prev, pages: !prev.pages }))}
+                  >
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      Pages
+                      {expandedSections.pages ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </h3>
+                  </div>
+                  {expandedSections.pages && (
                   <div className="border overflow-hidden">
                     <table className="w-full">
                       <thead className="bg-slate-100">
                         <tr>
                           <th className="text-left p-3 font-semibold">Page</th>
                           <th 
-                            className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                            onClick={() => toggleAllPagesColumn('view')}
-                            title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                            onClick={canEditPermissions ? () => toggleAllPagesColumn('view') : undefined}
+                            title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                           >
                             Voir
                           </th>
                           <th 
-                            className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                            onClick={() => toggleAllPagesColumn('create')}
-                            title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                            onClick={canEditPermissions ? () => toggleAllPagesColumn('create') : undefined}
+                            title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                           >
                             Créer
                           </th>
                           <th 
-                            className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                            onClick={() => toggleAllPagesColumn('edit')}
-                            title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                            onClick={canEditPermissions ? () => toggleAllPagesColumn('edit') : undefined}
+                            title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                           >
                             Modifier
                           </th>
                           <th 
-                            className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                            onClick={() => toggleAllPagesColumn('delete')}
-                            title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                            onClick={canEditPermissions ? () => toggleAllPagesColumn('delete') : undefined}
+                            title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                           >
                             Supprimer
                           </th>
@@ -1505,9 +1656,9 @@ export function PermissionsTab() {
                           return (
                             <tr key={dbComponent} className="border-b hover:bg-slate-50">
                               <td 
-                                className="p-3 font-medium cursor-pointer hover:text-blue-600"
-                                onClick={() => toggleAllRowPermissions(displayLabel)}
-                                title="Cliquer pour sélectionner/désélectionner toute la ligne"
+                                className={`p-3 font-medium ${canEditPermissions ? 'cursor-pointer hover:text-blue-600' : 'cursor-default'}`}
+                                onClick={canEditPermissions ? () => toggleAllRowPermissions(displayLabel) : undefined}
+                                title={canEditPermissions ? "Cliquer pour sélectionner/désélectionner toute la ligne" : "Vous n'avez pas la permission de modifier les permissions"}
                               >
                                 {displayLabel}
                               </td>
@@ -1518,7 +1669,9 @@ export function PermissionsTab() {
                                   onChange={() =>
                                     togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'view')
                                   }
-                                  className="w-4 h-4 cursor-pointer"
+                                  disabled={!canEditPermissions}
+                                  className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                  title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                 />
                               </td>
                               <td className="p-3 text-center">
@@ -1529,7 +1682,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'create')
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 )}
                               </td>
@@ -1541,7 +1696,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'edit')
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 )}
                               </td>
@@ -1553,7 +1710,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'delete')
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 )}
                               </td>
@@ -1563,11 +1722,32 @@ export function PermissionsTab() {
                       </tbody>
                     </table>
                   </div>
+                  )}
                 </div>
 
                 {/* Status Permissions Table */}
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">Statuts</h3>
+                  <div 
+                    className="flex items-center justify-between cursor-pointer mb-4 p-2 hover:bg-slate-50 rounded transition-colors"
+                    onClick={() => {
+                      const willExpand = !expandedSections.statuses;
+                      setExpandedSections(prev => ({ ...prev, statuses: !prev.statuses }));
+                      if (willExpand) {
+                        loadStatuses();
+                      }
+                    }}
+                  >
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      Statuts
+                      {expandedSections.statuses ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </h3>
+                  </div>
+                  {expandedSections.statuses && (
+                  <>
                   {statuses.length === 0 ? (
                     <p className="text-slate-500">Aucun statut disponible</p>
                   ) : (
@@ -1577,30 +1757,30 @@ export function PermissionsTab() {
                           <tr>
                             <th className="text-left p-3 font-semibold">Statut</th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllStatusColumn('view')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllStatusColumn('view') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Voir
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllStatusColumn('create')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllStatusColumn('create') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Créer
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllStatusColumn('edit')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllStatusColumn('edit') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Modifier
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllStatusColumn('delete')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllStatusColumn('delete') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Supprimer
                             </th>
@@ -1649,48 +1829,48 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasView}
-                                    disabled={!hasContactView}
+                                    disabled={!hasContactView || !canEditPermissions}
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'view', status.id)
                                     }
-                                    className={`w-4 h-4 ${!hasContactView ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                                    title={!hasContactView ? 'Le rôle doit d\'abord avoir la permission "Voir" pour les contacts' : ''}
+                                    className={`w-4 h-4 ${(!hasContactView || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactView ? 'Le rôle doit d\'abord avoir la permission "Voir" pour les contacts' : ''}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
                                   <input
                                     type="checkbox"
                                     checked={hasCreate}
-                                    disabled={!hasContactCreate}
+                                    disabled={!hasContactCreate || !canEditPermissions}
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'create', status.id)
                                     }
-                                    className={`w-4 h-4 ${!hasContactCreate ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                                    title={!hasContactCreate ? 'Le rôle doit d\'abord avoir la permission "Créer" pour les contacts' : ''}
+                                    className={`w-4 h-4 ${(!hasContactCreate || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactCreate ? 'Le rôle doit d\'abord avoir la permission "Créer" pour les contacts' : ''}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
                                   <input
                                     type="checkbox"
                                     checked={hasEdit}
-                                    disabled={!hasContactEdit}
+                                    disabled={!hasContactEdit || !canEditPermissions}
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'edit', status.id)
                                     }
-                                    className={`w-4 h-4 ${!hasContactEdit ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                                    title={!hasContactEdit ? 'Le rôle doit d\'abord avoir la permission "Modifier" pour les contacts' : ''}
+                                    className={`w-4 h-4 ${(!hasContactEdit || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactEdit ? 'Le rôle doit d\'abord avoir la permission "Modifier" pour les contacts' : ''}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
                                   <input
                                     type="checkbox"
                                     checked={hasDelete}
-                                    disabled={!hasContactDelete}
+                                    disabled={!hasContactDelete || !canEditPermissions}
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'delete', status.id)
                                     }
-                                    className={`w-4 h-4 ${!hasContactDelete ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                                    title={!hasContactDelete ? 'Le rôle doit d\'abord avoir la permission "Supprimer" pour les contacts' : ''}
+                                    className={`w-4 h-4 ${(!hasContactDelete || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactDelete ? 'Le rôle doit d\'abord avoir la permission "Supprimer" pour les contacts' : ''}
                                   />
                                 </td>
                               </tr>
@@ -1700,11 +1880,33 @@ export function PermissionsTab() {
                       </table>
                     </div>
                   )}
+                  </>
+                  )}
                 </div>
 
                 {/* Note Category Permissions Table */}
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">Catégories de notes</h3>
+                  <div 
+                    className="flex items-center justify-between cursor-pointer mb-4 p-2 hover:bg-slate-50 rounded transition-colors"
+                    onClick={() => {
+                      const willExpand = !expandedSections.noteCategories;
+                      setExpandedSections(prev => ({ ...prev, noteCategories: !prev.noteCategories }));
+                      if (willExpand) {
+                        loadNoteCategories();
+                      }
+                    }}
+                  >
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      Catégories de notes
+                      {expandedSections.noteCategories ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </h3>
+                  </div>
+                  {expandedSections.noteCategories && (
+                  <>
                   {noteCategories.length === 0 ? (
                     <p className="text-slate-500">Aucune catégorie de notes disponible</p>
                   ) : (
@@ -1714,30 +1916,30 @@ export function PermissionsTab() {
                           <tr>
                             <th className="text-left p-3 font-semibold">Catégorie</th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllNoteCategoryColumn('view')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllNoteCategoryColumn('view') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Voir
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllNoteCategoryColumn('create')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllNoteCategoryColumn('create') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Créer
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllNoteCategoryColumn('edit')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllNoteCategoryColumn('edit') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Modifier
                             </th>
                             <th 
-                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
-                              onClick={() => toggleAllNoteCategoryColumn('delete')}
-                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => toggleAllNoteCategoryColumn('delete') : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
                             >
                               Supprimer
                             </th>
@@ -1770,7 +1972,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'view', null, category.id)
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
@@ -1780,7 +1984,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'create', null, category.id)
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
@@ -1790,7 +1996,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'edit', null, category.id)
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 </td>
                                 <td className="p-3 text-center">
@@ -1800,7 +2008,9 @@ export function PermissionsTab() {
                                     onChange={() =>
                                       togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'delete', null, category.id)
                                     }
-                                    className="w-4 h-4 cursor-pointer"
+                                    disabled={!canEditPermissions}
+                                    className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                    title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                                   />
                                 </td>
                               </tr>
@@ -1810,6 +2020,8 @@ export function PermissionsTab() {
                       </table>
                     </div>
                   )}
+                  </>
+                  )}
                 </div>
 
                 {/* Save button */}
@@ -1817,7 +2029,8 @@ export function PermissionsTab() {
                   <div className="flex justify-end pt-4 border-t">
                     <Button 
                       onClick={handleSavePermissions}
-                      disabled={isSavingPermissions}
+                      disabled={isSavingPermissions || !canEditPermissions}
+                      title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
                     >
                       {isSavingPermissions ? 'Enregistrement...' : `Enregistrer (${pendingPermissionChanges.size} modification${pendingPermissionChanges.size > 1 ? 's' : ''})`}
                     </Button>

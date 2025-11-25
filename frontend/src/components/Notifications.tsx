@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { apiCall } from '../utils/api';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -31,27 +31,31 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
 
   // Load notifications
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async (silent: boolean = false) => {
     try {
       const data = await apiCall('/api/notifications/');
-      setNotifications(data.notifications || []);
-      setUnreadCount(data.notifications?.filter((n: Notification) => !n.is_read).length || 0);
+      // Filter out message notifications - they are handled separately via chat popup
+      const filteredNotifications = (data.notifications || []).filter((n: Notification) => n.type !== 'message');
+      setNotifications(filteredNotifications);
+      setUnreadCount(filteredNotifications.filter((n: Notification) => !n.is_read).length || 0);
     } catch (error: any) {
       console.error('Error loading notifications:', error);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
 
   // Load unread count
-  const loadUnreadCount = async () => {
+  const loadUnreadCount = useCallback(async () => {
     try {
       const data = await apiCall('/api/notifications/unread-count/');
       setUnreadCount(data.unread_count || 0);
     } catch (error: any) {
       console.error('Error loading unread count:', error);
     }
-  };
+  }, []);
 
   // Mark notification as read
   const markAsRead = async (notificationId: string) => {
@@ -142,9 +146,26 @@ export default function Notifications() {
     url: '/ws/notifications/',
     onMessage: (message) => {
       if (message.type === 'notification') {
-        // Add new notification
-        setNotifications(prev => [message.notification, ...prev]);
-        setUnreadCount(prev => prev + 1);
+        // Filter out message notifications - they are handled separately via chat popup
+        if (message.notification.type === 'message') {
+          return; // Ignore message notifications
+        }
+        
+        // Add new notification to the list
+        setNotifications(prev => {
+          // Check if notification already exists to avoid duplicates
+          const exists = prev.some(n => n.id === message.notification.id);
+          if (exists) {
+            return prev;
+          }
+          return [message.notification, ...prev];
+        });
+        // Use unread_count from backend instead of incrementing manually
+        if (message.unread_count !== undefined) {
+          setUnreadCount(message.unread_count);
+        } else {
+          setUnreadCount(prev => prev + 1);
+        }
         
         // Show toast notification
         toast.info(message.notification.title, {
@@ -154,10 +175,16 @@ export default function Notifications() {
         setUnreadCount(message.unread_count || 0);
       } else if (message.type === 'connection_established') {
         setUnreadCount(message.unread_count || 0);
+        // Reload notifications when connection is established
+        loadNotifications();
       }
     },
     onError: (error) => {
       console.error('Notifications WebSocket error:', error);
+    },
+    onOpen: () => {
+      // Reload notifications when WebSocket connects
+      loadNotifications();
     },
     reconnect: true,
   });
@@ -165,7 +192,22 @@ export default function Notifications() {
   // Initial load
   useEffect(() => {
     loadNotifications();
-  }, []);
+  }, [loadNotifications]);
+
+  // Auto-refresh notifications periodically (like WhatsApp)
+  useEffect(() => {
+    // Don't start auto-refresh until initial load is complete
+    if (loading) return;
+
+    const interval = setInterval(() => {
+      // Refresh notifications silently (don't show loading state)
+      loadNotifications(true);
+      // Also refresh unread count separately for accuracy
+      loadUnreadCount();
+    }, 10000); // Refresh every 10 seconds (less frequent than chat since notifications are less time-sensitive)
+
+    return () => clearInterval(interval);
+  }, [loading, loadNotifications, loadUnreadCount]);
 
   // Mark as read via WebSocket when notification is clicked
   useEffect(() => {
@@ -227,20 +269,39 @@ export default function Notifications() {
                 <div
                   key={notification.id}
                   className={`notification-item ${!notification.is_read ? 'unread' : ''}`}
-                  onClick={() => handleNotificationClick(notification)}
                 >
-                  <div className="notification-icon">
-                    {getNotificationIcon(notification.type)}
-                  </div>
-                  <div className="notification-content">
-                    <div className="notification-title">{notification.title}</div>
-                    <div className="notification-message">{notification.message}</div>
-                    <div className="notification-time">
-                      {formatTime(notification.created_at)}
+                  <div 
+                    className="notification-main-content"
+                    onClick={() => handleNotificationClick(notification)}
+                    style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
+                  >
+                    <div className="notification-icon">
+                      {getNotificationIcon(notification.type)}
                     </div>
+                    <div className="notification-content">
+                      <div className="notification-title">{notification.title}</div>
+                      <div className="notification-message">{notification.message}</div>
+                      <div className="notification-time">
+                        {formatTime(notification.created_at)}
+                      </div>
+                    </div>
+                    {!notification.is_read && (
+                      <div className="notification-unread-indicator" />
+                    )}
                   </div>
                   {!notification.is_read && (
-                    <div className="notification-unread-indicator" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="notification-mark-read-button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        markAsRead(notification.id);
+                      }}
+                      title="Marquer comme lu"
+                    >
+                      <Check className="h-4 w-4" />
+                    </Button>
                   )}
                 </div>
               ))

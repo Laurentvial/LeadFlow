@@ -35,7 +35,7 @@ export function SettingsPermissionWrapper({ children }: SettingsPermissionWrappe
     return <Navigate to="/login" replace />;
   }
 
-  // If no access to either tab, redirect to an accessible route
+  // If no access to any tab, redirect to an accessible route
   if (!hasAccess) {
     const accessibleRoute = getAccessibleRoute(currentUser);
     return <Navigate to={accessibleRoute} replace />;

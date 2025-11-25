@@ -475,6 +475,32 @@ export function ContactList({
     // loadData will be called by useEffect when applied filters change
   }
   
+  // Reset a specific column filter
+  function handleResetColumnFilter(columnId: string) {
+    // Remove from pending filters
+    setPendingColumnFilters(prev => {
+      const newFilters = { ...prev };
+      delete newFilters[columnId];
+      return newFilters;
+    });
+    
+    // Remove from applied filters (this will trigger reload via useEffect)
+    setAppliedColumnFilters(prev => {
+      const newFilters = { ...prev };
+      delete newFilters[columnId];
+      return newFilters;
+    });
+    
+    // Remove from display filters
+    setColumnFilters(prev => {
+      const newFilters = { ...prev };
+      delete newFilters[columnId];
+      return newFilters;
+    });
+    
+    setCurrentPage(1); // Reset to first page
+  }
+
   // Reset filters
   function handleResetFilters() {
     setPendingSearchTerm('');
@@ -1666,12 +1692,7 @@ export function ContactList({
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
-                                    // Reset pending filter without applying
-                                    setPendingColumnFilters(prev => {
-                                      const newFilters = { ...prev };
-                                      delete newFilters[columnId];
-                                      return newFilters;
-                                    });
+                                    handleResetColumnFilter(columnId);
                                   }}
                                   disabled={(() => {
                                     const pending = pendingColumnFilters[columnId];

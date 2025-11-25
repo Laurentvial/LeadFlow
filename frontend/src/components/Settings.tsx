@@ -5,10 +5,25 @@ import '../styles/PageHeader.css';
 import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
 import { ContactFormTab } from './ContactFormTab';
-import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
+import { useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 
 export function Settings() {
-  const hasPermissionsPermission = useHasPermission('permissions', 'view');
+  const { currentUser } = useUser();
+  
+  // Check permissions permission using same logic as useHasStatusesPermission
+  const hasPermissionsPermission = (() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  })();
+  
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   
@@ -22,8 +37,7 @@ export function Settings() {
 
   const [defaultTab] = useState(getDefaultTab());
 
-  // If user has no permissions for either tab, they shouldn't be here (route protection handles this)
-  // But we'll still check to hide tabs they can't access
+  // Include tabs based on permissions
   const visibleTabs: string[] = [];
   if (hasPermissionsPermission) visibleTabs.push('permissions');
   if (hasStatusesPermission) visibleTabs.push('statuses');

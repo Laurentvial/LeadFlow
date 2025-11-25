@@ -15,10 +15,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def connect(self):
         """Handle WebSocket connection"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Get token from query string
-        token = self.scope.get('query_string', b'').decode('utf-8').split('token=')[-1].split('&')[0]
+        query_string = self.scope.get('query_string', b'').decode('utf-8')
+        logger.info(f"[NotificationConsumer] Connection attempt. Query string: {query_string[:100]}")
+        
+        token = query_string.split('token=')[-1].split('&')[0] if 'token=' in query_string else ''
         
         if not token:
+            logger.warning("[NotificationConsumer] No token provided, closing connection")
             await self.close()
             return
         
@@ -29,7 +36,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             decoded_data = jwt_decode(token, settings.SECRET_KEY, algorithms=["HS256"])
             user_id = decoded_data.get('user_id')
             
+            logger.info(f"[NotificationConsumer] Token decoded successfully. User ID: {user_id}")
+            
             if not user_id:
+                logger.warning("[NotificationConsumer] No user_id in token, closing connection")
                 await self.close()
                 return
             
@@ -37,14 +47,42 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             self.user = await database_sync_to_async(DjangoUser.objects.get)(id=user_id)
             self.user_id = user_id
             
+            logger.info(f"[NotificationConsumer] User found: {self.user.username}")
+            
+            # Check if channel_layer is available
+            if not self.channel_layer:
+                logger.error("[NotificationConsumer] No channel_layer available!")
+                await self.close()
+                return
+            
             # Join user's notification group
             self.group_name = f'notifications_{self.user_id}'
-            await self.channel_layer.group_add(
-                self.group_name,
-                self.channel_name
-            )
+            try:
+                await self.channel_layer.group_add(
+                    self.group_name,
+                    self.channel_name
+                )
+                logger.info(f"[NotificationConsumer] Joined group: {self.group_name}")
+            except Exception as e:
+                logger.error(f"[NotificationConsumer] Error joining group {self.group_name}: {e}")
+                await self.close()
+                return
+            
+            # Also join chat message group for receiving message popups
+            self.chat_message_group = f'chat_message_{self.user_id}'
+            try:
+                await self.channel_layer.group_add(
+                    self.chat_message_group,
+                    self.channel_name
+                )
+                logger.info(f"[NotificationConsumer] Joined group: {self.chat_message_group}")
+            except Exception as e:
+                logger.error(f"[NotificationConsumer] Error joining group {self.chat_message_group}: {e}")
+                await self.close()
+                return
             
             await self.accept()
+            logger.info("[NotificationConsumer] Connection accepted")
             
             # Send unread notifications count
             unread_count = await database_sync_to_async(
@@ -54,8 +92,18 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'type': 'connection_established',
                 'unread_count': unread_count
             }))
+            logger.info(f"[NotificationConsumer] Sent unread count: {unread_count}")
             
-        except (InvalidToken, TokenError, DjangoUser.DoesNotExist) as e:
+        except (InvalidToken, TokenError) as e:
+            logger.error(f"[NotificationConsumer] Token error: {str(e)}")
+            await self.close()
+        except DjangoUser.DoesNotExist as e:
+            logger.error(f"[NotificationConsumer] User not found: {e}")
+            await self.close()
+        except Exception as e:
+            logger.error(f"[NotificationConsumer] Unexpected error: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             await self.close()
     
     async def disconnect(self, close_code):
@@ -63,6 +111,11 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         if hasattr(self, 'group_name'):
             await self.channel_layer.group_discard(
                 self.group_name,
+                self.channel_name
+            )
+        if hasattr(self, 'chat_message_group'):
+            await self.channel_layer.group_discard(
+                self.chat_message_group,
                 self.channel_name
             )
     
@@ -121,6 +174,14 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'notification': event['notification'],
             'unread_count': event.get('unread_count', 0)
         }))
+    
+    async def new_message(self, event):
+        """Send new message notification to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'new_message',
+            'message': event['message'],
+            'chat_room_id': event.get('chat_room_id')
+        }))
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -164,7 +225,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
             
+            # Join active chat group to indicate user is viewing this chat room
+            self.active_chat_group = f'chat_active_{self.user.id}_{self.room_id}'
+            await self.channel_layer.group_add(
+                self.active_chat_group,
+                self.channel_name
+            )
+            
             await self.accept()
+            
+            # Mark all messages in this room as read when user connects
+            await database_sync_to_async(Message.objects.filter(
+                chat_room=chat_room
+            ).exclude(sender=self.user).update)(is_read=True)
             
         except (InvalidToken, TokenError, DjangoUser.DoesNotExist, ChatRoom.DoesNotExist) as e:
             await self.close()
@@ -174,6 +247,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if hasattr(self, 'room_group_name'):
             await self.channel_layer.group_discard(
                 self.room_group_name,
+                self.channel_name
+            )
+        if hasattr(self, 'active_chat_group'):
+            await self.channel_layer.group_discard(
+                self.active_chat_group,
                 self.channel_name
             )
     
@@ -290,48 +368,46 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
     
     async def create_notifications_for_participants(self, chat_room, message):
-        """Create notifications for chat room participants (except sender)"""
+        """Send message notification via WebSocket (no database notification for messages)"""
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        
         participants = await database_sync_to_async(list)(chat_room.participants.all())
         
         for participant in participants:
             if participant.id != self.user.id:
-                # Create notification
-                notification_id = uuid.uuid4().hex[:12]
-                while await database_sync_to_async(Notification.objects.filter(id=notification_id).exists)():
-                    notification_id = uuid.uuid4().hex[:12]
+                # Check if participant is currently viewing this chat room by checking if active_chat_group exists
+                # We'll send a test message to the active chat group and see if it's delivered
+                # If the group has members, user is viewing the chat
+                active_chat_group = f'chat_active_{participant.id}_{chat_room.id}'
                 
-                notification = await database_sync_to_async(Notification.objects.create)(
-                    id=notification_id,
-                    user=participant,
-                    type='message',
-                    title='Nouveau message',
-                    message=f"{message.sender.first_name or message.sender.username}: {message.content[:50]}",
-                    message_id=message.id,
-                    data={
-                        'chat_room_id': chat_room.id,
-                        'sender_id': message.sender.id,
-                        'sender_name': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                # Try to send a message to check if user is active in this chat
+                # If user is active, mark message as read and don't send popup
+                # We'll use a simple approach: send a "mark_read" message to active group
+                # If no one receives it, send the popup notification
+                await channel_layer.group_send(
+                    active_chat_group,
+                    {
+                        'type': 'mark_message_read',
+                        'message_id': message.id,
                     }
                 )
                 
-                # Send notification via WebSocket
+                # Always send popup notification - frontend will decide whether to show it
+                # based on whether user is viewing the chat
                 await self.channel_layer.group_send(
-                    f'notifications_{participant.id}',
+                    f'chat_message_{participant.id}',
                     {
-                        'type': 'send_notification',
-                        'notification': {
-                            'id': notification.id,
-                            'type': notification.type,
-                            'title': notification.title,
-                            'message': notification.message,
-                            'message_id': notification.message_id,
-                            'data': notification.data,
-                            'is_read': notification.is_read,
-                            'created_at': notification.created_at.isoformat(),
+                        'type': 'new_message',
+                        'message': {
+                            'id': message.id,
+                            'chatRoomId': chat_room.id,
+                            'senderId': message.sender.id,
+                            'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                            'content': message.content,
+                            'createdAt': message.created_at.isoformat(),
                         },
-                        'unread_count': await database_sync_to_async(
-                            Notification.objects.filter(user=participant, is_read=False).count
-                        )()
+                        'chat_room_id': chat_room.id,
                     }
                 )
 

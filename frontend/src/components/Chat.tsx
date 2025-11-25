@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { apiCall } from '../utils/api';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useUnreadMessages, ActiveChatRoomProvider, useSetActiveChatRoom } from '../contexts/UnreadMessagesContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { ScrollArea } from './ui/scroll-area';
@@ -56,10 +57,16 @@ interface User {
   email: string;
 }
 
-export default function Chat() {
+function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom | null; setSelectedRoom: (room: ChatRoom | null) => void }) {
   const { currentUser } = useUser();
+  const { refreshUnreadCount } = useUnreadMessages();
+  const setActiveChatRoom = useSetActiveChatRoom();
   const [chatRooms, setChatRooms] = useState<ChatRoom[]>([]);
-  const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
+  
+  // Update active chat room context when selectedRoom changes
+  useEffect(() => {
+    setActiveChatRoom(selectedRoom?.id || null);
+  }, [selectedRoom, setActiveChatRoom]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [users, setUsers] = useState<User[]>([]);
@@ -68,6 +75,7 @@ export default function Chat() {
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingMessages, setPendingMessages] = useState<Map<string, Message>>(new Map());
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
@@ -79,17 +87,20 @@ export default function Chat() {
   }, [messages]);
 
   // Load chat rooms
-  const loadChatRooms = async () => {
+  const loadChatRooms = React.useCallback(async () => {
     try {
       const data = await apiCall('/api/chat/rooms/');
       setChatRooms(data || []);
+      
+      // Refresh global unread count in sidebar
+      refreshUnreadCount();
     } catch (error: any) {
       console.error('Error loading chat rooms:', error);
       toast.error('Erreur lors du chargement des conversations');
     } finally {
       setLoading(false);
     }
-  };
+  }, [refreshUnreadCount]);
 
   // Load users for new chat
   const loadUsers = async () => {
@@ -102,20 +113,50 @@ export default function Chat() {
   };
 
   // Load messages for selected room
-  const loadMessages = async (roomId: string) => {
+  const loadMessages = React.useCallback(async (roomId: string, preservePending: boolean = false) => {
     try {
       const data = await apiCall(`/api/chat/rooms/${roomId}/messages/`);
-      setMessages(data || []);
+      const serverMessages = data || [];
       
-      // Mark messages as read via WebSocket or API
-      if (chatWs.isConnected && selectedRoom?.id === roomId) {
-        chatWs.send({
-          type: 'mark_read',
+      // Merge server messages with pending messages to avoid losing messages being sent
+      if (preservePending && pendingMessages.size > 0) {
+        const pendingArray = Array.from(pendingMessages.values());
+        const allMessages = [...serverMessages, ...pendingArray];
+        
+        // Remove duplicates and sort by createdAt
+        const uniqueMessages = allMessages.reduce((acc, msg) => {
+          const existing = acc.find(m => m.id === msg.id);
+          if (!existing) {
+            acc.push(msg);
+          }
+          return acc;
+        }, [] as Message[]);
+        
+        uniqueMessages.sort((a, b) => 
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        
+        setMessages(uniqueMessages);
+        
+        // Remove pending messages that are now in server response
+        setPendingMessages(prev => {
+          const newMap = new Map(prev);
+          serverMessages.forEach((msg: Message) => {
+            newMap.delete(msg.id);
+          });
+          return newMap;
         });
       } else {
+        setMessages(serverMessages);
+      }
+      
+      // Mark messages as read via API (WebSocket will be handled separately)
+      try {
         await apiCall(`/api/chat/rooms/${roomId}/read/`, {
           method: 'POST',
         });
+      } catch (readError) {
+        // Ignore read errors, not critical
       }
       
       // Update unread count in chat rooms list
@@ -126,7 +167,7 @@ export default function Chat() {
       console.error('Error loading messages:', error);
       toast.error('Erreur lors du chargement des messages');
     }
-  };
+  }, [pendingMessages]);
 
   // Send message
   const sendMessage = async () => {
@@ -134,6 +175,29 @@ export default function Chat() {
 
     const content = messageInput.trim();
     setMessageInput('');
+
+    // Create optimistic message immediately
+    const currentDjangoUserId = currentUser?.djangoUserId ?? currentUser?.id;
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const optimisticMessage: Message = {
+      id: tempId,
+      chatRoomId: selectedRoom.id,
+      senderId: Number(currentDjangoUserId),
+      senderName: `${currentUser?.firstName || ''} ${currentUser?.lastName || ''}`.trim() || currentUser?.email || 'Vous',
+      content: content,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Add optimistic message immediately to UI
+    setMessages(prev => [...prev, optimisticMessage]);
+    
+    // Add to pending messages
+    setPendingMessages(prev => {
+      const newMap = new Map(prev);
+      newMap.set(tempId, optimisticMessage);
+      return newMap;
+    });
 
     // Try WebSocket first, fallback to API
     if (chatWs.isConnected) {
@@ -149,7 +213,19 @@ export default function Chat() {
           body: JSON.stringify({ content }),
         });
 
-        setMessages(prev => [...prev, newMessage]);
+        // Replace optimistic message with real message
+        setMessages(prev => {
+          const filtered = prev.filter(m => m.id !== tempId);
+          return [...filtered, newMessage];
+        });
+        
+        // Remove from pending and add real message
+        setPendingMessages(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(tempId);
+          newMap.set(newMessage.id, newMessage);
+          return newMap;
+        });
         
         // Update last message in chat rooms list
         setChatRooms(prev => prev.map(room => 
@@ -164,6 +240,14 @@ export default function Chat() {
         console.error('Error sending message:', error);
         toast.error('Erreur lors de l\'envoi du message');
         setMessageInput(content); // Restore message on error
+        
+        // Remove optimistic message on error
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        setPendingMessages(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(tempId);
+          return newMap;
+        });
       }
     }
   };
@@ -198,7 +282,9 @@ export default function Chat() {
   // Handle room selection
   const handleRoomSelect = async (room: ChatRoom) => {
     setSelectedRoom(room);
-    await loadMessages(room.id);
+    // Clear pending messages when switching rooms
+    setPendingMessages(new Map());
+    await loadMessages(room.id, false);
   };
 
   // Initial load
@@ -212,16 +298,55 @@ export default function Chat() {
     url: selectedRoom ? `/ws/chat/${selectedRoom.id}/` : '',
     onMessage: (message) => {
       if (message.type === 'chat_message') {
-        // Add new message to the list
-        setMessages(prev => {
-          // Check if message already exists
-          const exists = prev.some(m => m.id === message.message.id);
-          if (exists) return prev;
-          return [...prev, message.message];
-        });
+        const newMessage = message.message;
         
-        // Update chat rooms list
+        // If this message is for the currently selected room, add it to messages
+        if (selectedRoom && newMessage.chatRoomId === selectedRoom.id) {
+          setMessages(prev => {
+            // Check if message already exists (by ID or by content if it's our optimistic message)
+            const exists = prev.some(m => m.id === newMessage.id);
+            if (exists) return prev;
+            
+            // Remove any pending optimistic message with same content from same sender
+            const filtered = prev.filter(m => {
+              // Keep if it's not a pending message or if it doesn't match
+              if (!m.id.startsWith('temp_')) return true;
+              // Remove optimistic message if content and sender match
+              return !(m.content === newMessage.content && 
+                      m.senderId === newMessage.senderId &&
+                      Math.abs(new Date(m.createdAt).getTime() - new Date(newMessage.createdAt).getTime()) < 5000);
+            });
+            
+            return [...filtered, newMessage];
+          });
+          
+          // Remove from pending messages since we got the real one
+          setPendingMessages(prev => {
+            const newMap = new Map(prev);
+            // Remove any pending message that matches this real message
+            newMap.forEach((pendingMsg, key) => {
+              if (pendingMsg.content === newMessage.content && 
+                  pendingMsg.senderId === newMessage.senderId &&
+                  Math.abs(new Date(pendingMsg.createdAt).getTime() - new Date(newMessage.createdAt).getTime()) < 5000) {
+                newMap.delete(key);
+              }
+            });
+            return newMap;
+          });
+          
+          // Mark as read if room is open
+          if (chatWs.isConnected) {
+            chatWs.send({
+              type: 'mark_read',
+            });
+          }
+        }
+        
+        // Always update chat rooms list to show new messages
         loadChatRooms();
+        
+        // Refresh global unread count in sidebar
+        refreshUnreadCount();
       } else if (message.type === 'typing') {
         // Handle typing indicator (optional)
         // You can add typing indicator UI here
@@ -236,17 +361,44 @@ export default function Chat() {
     reconnect: true,
   });
 
-  // WebSocket connection for chat rooms updates
+  // WebSocket connection for chat rooms updates (listens to all notifications)
   const roomsWs = useWebSocket({
     url: '/ws/notifications/',
     onMessage: (message) => {
       if (message.type === 'notification' && message.notification?.type === 'message') {
-        // Reload chat rooms when a new message notification is received
+        const notification = message.notification;
+        const chatRoomId = notification.data?.chat_room_id;
+        
+        // Reload chat rooms immediately when a new message notification is received
         loadChatRooms();
+        
+        // If the message is for the currently selected room, reload messages immediately
+        if (selectedRoom && chatRoomId === selectedRoom.id) {
+          // Reload messages to get the latest, preserving pending messages
+          loadMessages(selectedRoom.id, true); // preservePending = true
+        }
       }
+    },
+    onOpen: () => {
+      // Reload chat rooms when WebSocket connects
+      loadChatRooms();
     },
     reconnect: true,
   });
+
+  // Auto-refresh chat rooms periodically (like WhatsApp)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadChatRooms();
+      
+      // Also reload messages for currently selected room, preserving pending messages
+      if (selectedRoom) {
+        loadMessages(selectedRoom.id, true); // preservePending = true
+      }
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [selectedRoom, loadChatRooms, loadMessages]);
 
   // Filter chat rooms by search query
   const filteredRooms = chatRooms.filter(room => {
@@ -508,6 +660,16 @@ export default function Chat() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function Chat() {
+  const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
+  
+  return (
+    <ActiveChatRoomProvider>
+      <ChatContent selectedRoom={selectedRoom} setSelectedRoom={setSelectedRoom} />
+    </ActiveChatRoomProvider>
   );
 }
 

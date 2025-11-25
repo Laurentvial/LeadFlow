@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 import {
   Tooltip,
   TooltipContent,
@@ -18,7 +19,8 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
+import { UnreadMessagesContext } from '../contexts/UnreadMessagesContext';
 
 interface SidebarProps {
   currentPage: string;
@@ -31,6 +33,12 @@ const SIDEBAR_STORAGE_KEY = 'sidebar_collapsed';
 export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { currentUser, loading: userLoading } = useUser();
+  
+  // Safely access unread messages context
+  const unreadMessagesContext = useContext(UnreadMessagesContext);
+  const totalUnreadCount = unreadMessagesContext?.totalUnreadCount || 0;
+  
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     return saved === 'true';
@@ -44,16 +52,56 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     setIsCollapsed(!isCollapsed);
   };
   
-  // Check permissions for all menu items (hooks must be called at top level)
-  const hasDashboardPermission = useHasPermission('dashboard', 'view');
-  const hasPlanningPermission = useHasPermission('planning', 'view');
-  const hasContactsPermission = useHasPermission('contacts', 'view');
-  const hasFossePermission = useHasPermission('fosse', 'view');
-  const hasUsersPermission = useHasPermission('users', 'view');
-  const hasPermissionsPermission = useHasPermission('permissions', 'view');
-  const hasStatusesPermission = useHasStatusesPermission();
-  const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
-  const hasMailsPermission = useHasPermission('mails', 'view');
+  // Check permissions directly from user permissions (same logic as useHasStatusesPermission)
+  // This ensures permissions are checked correctly
+  const checkUserPermission = (component: string, action: string = 'view'): boolean => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === component && 
+             perm.action === action &&
+             !perm.fieldName && // Exclude field-level permissions
+             !perm.statusId; // Only general permissions
+    });
+  };
+  
+  // Check permissions for all menu items using direct permission check
+  const hasDashboardPermission = checkUserPermission('dashboard', 'view');
+  const hasPlanningPermission = checkUserPermission('planning', 'view');
+  const hasContactsPermission = checkUserPermission('contacts', 'view');
+  const hasFossePermission = checkUserPermission('fosse', 'view');
+  const hasUsersPermission = checkUserPermission('users', 'view');
+  const hasPermissionsPermission = checkUserPermission('permissions', 'view');
+  const hasMailsPermission = checkUserPermission('mails', 'view');
+  
+  // Check statuses permission (same logic as useHasStatusesPermission)
+  const hasStatusesPermission = (() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'statuses' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  })();
+  
+  // Check note categories permission (same logic as useHasNoteCategoriesPermission)
+  const hasNoteCategoriesPermission = (() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'note_categories' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  })();
+  
   // Settings page is accessible if user has access to permissions, statuses, or note categories
   const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission;
   // Chat doesn't require permission check - available to all authenticated users
@@ -92,7 +140,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     { 
       id: 'fosse', 
       label: 'Fosse', 
-      icon: UserCircle, 
+      icon: Users, 
       roles: ['admin', 'teamleader', 'gestionnaire'], 
       path: '/fosse',
       requiresPermission: true,
@@ -161,33 +209,24 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     if (component === 'users') return hasUsersPermission;
     if (component === 'settings') return hasSettingsPermission; // This checks permissions OR statuses
     
-    return true; // Default to true if permission check not implemented
+    // Default to false for security - if component is not recognized, don't show it
+    return false;
   };
   
   // Filter menu items based on permissions - permissions are the primary security mechanism
   // Items are only shown if user has the required permission
-  // Role check is kept as a secondary filter for additional security
-  const visibleItems = menuItems.filter(item => {
-    // Primary check: if item requires permission, user must have it
-    // If user doesn't have permission, hide the item regardless of role
+  // Don't filter if user is still loading
+  const visibleItems = userLoading ? [] : menuItems.filter(item => {
+    // If item requires permission, user must have it
+    // If user doesn't have permission, hide the item
     if ((item as any).requiresPermission) {
-      if (!checkPermission(item)) {
-        return false; // Hide item if no permission - this is the primary security check
+      const hasPermission = checkPermission(item);
+      if (!hasPermission) {
+        return false; // Hide item if no permission
       }
     }
     
-    // Secondary check: role-based access (only if permission check passed)
-    // This provides an additional layer of security
-    // Only check role if it's a valid role and item has role requirements
-    if (isValidRole && item.roles.length > 0) {
-      // Check if user's role matches one of the required roles for this item
-      const hasRequiredRole = item.roles.some(role => role.toLowerCase() === normalizedUserRole);
-      if (!hasRequiredRole) {
-        return false; // Hide item if role doesn't match
-      }
-    }
-    
-    // Show item if permission check passed (and role check passed if applicable)
+    // Show item if permission check passed (or if no permission required, like chat)
     return true;
   });
 
@@ -235,16 +274,25 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
             {visibleItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path || currentPage === item.id;
+              const showUnreadBadge = item.id === 'chat' && totalUnreadCount > 0;
               
               const buttonContent = (
                 <Button
                   key={item.id}
                   variant={isActive ? 'default' : 'ghost'}
-                  className={`w-full ${isCollapsed ? 'justify-center px-0' : 'justify-start'}`}
+                  className={`w-full ${isCollapsed ? 'justify-center px-0' : 'justify-start'} relative`}
                   onClick={() => handleNavigation(item)}
                 >
                   <Icon className={`w-5 h-5 ${isCollapsed ? '' : 'mr-3'}`} />
                   {!isCollapsed && <span>{item.label}</span>}
+                  {showUnreadBadge && (
+                    <Badge 
+                      variant="destructive" 
+                      className={`absolute ${isCollapsed ? 'top-0 right-0 h-5 w-5 p-0 flex items-center justify-center text-xs' : 'ml-auto'} rounded-full`}
+                    >
+                      {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+                    </Badge>
+                  )}
                 </Button>
               );
 

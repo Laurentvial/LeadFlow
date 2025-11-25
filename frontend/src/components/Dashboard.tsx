@@ -37,11 +37,50 @@ export function Dashboard({ user: userProp }: DashboardProps) {
   const [selectedUser, setSelectedUser] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  
+  // Loading states for each section
+  const [loadingStats, setLoadingStats] = useState(true);
+  const [loadingTeams, setLoadingTeams] = useState(true);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  
   useEffect(() => {
     loadData();
   }, [selectedTeam, selectedUser, dateFrom, dateTo]);
 
   async function loadData() {
+    // Load teams and users first (needed for filters)
+    loadTeams();
+    loadUsers();
+    // Load stats separately
+    loadStats();
+  }
+
+  async function loadTeams() {
+    setLoadingTeams(true);
+    try {
+      const teamsResponse = await apiCall('/api/teams/');
+      setTeams(teamsResponse?.teams || teamsResponse || []);
+    } catch (error) {
+      console.error('Error loading teams:', error);
+    } finally {
+      setLoadingTeams(false);
+    }
+  }
+
+  async function loadUsers() {
+    setLoadingUsers(true);
+    try {
+      const usersResponse = await apiCall('/api/users/');
+      setUsers(usersResponse?.users || usersResponse || []);
+    } catch (error) {
+      console.error('Error loading users:', error);
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  async function loadStats() {
+    setLoadingStats(true);
     try {
       const params = new URLSearchParams();
       if (dateFrom) params.append('dateFrom', dateFrom);
@@ -50,17 +89,12 @@ export function Dashboard({ user: userProp }: DashboardProps) {
       if (selectedUser !== 'all') params.append('userId', selectedUser);
       
       const url = `/api/stats/${params.toString() ? '?' + params.toString() : ''}`;
-      const [statsResponse, teamsResponse, usersResponse] = await Promise.all([
-        apiCall(url),
-        apiCall('/api/teams/'),
-        apiCall('/api/users/')
-      ]);
-      
+      const statsResponse = await apiCall(url);
       setStats(statsResponse);
-      setTeams(teamsResponse?.teams || teamsResponse || []);
-      setUsers(usersResponse?.users || usersResponse || []);
     } catch (error) {
-      console.error('Error loading dashboard:', error);
+      console.error('Error loading stats:', error);
+    } finally {
+      setLoadingStats(false);
     }
   }
 
@@ -188,21 +222,28 @@ export function Dashboard({ user: userProp }: DashboardProps) {
       <div className="dashboard-stats-grid">
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
+          const isLoading = loadingStats;
           return (
             <Card key={index}>
               <CardContent className="dashboard-stat-card-content">
-                <div className="dashboard-stat-card-inner">
-                  <div className="dashboard-stat-info">
-                    <p className="dashboard-stat-label">{stat.label}</p>
-                    <p className={stat.valueClass}>{stat.value}</p>
-                    {stat.subtitle && (
-                      <p className="dashboard-stat-subtitle">{stat.subtitle}</p>
-                    )}
+                {isLoading ? (
+                  <div style={{ padding: '20px', textAlign: 'center' }}>
+                    <p style={{ color: '#64748b', fontSize: '14px' }}>Chargement...</p>
                   </div>
-                  <div className={`dashboard-stat-icon-wrapper ${stat.iconWrapperClass}`}>
-                    <Icon className="dashboard-stat-icon" />
+                ) : (
+                  <div className="dashboard-stat-card-inner">
+                    <div className="dashboard-stat-info">
+                      <p className="dashboard-stat-label">{stat.label}</p>
+                      <p className={stat.valueClass}>{stat.value}</p>
+                      {stat.subtitle && (
+                        <p className="dashboard-stat-subtitle">{stat.subtitle}</p>
+                      )}
+                    </div>
+                    <div className={`dashboard-stat-icon-wrapper ${stat.iconWrapperClass}`}>
+                      <Icon className="dashboard-stat-icon" />
+                    </div>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
           );
@@ -219,7 +260,9 @@ export function Dashboard({ user: userProp }: DashboardProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {stats?.topSources && stats.topSources.length > 0 ? (
+            {loadingStats ? (
+              <p style={{ color: '#64748b', fontSize: '14px', textAlign: 'center', padding: '20px' }}>Chargement...</p>
+            ) : stats?.topSources && stats.topSources.length > 0 ? (
               <div className="dashboard-list">
                 {stats.topSources.map((source: any, index: number) => (
                   <div key={index} className="dashboard-list-item">
@@ -245,7 +288,9 @@ export function Dashboard({ user: userProp }: DashboardProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {stats?.topTeleoperators && stats.topTeleoperators.length > 0 ? (
+            {loadingStats ? (
+              <p style={{ color: '#64748b', fontSize: '14px', textAlign: 'center', padding: '20px' }}>Chargement...</p>
+            ) : stats?.topTeleoperators && stats.topTeleoperators.length > 0 ? (
               <div className="dashboard-list">
                 {stats.topTeleoperators.map((teleoperator: any, index: number) => (
                   <div key={index} className="dashboard-list-item">
@@ -272,7 +317,9 @@ export function Dashboard({ user: userProp }: DashboardProps) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {stats?.upcomingEvents && stats.upcomingEvents.length > 0 ? (
+          {loadingStats ? (
+            <p style={{ color: '#64748b', fontSize: '14px', textAlign: 'center', padding: '20px' }}>Chargement...</p>
+          ) : stats?.upcomingEvents && stats.upcomingEvents.length > 0 ? (
             <div className="dashboard-table-container">
               <table className="dashboard-table">
                 <thead>
@@ -318,7 +365,9 @@ export function Dashboard({ user: userProp }: DashboardProps) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {stats?.recentContacts && stats.recentContacts.length > 0 ? (
+          {loadingStats ? (
+            <p style={{ color: '#64748b', fontSize: '14px', textAlign: 'center', padding: '20px' }}>Chargement...</p>
+          ) : stats?.recentContacts && stats.recentContacts.length > 0 ? (
             <div className="dashboard-table-container">
               <table className="dashboard-table">
                 <thead>

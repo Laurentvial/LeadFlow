@@ -14,11 +14,13 @@ import Settings from './components/Settings';
 import Mails from './components/Mails';
 import Chat from './components/Chat';
 import { UserProvider } from './contexts/UserContext';
+import { UnreadMessagesProvider } from './contexts/UnreadMessagesContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import PermissionProtectedRoute from './components/PermissionProtectedRoute';
 import SettingsPermissionWrapper from './components/SettingsPermissionWrapper';
 import { Layout } from './components/Layout';
 import { Toaster } from './components/ui/sonner';
+import { MessagePopupWrapper } from './components/MessagePopupWrapper';
 
 function Logout() {
     localStorage.clear();
@@ -40,8 +42,10 @@ function App() {
     return (
         <Router>
             <UserProvider>
-                <Toaster />
-                <Routes>
+                <UnreadMessagesProvider>
+                    <Toaster />
+                    <MessagePopupWrapper />
+                    <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/logout" element={<Logout />} />
                     <Route path="/" element={
@@ -153,7 +157,8 @@ function App() {
                             </Layout>
                         </ProtectedRoute>
                     } />
-                </Routes>
+                    </Routes>
+                </UnreadMessagesProvider>
             </UserProvider>
         </Router>
     );
