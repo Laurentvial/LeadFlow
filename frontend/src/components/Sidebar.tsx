@@ -18,7 +18,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
+import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
 
 interface SidebarProps {
   currentPage: string;
@@ -52,9 +52,10 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const hasUsersPermission = useHasPermission('users', 'view');
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
   const hasStatusesPermission = useHasStatusesPermission();
+  const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   const hasMailsPermission = useHasPermission('mails', 'view');
-  // Settings page is accessible if user has access to either permissions or statuses
-  const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission;
+  // Settings page is accessible if user has access to permissions, statuses, or note categories
+  const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission;
   // Chat doesn't require permission check - available to all authenticated users
 
   const menuItems = [

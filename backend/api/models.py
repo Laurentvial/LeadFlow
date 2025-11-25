@@ -47,7 +47,6 @@ class NoteCategory(models.Model):
     """Categories for notes"""
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     name = models.CharField(max_length=100, unique=True, default="")
-    color = models.CharField(max_length=20, default="#3b82f6", blank=True)  # Default blue color
     order_index = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

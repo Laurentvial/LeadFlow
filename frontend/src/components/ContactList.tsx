@@ -181,6 +181,7 @@ export function ContactList({
   const [currentPage, setCurrentPage] = useState(1);
   const [columnFilters, setColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
+  const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
@@ -499,39 +500,61 @@ export function ContactList({
   
   // Helper function to get filter options for Select columns
   const getFilterOptions = (columnId: string) => {
+    const options: Array<{ id: string; label: string }> = [];
+    
+    // Add empty option first
+    options.push({ id: '__empty__', label: '(Vides)' });
+    
     switch (columnId) {
       case 'status':
-        return statuses
+        // For Fosse page (apiEndpoint includes '/fosse/'), show all statuses in filter
+        // For regular contacts page, filter by view permissions
+        const isFossePage = apiEndpoint.includes('/fosse/');
+        const statusOptions = statuses
           .filter((status) => {
             if (!status.id || status.id.trim() === '') return false;
-            // Filter by view permissions
+            if (isFossePage) {
+              // Fosse page: show all statuses in filter
+              return true;
+            }
+            // Regular contacts page: filter by view permissions
             const normalizedStatusId = String(status.id).trim();
             return statusViewPermissions.has(normalizedStatusId);
           })
           .map(status => ({
-          id: status.id,
-          label: status.name
-        }));
+            id: status.id,
+            label: status.name
+          }));
+        options.push(...statusOptions);
+        break;
       case 'creator':
-        return users.map(user => ({
+        const creatorOptions = users.map(user => ({
           id: user.id,
           label: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`
         }));
+        options.push(...creatorOptions);
+        break;
       case 'teleoperator':
-        return teleoperateurs.map(user => ({
+        const teleoperatorOptions = teleoperateurs.map(user => ({
           id: user.id,
           label: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`
         }));
+        options.push(...teleoperatorOptions);
+        break;
       case 'confirmateur':
-        return confirmateurs.map(user => ({
+        const confirmateurOptions = confirmateurs.map(user => ({
           id: user.id,
           label: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`
         }));
+        options.push(...confirmateurOptions);
+        break;
       case 'source':
-        return sources.map(source => ({
+        const sourceOptions = sources.map(source => ({
           id: source.id,
           label: source.name
         }));
+        options.push(...sourceOptions);
+        break;
       case 'postalCode':
         // Extract unique postal codes from contacts
         const postalCodes = new Set<string>();
@@ -540,10 +563,12 @@ export function ContactList({
             postalCodes.add(contact.postalCode.trim());
           }
         });
-        return Array.from(postalCodes).sort().map(code => ({
+        const postalCodeOptions = Array.from(postalCodes).sort().map(code => ({
           id: code,
           label: code
         }));
+        options.push(...postalCodeOptions);
+        break;
       case 'nationality':
         // Extract unique nationalities from contacts
         const nationalities = new Set<string>();
@@ -552,10 +577,12 @@ export function ContactList({
             nationalities.add(contact.nationality.trim());
           }
         });
-        return Array.from(nationalities).sort().map(nat => ({
+        const nationalityOptions = Array.from(nationalities).sort().map(nat => ({
           id: nat,
           label: nat
         }));
+        options.push(...nationalityOptions);
+        break;
       case 'campaign':
         // Extract unique campaigns from contacts
         const campaigns = new Set<string>();
@@ -564,10 +591,12 @@ export function ContactList({
             campaigns.add(contact.campaign.trim());
           }
         });
-        return Array.from(campaigns).sort().map(camp => ({
+        const campaignOptions = Array.from(campaigns).sort().map(camp => ({
           id: camp,
           label: camp
         }));
+        options.push(...campaignOptions);
+        break;
       case 'civility':
         // Extract unique civilities from contacts
         const civilities = new Set<string>();
@@ -576,19 +605,25 @@ export function ContactList({
             civilities.add(contact.civility.trim());
           }
         });
-        return Array.from(civilities).sort().map(civ => ({
+        const civilityOptions = Array.from(civilities).sort().map(civ => ({
           id: civ,
           label: civ
         }));
+        options.push(...civilityOptions);
+        break;
       case 'managerTeam':
         // Use teams from API
-        return teams.map(team => ({
+        const teamOptions = teams.map(team => ({
           id: team.id,
           label: team.name
         }));
+        options.push(...teamOptions);
+        break;
       default:
-        return [];
+        return [{ id: '__empty__', label: '(Vides)' }];
     }
+    
+    return options;
   };
   
   // Helper function to get status type for a contact
@@ -1281,6 +1316,14 @@ export function ContactList({
                           open={openFilterColumn === columnId}
                           onOpenChange={(open) => {
                             setOpenFilterColumn(open ? columnId : null);
+                            // Clear search term when closing
+                            if (!open) {
+                              setColumnFilterSearchTerms(prev => {
+                                const newTerms = { ...prev };
+                                delete newTerms[columnId];
+                                return newTerms;
+                              });
+                            }
                             // Initialize pending filter with current applied filter when opening
                             if (open && isDateColumn(columnId)) {
                               const currentFilter = columnFilters[columnId];
@@ -1317,21 +1360,6 @@ export function ContactList({
                         >
                           <PopoverTrigger asChild>
                             <button
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                padding: 0,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                width: '100%',
-                                textAlign: 'left',
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                                textTransform: 'uppercase',
-                                color: '#64748b'
-                              }}
                               className="contacts-column-header-button"
                             >
                               <span>{getColumnLabel(columnId)}</span>
@@ -1354,58 +1382,169 @@ export function ContactList({
                               </div>
                               {shouldUseMultiSelectFilter(columnId) ? (
                                 <>
-                                  <div className="max-h-[300px] overflow-y-auto">
-                                    {getFilterOptions(columnId).map(option => {
+                                  <div className="mb-2 border-b border-border pb-2 space-y-2">
+                                    <div className="relative">
+                                      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                                      <Input
+                                        className="pl-8 h-8 text-sm"
+                                        placeholder="Rechercher..."
+                                        value={columnFilterSearchTerms[columnId] || ''}
+                                        onChange={(e) => {
+                                          setColumnFilterSearchTerms(prev => ({
+                                            ...prev,
+                                            [columnId]: e.target.value
+                                          }));
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onKeyDown={(e) => e.stopPropagation()}
+                                        autoFocus
+                                      />
+                                    </div>
+                                    {(() => {
+                                      const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
+                                      const allOptions = getFilterOptions(columnId);
+                                      const emptyOption = allOptions.find(opt => opt.id === '__empty__');
+                                      const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
+                                      const filteredOtherOptions = searchTerm
+                                        ? otherOptions.filter(option =>
+                                            option.label.toLowerCase().includes(searchTerm)
+                                          )
+                                        : otherOptions;
+                                      const filteredOptions = emptyOption 
+                                        ? [emptyOption, ...filteredOtherOptions]
+                                        : filteredOtherOptions;
+                                      
                                       const currentValue = pendingColumnFilters[columnId];
                                       const selectedValues = Array.isArray(currentValue) ? currentValue : 
                                                            (typeof currentValue === 'string' && currentValue ? [currentValue] : []);
-                                      const isChecked = selectedValues.includes(option.id);
+                                      const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
                                       
                                       return (
-                                        <div
-                                          key={option.id}
-                                          className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
-                                          onClick={() => {
-                                            setPendingColumnFilters(prev => {
-                                              const current = prev[columnId];
-                                              const currentArray = Array.isArray(current) ? current : 
-                                                                 (typeof current === 'string' && current ? [current] : []);
-                                              
-                                              let newArray: string[];
-                                              if (isChecked) {
-                                                newArray = currentArray.filter(id => id !== option.id);
-                                              } else {
-                                                newArray = [...currentArray, option.id];
-                                              }
-                                              
-                                              return {
-                                                ...prev,
-                                                [columnId]: newArray.length > 0 ? newArray : ''
-                                              };
-                                            });
-                                          }}
-                                        >
-                                          <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
-                                            {isChecked && (
-                                              <Check className="h-4 w-4" />
-                                            )}
-                                          </span>
-                                          {columnId === 'status' ? (
-                                            <span 
-                                              className="inline-block px-2 py-1 rounded text-sm"
-                                              style={{
-                                                backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
-                                                color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
-                                              }}
-                                            >
-                                              {option.label}
-                                            </span>
-                                          ) : (
-                                            <span>{option.label}</span>
-                                          )}
+                                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                          <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setPendingColumnFilters(prev => {
+                                                const current = prev[columnId];
+                                                const currentArray = Array.isArray(current) ? current : 
+                                                                   (typeof current === 'string' && current ? [current] : []);
+                                                
+                                                if (allFilteredSelected) {
+                                                  // Deselect all filtered options
+                                                  const filteredIds = filteredOptions.map(opt => opt.id);
+                                                  const newArray = currentArray.filter(id => !filteredIds.includes(id));
+                                                  return {
+                                                    ...prev,
+                                                    [columnId]: newArray.length > 0 ? newArray : ''
+                                                  };
+                                                } else {
+                                                  // Select all filtered options
+                                                  const filteredIds = filteredOptions.map(opt => opt.id);
+                                                  const newArray = [...new Set([...currentArray, ...filteredIds])];
+                                                  return {
+                                                    ...prev,
+                                                    [columnId]: newArray.length > 0 ? newArray : ''
+                                                  };
+                                                }
+                                              });
+                                            }}
+                                          >
+                                            {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                          </Button>
                                         </div>
                                       );
-                                    })}
+                                    })()}
+                                  </div>
+                                  <div 
+                                    className="contacts-column-filter-scroll overflow-y-auto overflow-x-hidden" 
+                                    style={{ height: '150px' }}
+                                  >
+                                    {(() => {
+                                      const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
+                                      const allOptions = getFilterOptions(columnId);
+                                      
+                                      // Always show empty option first, then filter other options
+                                      const emptyOption = allOptions.find(opt => opt.id === '__empty__');
+                                      const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
+                                      
+                                      const filteredOtherOptions = searchTerm
+                                        ? otherOptions.filter(option =>
+                                            option.label.toLowerCase().includes(searchTerm)
+                                          )
+                                        : otherOptions;
+                                      
+                                      // Combine empty option (always first) with filtered options
+                                      const filteredOptions = emptyOption 
+                                        ? [emptyOption, ...filteredOtherOptions]
+                                        : filteredOtherOptions;
+                                      
+                                      if (filteredOptions.length === 0) {
+                                        return (
+                                          <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                            Aucun résultat
+                                          </div>
+                                        );
+                                      }
+                                      
+                                      return filteredOptions.map(option => {
+                                        const currentValue = pendingColumnFilters[columnId];
+                                        const selectedValues = Array.isArray(currentValue) ? currentValue : 
+                                                             (typeof currentValue === 'string' && currentValue ? [currentValue] : []);
+                                        const isChecked = selectedValues.includes(option.id);
+                                        
+                                        return (
+                                          <div
+                                            key={option.id}
+                                            className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                            onClick={() => {
+                                              setPendingColumnFilters(prev => {
+                                                const current = prev[columnId];
+                                                const currentArray = Array.isArray(current) ? current : 
+                                                                   (typeof current === 'string' && current ? [current] : []);
+                                                
+                                                let newArray: string[];
+                                                if (isChecked) {
+                                                  newArray = currentArray.filter(id => id !== option.id);
+                                                } else {
+                                                  newArray = [...currentArray, option.id];
+                                                }
+                                                
+                                                return {
+                                                  ...prev,
+                                                  [columnId]: newArray.length > 0 ? newArray : ''
+                                                };
+                                              });
+                                            }}
+                                          >
+                                            <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+                                              {isChecked && (
+                                                <Check className="h-4 w-4" />
+                                              )}
+                                            </span>
+                                            {option.id === '__empty__' ? (
+                                              <span className="text-muted-foreground italic">{option.label}</span>
+                                            ) : columnId === 'status' ? (
+                                              <span 
+                                                className="inline-block px-2 py-1 rounded text-sm"
+                                                style={{
+                                                  backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
+                                                  color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
+                                                }}
+                                              >
+                                                {option.label}
+                                              </span>
+                                            ) : (
+                                              <span>{option.label}</span>
+                                            )}
+                                          </div>
+                                        );
+                                      });
+                                    })()}
                                   </div>
                                   {columnFilters[columnId] && (
                                     <p className="text-xs text-slate-500 mt-2">

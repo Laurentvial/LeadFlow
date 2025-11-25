@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUser } from '../contexts/UserContext';
-import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
+import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
 import { getAccessibleRoute } from '../utils/getAccessibleRoute';
 
 interface SettingsPermissionWrapperProps {
@@ -10,15 +10,16 @@ interface SettingsPermissionWrapperProps {
 
 /**
  * Wrapper for Settings page that allows access if user has permission for
- * either PermissionsTab (permissions component) or StatusesTab (statuses component)
+ * PermissionsTab (permissions component), StatusesTab (statuses component), or ContactFormTab (note-categories component)
  */
 export function SettingsPermissionWrapper({ children }: SettingsPermissionWrapperProps) {
   const { currentUser, loading } = useUser();
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
   const hasStatusesPermission = useHasStatusesPermission();
+  const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   
-  // User has access if they can view either permissions or statuses
-  const hasAccess = hasPermissionsPermission || hasStatusesPermission;
+  // User has access if they can view permissions, statuses, or note categories
+  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission;
 
   // Show loading while user data is being fetched
   if (loading) {

@@ -25,8 +25,9 @@ const componentNameMap: Record<string, string> = {
   users: 'Utilisateurs',
   teams: 'Équipes',
   planning: 'Planning',
-  permissions: 'Permissions',
-  statuses: 'Statuts',
+  permissions: 'Permissions (Paramètres)',
+  statuses: 'Statuts (Paramètres)',
+  'note_categories': 'Fiche contact (Paramètres)',
   mails: 'Mails',
 };
 
@@ -67,11 +68,18 @@ interface Status {
   orderIndex: number;
 }
 
+interface NoteCategory {
+  id: string;
+  name: string;
+  orderIndex: number;
+}
+
 export function PermissionsTab() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionRoles, setPermissionRoles] = useState<PermissionRole[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [noteCategories, setNoteCategories] = useState<NoteCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditRoleModalOpen, setIsEditRoleModalOpen] = useState(false);
@@ -111,17 +119,22 @@ export function PermissionsTab() {
   async function loadData() {
     setLoading(true);
     try {
-      const [rolesData, permissionsData, permissionRolesData, statusesData] = await Promise.all([
+      const [rolesData, permissionsData, permissionRolesData, statusesData, categoriesData] = await Promise.all([
         apiCall('/api/roles/'),
         apiCall('/api/permissions/'),
         apiCall('/api/permission-roles/'),
         apiCall('/api/statuses/'),
+        apiCall('/api/note-categories/'),
       ]);
 
       setRoles(rolesData.roles || []);
       setPermissions(permissionsData.permissions || []);
       setPermissionRoles(permissionRolesData.permissionRoles || []);
       setStatuses(statusesData.statuses || []);
+      const sortedCategories = (categoriesData.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
+        a.orderIndex - b.orderIndex
+      );
+      setNoteCategories(sortedCategories);
     } catch (error: any) {
       toast.error('Erreur lors du chargement des données');
       console.error('Error loading data:', error);
@@ -222,6 +235,7 @@ export function PermissionsTab() {
     'planning',
     'permissions',
     'statuses',
+    'note_categories',
     'mails',
   ];
 
@@ -242,8 +256,8 @@ export function PermissionsTab() {
 
   // Get unique db component names from permissions and predefined list
   // Order: predefined components first (in their defined order), then any additional components from DB (alphabetically)
-  // Exclude: events, notes, settings
-  const excludedComponents = ['events', 'notes', 'settings'];
+  // Exclude: events, note, notes, settings
+  const excludedComponents = ['events', 'note', 'notes', 'settings'];
   
   function getUniqueDbComponents(): string[] {
     const predefinedSet = new Set(predefinedComponents);
@@ -264,18 +278,21 @@ export function PermissionsTab() {
   }
 
   // Get permission ID for a component + action combination
-  function getPermissionId(dbComponentName: string, action: 'view' | 'create' | 'edit' | 'delete', statusId?: string | null): string | null {
+  function getPermissionId(dbComponentName: string, action: 'view' | 'create' | 'edit' | 'delete', statusId?: string | null, categoryId?: string | null): string | null {
     const perm = permissions.find(
       p => p.component === dbComponentName &&
            p.action === action &&
-           !p.fieldName &&
-           (statusId ? p.statusId === statusId : !p.statusId)
+           (categoryId 
+             ? p.fieldName === categoryId && !p.statusId  // Category permission: fieldName contains category ID
+             : statusId 
+               ? p.statusId === statusId && !p.fieldName  // Status permission: statusId contains status ID
+               : !p.fieldName && !p.statusId)  // General permission: no fieldName or statusId
     );
     return perm?.id || null;
   }
 
   // Check if a role has a specific permission (including pending changes)
-  function hasPermission(roleId: string, permissionId: string | null, component?: string, action?: string, statusId?: string | null): boolean {
+  function hasPermission(roleId: string, permissionId: string | null, component?: string, action?: string, statusId?: string | null, categoryId?: string | null): boolean {
     // Check pending changes first
     if (permissionId) {
       const changeKey = `${roleId}-${permissionId}`;
@@ -285,9 +302,14 @@ export function PermissionsTab() {
       }
     }
     
-    // Also check for new permissions in pending changes (format: roleId-component-action-statusId)
+    // Also check for new permissions in pending changes (format: roleId-component-action-statusId/categoryId)
     if (component && action) {
-      const newPermissionKey = `${roleId}-${component}-${action}-${statusId || 'none'}`;
+      let newPermissionKey: string;
+      if (categoryId) {
+        newPermissionKey = `${roleId}-${component}-${action}-category-${categoryId}`;
+      } else {
+        newPermissionKey = `${roleId}-${component}-${action}-${statusId || 'none'}`;
+      }
       const pendingNewPermission = pendingPermissionChanges.get(newPermissionKey);
       if (pendingNewPermission !== undefined) {
         return pendingNewPermission;
@@ -306,7 +328,8 @@ export function PermissionsTab() {
     roleId: string,
     displayComponentLabel: string,
     action: 'view' | 'create' | 'edit' | 'delete',
-    statusId?: string | null
+    statusId?: string | null,
+    categoryId?: string | null
   ) {
     const dbComponentName = getDbComponentName(displayComponentLabel);
     
@@ -329,13 +352,19 @@ export function PermissionsTab() {
       }
     }
     
-    const permissionId = getPermissionId(dbComponentName, action, statusId);
+    // Note category permissions are independent - no need to check for general permission
+    
+    const permissionId = getPermissionId(dbComponentName, action, statusId, categoryId);
     
     // Use different key format for new vs existing permissions
     let changeKey: string;
     if (!permissionId) {
-      // Permission doesn't exist yet, use component-action-statusId format
-      changeKey = `${roleId}-${dbComponentName}-${action}-${statusId || 'none'}`;
+      // Permission doesn't exist yet, use component-action-statusId/categoryId format
+      if (categoryId) {
+        changeKey = `${roleId}-${dbComponentName}-${action}-category-${categoryId}`;
+      } else {
+        changeKey = `${roleId}-${dbComponentName}-${action}-${statusId || 'none'}`;
+      }
     } else {
       // Existing permission, use roleId-permissionId format
       changeKey = `${roleId}-${permissionId}`;
@@ -577,6 +606,90 @@ export function PermissionsTab() {
     });
   }
 
+  // Toggle all permissions in a row for Note Category table
+  function toggleAllNoteCategoryRowPermissions(categoryId: string) {
+    if (!selectedRoleForPermissions) return;
+    
+    const roleId = selectedRoleForPermissions.id;
+    
+    // Get current state of all permissions for this category
+    const viewPermissionId = getPermissionId('note_categories', 'view', null, categoryId);
+    const createPermissionId = getPermissionId('note_categories', 'create', null, categoryId);
+    const editPermissionId = getPermissionId('note_categories', 'edit', null, categoryId);
+    const deletePermissionId = getPermissionId('note_categories', 'delete', null, categoryId);
+    
+    const hasView = hasPermission(roleId, viewPermissionId, 'note_categories', 'view', null, categoryId);
+    const hasCreate = hasPermission(roleId, createPermissionId, 'note_categories', 'create', null, categoryId);
+    const hasEdit = hasPermission(roleId, editPermissionId, 'note_categories', 'edit', null, categoryId);
+    const hasDelete = hasPermission(roleId, deletePermissionId, 'note_categories', 'delete', null, categoryId);
+    
+    // Check if all permissions are selected
+    const allSelected = hasView && hasCreate && hasEdit && hasDelete;
+    
+    // Toggle all permissions
+    const actions: Array<'view' | 'create' | 'edit' | 'delete'> = ['view', 'create', 'edit', 'delete'];
+    
+    setPendingPermissionChanges(prev => {
+      const newMap = new Map(prev);
+      
+      for (const action of actions) {
+        const permissionId = getPermissionId('note_categories', action, null, categoryId);
+        let changeKey: string;
+        if (!permissionId) {
+          changeKey = `${roleId}-note_categories-${action}-category-${categoryId}`;
+        } else {
+          changeKey = `${roleId}-${permissionId}`;
+        }
+        
+        // Set to opposite of allSelected state
+        newMap.set(changeKey, !allSelected);
+      }
+      
+      return newMap;
+    });
+  }
+
+  // Toggle all permissions in a column for Note Category table
+  function toggleAllNoteCategoryColumn(action: 'view' | 'create' | 'edit' | 'delete') {
+    if (!selectedRoleForPermissions) return;
+    
+    const roleId = selectedRoleForPermissions.id;
+    
+    // Check if all are currently checked
+    let allChecked = true;
+    for (const category of noteCategories) {
+      const permissionId = getPermissionId('note_categories', action, null, category.id);
+      const hasPerm = hasPermission(roleId, permissionId);
+      
+      if (!hasPerm) {
+        allChecked = false;
+        break;
+      }
+    }
+    
+    // Batch all updates in a single state update
+    setPendingPermissionChanges(prev => {
+      const newMap = new Map(prev);
+      
+      // Toggle all categories
+      for (const category of noteCategories) {
+        const permissionId = getPermissionId('note_categories', action, null, category.id);
+        
+        let changeKey: string;
+        if (!permissionId) {
+          changeKey = `${roleId}-note_categories-${action}-category-${category.id}`;
+        } else {
+          changeKey = `${roleId}-${permissionId}`;
+        }
+        
+        // Set to opposite of allChecked state
+        newMap.set(changeKey, !allChecked);
+      }
+      
+      return newMap;
+    });
+  }
+
   // Save all pending permission changes
   async function handleSavePermissions() {
     if (!selectedRoleForPermissions) return;
@@ -587,18 +700,49 @@ export function PermissionsTab() {
     
     try {
       // First, handle permissions that need to be created
-      const permissionsToCreate: Array<{component: string, action: string, statusId: string | null}> = [];
+      const permissionsToCreate: Array<{component: string, action: string, statusId: string | null, categoryId: string | null}> = [];
       const processedKeys = new Set<string>();
       
       for (const [changeKey, shouldHave] of pendingPermissionChanges.entries()) {
-        // Check if this is a new permission (format: roleId-component-action-statusId)
-        const parts = changeKey.split('-');
-        if (parts.length >= 4 && parts[0] === roleId) {
-          const [, component, action, statusIdStr] = parts;
-          const statusId = statusIdStr === 'none' ? null : statusIdStr;
+        // Check if this is a new permission (format: roleId-component-action-statusId or roleId-component-action-category-categoryId)
+        // Note: component might be 'note_categories' which contains underscore, so we need to handle splitting carefully
+        if (!changeKey.startsWith(`${roleId}-`)) continue;
+        
+        const afterRoleId = changeKey.substring(roleId.length + 1); // Everything after "roleId-"
+        const parts = afterRoleId.split('-');
+        
+        if (parts.length >= 3) {
+          // Handle components with underscores (like 'note_categories')
+          let component: string;
+          let action: string;
+          let rest: string[];
+          
+          // Check if first part is 'note' and second is 'categories' (for note_categories)
+          if (parts[0] === 'note' && parts[1] === 'categories') {
+            component = 'note_categories';
+            action = parts[2];
+            rest = parts.slice(3);
+          } else {
+            // Regular component (single word)
+            component = parts[0];
+            action = parts[1];
+            rest = parts.slice(2);
+          }
+          
+          let statusId: string | null = null;
+          let categoryId: string | null = null;
+          
+          // Check if it's a category permission (format: ...-category-categoryId)
+          if (rest.length >= 2 && rest[0] === 'category') {
+            categoryId = rest.slice(1).join('-'); // Join in case categoryId has hyphens
+          } else if (rest.length > 0) {
+            // It's a status permission (format: ...-statusId)
+            const statusIdStr = rest.join('-'); // Join in case statusId has hyphens
+            statusId = statusIdStr === 'none' ? null : statusIdStr;
+          }
           
           if (shouldHave) {
-            permissionsToCreate.push({ component, action, statusId });
+            permissionsToCreate.push({ component, action, statusId, categoryId });
           }
           processedKeys.add(changeKey);
         }
@@ -606,19 +750,27 @@ export function PermissionsTab() {
       
       // Create new permissions first
       const createdPermissionIds: Map<string, string> = new Map();
-      for (const { component, action, statusId } of permissionsToCreate) {
+      for (const { component, action, statusId, categoryId } of permissionsToCreate) {
         try {
+          const payload: any = {
+            component,
+            action,
+            fieldName: categoryId || null, // Use fieldName for category ID
+            statusId: statusId || null, // Use statusId for status ID
+          };
+          
           const newPermission = await apiCall('/api/permissions/create/', {
             method: 'POST',
-            body: JSON.stringify({
-              component,
-              action,
-              fieldName: null,
-              statusId: statusId || null,
-            }),
+            body: JSON.stringify(payload),
           });
           
-          const key = `${component}-${action}-${statusId || 'none'}`;
+          // Create unique key for both status and category permissions
+          let key: string;
+          if (categoryId) {
+            key = `${component}-${action}-category-${categoryId}`;
+          } else {
+            key = `${component}-${action}-${statusId || 'none'}`;
+          }
           createdPermissionIds.set(key, newPermission.id);
           
           // Add to local permissions list
@@ -635,25 +787,73 @@ export function PermissionsTab() {
         let permissionId: string | null = null;
         
         // Check if this was a new permission we just created
-        const parts = changeKey.split('-');
-        if (parts.length >= 4 && parts[0] === roleId) {
-          const [, component, action, statusIdStr] = parts;
-          const key = `${component}-${action}-${statusIdStr}`;
-          permissionId = createdPermissionIds.get(key) || null;
-        } else {
-          // Existing permission
-          permissionId = parts[1] || null;
-        }
+        // Format: roleId-component-action-statusId/category or roleId-permissionId
+        const afterRoleId = changeKey.substring(roleId.length + 1);
         
-        if (!permissionId) {
-          // Try to find permission ID
-          const parts = changeKey.split('-');
-          if (parts.length >= 4) {
-            const [, component, action, statusIdStr] = parts;
-            const statusId = statusIdStr === 'none' ? null : statusIdStr;
-            permissionId = getPermissionId(component, action as 'view' | 'create' | 'edit' | 'delete', statusId);
-          } else {
-            permissionId = parts[1] || null;
+        // Check if it's an existing permission (format: roleId-permissionId)
+        // Existing permissions have format "roleId-{12charId}" where ID doesn't contain hyphens
+        const existingParts = afterRoleId.split('-');
+        if (existingParts.length === 1 && existingParts[0].length === 12) {
+          // This is an existing permission ID
+          permissionId = existingParts[0];
+        } else {
+          // This is a new permission (format: component-action-statusId/category)
+          const parts = afterRoleId.split('-');
+          
+          if (parts.length >= 2) {
+            // Handle components with underscores (like 'note_categories')
+            let component: string;
+            let action: string;
+            let rest: string[];
+            
+            // Check if first part is 'note' and second is 'categories' (for note_categories)
+            // When note_categories is split by '-', it stays as 'note_categories' (underscore preserved)
+            // So we need to check if parts[0] contains underscore
+            if (parts[0].includes('_')) {
+              // Component has underscore (e.g., 'note_categories')
+              component = parts[0];
+              action = parts[1];
+              rest = parts.slice(2);
+            } else if (parts[0] === 'note' && parts[1] === 'categories') {
+              // Component was split: 'note' and 'categories'
+              component = 'note_categories';
+              action = parts[2];
+              rest = parts.slice(3);
+            } else {
+              // Regular component (single word)
+              component = parts[0];
+              action = parts[1];
+              rest = parts.slice(2);
+            }
+            
+            let key: string;
+            
+            // Check if it's a category permission
+            if (rest.length >= 2 && rest[0] === 'category') {
+              const categoryId = rest.slice(1).join('-');
+              key = `${component}-${action}-category-${categoryId}`;
+            } else {
+              // It's a status permission or general permission
+              const statusIdStr = rest.join('-') || 'none';
+              key = `${component}-${action}-${statusIdStr}`;
+            }
+            permissionId = createdPermissionIds.get(key) || null;
+            
+            // If not found in created permissions, try to find existing permission
+            if (!permissionId) {
+              let statusId: string | null = null;
+              let categoryId: string | null = null;
+              
+              // Check if it's a category permission
+              if (rest.length >= 2 && rest[0] === 'category') {
+                categoryId = rest.slice(1).join('-');
+              } else if (rest.length > 0) {
+                // It's a status permission
+                const statusIdStr = rest.join('-');
+                statusId = statusIdStr === 'none' ? null : statusIdStr;
+              }
+              permissionId = getPermissionId(component, action as 'view' | 'create' | 'edit' | 'delete', statusId, categoryId);
+            }
           }
         }
         
@@ -1501,7 +1701,117 @@ export function PermissionsTab() {
                     </div>
                   )}
                 </div>
-                
+
+                {/* Note Category Permissions Table */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Catégories de notes</h3>
+                  {noteCategories.length === 0 ? (
+                    <p className="text-slate-500">Aucune catégorie de notes disponible</p>
+                  ) : (
+                    <div className="border overflow-hidden">
+                      <table className="w-full">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="text-left p-3 font-semibold">Catégorie</th>
+                            <th 
+                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
+                              onClick={() => toggleAllNoteCategoryColumn('view')}
+                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            >
+                              Voir
+                            </th>
+                            <th 
+                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
+                              onClick={() => toggleAllNoteCategoryColumn('create')}
+                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            >
+                              Créer
+                            </th>
+                            <th 
+                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
+                              onClick={() => toggleAllNoteCategoryColumn('edit')}
+                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            >
+                              Modifier
+                            </th>
+                            <th 
+                              className="text-center p-3 font-semibold cursor-pointer hover:bg-slate-200 transition-colors"
+                              onClick={() => toggleAllNoteCategoryColumn('delete')}
+                              title="Cliquer pour cocher/décocher toutes les cases de cette colonne"
+                            >
+                              Supprimer
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {noteCategories.map((category) => {
+                            const viewPermissionId = getPermissionId('note_categories', 'view', null, category.id);
+                            const createPermissionId = getPermissionId('note_categories', 'create', null, category.id);
+                            const editPermissionId = getPermissionId('note_categories', 'edit', null, category.id);
+                            const deletePermissionId = getPermissionId('note_categories', 'delete', null, category.id);
+                            const hasView = hasPermission(selectedRoleForPermissions.id, viewPermissionId, 'note_categories', 'view', null, category.id);
+                            const hasCreate = hasPermission(selectedRoleForPermissions.id, createPermissionId, 'note_categories', 'create', null, category.id);
+                            const hasEdit = hasPermission(selectedRoleForPermissions.id, editPermissionId, 'note_categories', 'edit', null, category.id);
+                            const hasDelete = hasPermission(selectedRoleForPermissions.id, deletePermissionId, 'note_categories', 'delete', null, category.id);
+
+                            return (
+                              <tr key={category.id} className="border-b hover:bg-slate-50">
+                                <td 
+                                  className="p-3 cursor-pointer hover:text-blue-600"
+                                  onClick={() => toggleAllNoteCategoryRowPermissions(category.id)}
+                                  title="Cliquer pour sélectionner/désélectionner toute la ligne"
+                                >
+                                  <span className="font-medium">{category.name}</span>
+                                </td>
+                                <td className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasView}
+                                    onChange={() =>
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'view', null, category.id)
+                                    }
+                                    className="w-4 h-4 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasCreate}
+                                    onChange={() =>
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'create', null, category.id)
+                                    }
+                                    className="w-4 h-4 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasEdit}
+                                    onChange={() =>
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'edit', null, category.id)
+                                    }
+                                    className="w-4 h-4 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasDelete}
+                                    onChange={() =>
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'delete', null, category.id)
+                                    }
+                                    className="w-4 h-4 cursor-pointer"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
                 {/* Save button */}
                 {pendingPermissionChanges.size > 0 && (
                   <div className="flex justify-end pt-4 border-t">

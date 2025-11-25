@@ -6,8 +6,9 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Plus, Calendar, Clock, Send, X } from 'lucide-react';
-import { useHasPermission } from '../hooks/usePermissions';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2 } from 'lucide-react';
+import { useHasPermission, useHasNoteCategoryPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { apiCall } from '../utils/api';
@@ -20,6 +21,154 @@ interface Source {
   id: string;
   name: string;
 }
+
+interface NoteCategory {
+  id: string;
+  name: string;
+  orderIndex: number;
+}
+
+interface NoteItemCompactProps {
+  note: any;
+  onDelete: (noteId: string) => void;
+  onEdit: (noteId: string, newText: string) => Promise<void>;
+}
+
+const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdit }) => {
+  const noteCategoryId = note.categId || null;
+  const canDelete = useHasNoteCategoryPermission(noteCategoryId, 'delete');
+  const canEdit = useHasNoteCategoryPermission(noteCategoryId, 'edit');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(note.text);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  const handleStartEdit = () => {
+    setEditText(note.text);
+    setIsEditing(true);
+  };
+  
+  const handleCancelEdit = () => {
+    setEditText(note.text);
+    setIsEditing(false);
+  };
+  
+  const handleSaveEdit = async () => {
+    if (!editText.trim()) {
+      toast.error('La note ne peut pas être vide');
+      return;
+    }
+    
+    if (editText.trim() === note.text) {
+      setIsEditing(false);
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await onEdit(note.id, editText.trim());
+      setIsEditing(false);
+    } catch (error) {
+      // Error handling is done in parent
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
+  return (
+    <div className="text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1">
+          {isEditing ? (
+            <div className="space-y-2">
+              <Textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="resize-none text-sm"
+                rows={3}
+                disabled={isSaving}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSaveEdit}
+                  disabled={isSaving}
+                  className="text-green-600 h-7 text-xs"
+                >
+                  <Check className="w-3 h-3 mr-1" />
+                  Enregistrer
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelEdit}
+                  disabled={isSaving}
+                  className="text-slate-600 h-7 text-xs"
+                >
+                  <X className="w-3 h-3 mr-1" />
+                  Annuler
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {note.categoryName && (
+                  <>
+                    <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-700 rounded">
+                      {note.categoryName}
+                    </span>
+                    <span className="text-xs text-slate-400">•</span>
+                  </>
+                )}
+                <span className="text-xs text-slate-500">
+                  {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', { 
+                    day: '2-digit', 
+                    month: '2-digit', 
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+                {(note.createdBy || note.userId?.username || note.user?.username) && (
+                  <span className="text-xs text-slate-500">
+                    • {note.createdBy || note.userId?.username || note.user?.username}
+                  </span>
+                )}
+              </div>
+              <span className="contact-note-text">{note.text}</span>
+            </div>
+          )}
+        </div>
+        {!isEditing && (
+          <div className="flex gap-1 flex-shrink-0">
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleStartEdit}
+                className="text-slate-600 cursor-pointer h-7 text-xs"
+              >
+                Modifier
+              </Button>
+            )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onDelete(note.id)}
+                className="contact-tab-button-delete text-red-600 cursor-pointer h-7 text-xs"
+              >
+                Supprimer
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface ContactInfoTabProps {
   contact: any;
@@ -188,12 +337,61 @@ export function ContactInfoTab({
   const [noteText, setNoteText] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [showAllNotes, setShowAllNotes] = useState(false);
+  const [categories, setCategories] = useState<NoteCategory[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
+  const [localNotes, setLocalNotes] = useState<any[]>(notes);
   
-  // Load statuses and sources
+  // Sync local notes with props when they change
+  useEffect(() => {
+    setLocalNotes(notes);
+  }, [notes]);
+  
+  // Get accessible category IDs based on view permissions
+  const accessibleCategoryIds = useAccessibleNoteCategoryIds();
+  
+  // Filter categories to only show those user has view permission for
+  const accessibleCategories = React.useMemo(() => {
+    return categories.filter(cat => accessibleCategoryIds.includes(cat.id))
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [categories, accessibleCategoryIds]);
+  
+  // Check if user has any view permissions
+  const hasAnyViewPermission = accessibleCategories.length > 0;
+  
+  // Check create permission for selected category
+  const canCreateInSelectedCategory = useHasNoteCategoryPermission(selectedCategoryId, 'create');
+  
+  // Load statuses, sources, and categories
   useEffect(() => {
     loadStatuses();
     loadSources();
+    loadCategories();
   }, []);
+
+  useEffect(() => {
+    // Update selected category if current selection is not accessible
+    if (selectedCategoryId !== 'all' && !accessibleCategoryIds.includes(selectedCategoryId)) {
+      if (accessibleCategories.length > 0) {
+        setSelectedCategoryId(accessibleCategories[0].id);
+      } else {
+        setSelectedCategoryId('all');
+      }
+    } else if (selectedCategoryId === 'all' && accessibleCategories.length > 0) {
+      setSelectedCategoryId(accessibleCategories[0].id);
+    }
+  }, [accessibleCategories, accessibleCategoryIds, selectedCategoryId]);
+
+  async function loadCategories() {
+    try {
+      const data = await apiCall('/api/note-categories/');
+      const sortedCategories = (data.categories || []).sort((a: NoteCategory, b: NoteCategory) => 
+        a.orderIndex - b.orderIndex
+      );
+      setCategories(sortedCategories);
+    } catch (error: any) {
+      console.error('Error loading categories:', error);
+    }
+  }
 
   async function loadStatuses() {
     try {
@@ -447,18 +645,52 @@ export function ContactInfoTab({
     }
 
     setIsSubmittingNote(true);
+    const noteTextValue = noteText.trim();
+    setNoteText(''); // Clear input immediately for better UX
+    
     try {
-      await apiCall('/api/notes/create/', {
+      const payload: any = {
+        text: noteTextValue,
+        contactId: contactId,
+      };
+      
+      // Add category if selected (not 'all')
+      if (selectedCategoryId && selectedCategoryId !== 'all') {
+        payload.categId = selectedCategoryId;
+      }
+      
+      const response = await apiCall('/api/notes/create/', {
         method: 'POST',
-        body: JSON.stringify({
-          text: noteText.trim(),
-          contactId: contactId,
-        }),
+        body: JSON.stringify(payload),
       });
+      
+      // Get the created note from response
+      const createdNote = response.note || response;
+      
+      // Add category name if we have the category info
+      if (createdNote.categId && !createdNote.categoryName) {
+        const category = accessibleCategories.find(cat => cat.id === createdNote.categId);
+        if (category) {
+          createdNote.categoryName = category.name;
+        }
+      }
+      
+      // Add current user info if not present
+      if (!createdNote.createdBy && !createdNote.userId) {
+        // We'll get this from the refresh, but add a placeholder for immediate display
+        createdNote.createdBy = 'Vous';
+      }
+      
+      // Add the note immediately to local state
+      setLocalNotes(prev => [createdNote, ...prev]);
+      
       toast.success('Note créée avec succès');
-      setNoteText('');
+      
+      // Refresh in background to get full data
       onRefresh();
     } catch (error: any) {
+      // Restore note text on error
+      setNoteText(noteTextValue);
       console.error('Error creating note:', error);
       const errorMessage = error?.response?.detail || error?.message || 'Erreur lors de la création de la note';
       toast.error(errorMessage);
@@ -467,14 +699,43 @@ export function ContactInfoTab({
     }
   }
 
+  async function handleEditNote(noteId: string, newText: string) {
+    try {
+      const response = await apiCall(`/api/notes/${noteId}/update/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ text: newText }),
+      });
+      
+      // Update local state immediately
+      setLocalNotes(prev => prev.map(note => 
+        note.id === noteId ? { ...note, text: newText, ...response } : note
+      ));
+      
+      toast.success('Note modifiée avec succès');
+      // Refresh in background to sync
+      onRefresh();
+    } catch (error: any) {
+      console.error('Error editing note:', error);
+      const errorMessage = error?.response?.detail || error?.message || 'Erreur lors de la modification de la note';
+      toast.error(errorMessage);
+      throw error;
+    }
+  }
+
   async function handleDeleteNote(noteId: string) {
     if (!confirm('Supprimer cette note ?')) return;
+    
+    // Optimistically remove from local state
+    setLocalNotes(prev => prev.filter(note => note.id !== noteId));
     
     try {
       await apiCall(`/api/notes/delete/${noteId}/`, { method: 'DELETE' });
       toast.success('Note supprimée avec succès');
+      // Refresh in background to sync
       onRefresh();
     } catch (error) {
+      // Restore note on error
+      onRefresh();
       console.error('Error deleting note:', error);
       toast.error('Erreur lors de la suppression de la note');
     }
@@ -597,96 +858,109 @@ export function ContactInfoTab({
       </Card>
 
       {/* Notes - Compact */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Notes</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0 space-y-3">
-          <form onSubmit={handleCreateNote}>
-            <div className="flex gap-2 items-stretch">
-              <Textarea
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Ajouter une note..."
-                rows={2}
-                className="resize-none text-sm flex-1"
-                disabled={isSubmittingNote}
-              />
-              <Button 
-                type="submit" 
-                size="sm" 
-                disabled={isSubmittingNote || !noteText.trim()}
-                className="contact-tab-button-save-note"
-              >
-                <Send className="w-3 h-3 mr-1" />
-                {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
-              </Button>
-            </div>
-          </form>
-          {notes.length > 0 && (
-            <div className="space-y-2 pt-2">
-              {[...notes]
-                .sort((a, b) => {
-                  const dateA = new Date(a.createdAt || a.created_at).getTime();
-                  const dateB = new Date(b.createdAt || b.created_at).getTime();
-                  return dateB - dateA; // Descending order (most recent first)
-                })
-                .slice(0, showAllNotes ? notes.length : 3)
-                .map((note) => (
-                <div key={note.id} className="text-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-start gap-2 flex-wrap">
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-xs text-slate-500">
-                            {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', { 
-                              day: '2-digit', 
-                              month: '2-digit', 
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </span>
-                          {(note.createdBy || note.userId?.username || note.user?.username) && (
-                            <span className="text-xs text-slate-500">
-                              • {note.createdBy || note.userId?.username || note.user?.username}
-                            </span>
-                          )}
-                        </div>
-                         <span className="contact-note-text">{note.text}</span>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteNote(note.id)}
-                      className="contact-tab-button-delete text-red-600 cursor-pointer flex-shrink-0"
+      {hasAnyViewPermission && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Notes</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-3">
+            {accessibleCategories.length > 0 && (
+              <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2">
+                <TabsList className="h-8">
+                  {accessibleCategories.map((category) => (
+                    <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1">
+                      {category.name}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            )}
+            <form onSubmit={handleCreateNote} className="space-y-2">
+              <div className="flex gap-2 items-stretch">
+                <Textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Ajouter une note..."
+                  rows={2}
+                  className="resize-none text-sm flex-1"
+                  disabled={isSubmittingNote}
+                />
+                {canCreateInSelectedCategory && (
+                  <Button 
+                    type="submit" 
+                    size="sm" 
+                    disabled={isSubmittingNote || !noteText.trim()}
+                    className="contact-tab-button-save-note"
+                  >
+                    <Send className="w-3 h-3 mr-1" />
+                    {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
+                  </Button>
+                )}
+              </div>
+            </form>
+            
+            {(() => {
+              // Filter notes by selected category and view permissions
+              let filteredNotes = localNotes;
+              
+              // Filter by selected category
+              if (selectedCategoryId !== 'all') {
+                filteredNotes = filteredNotes.filter(note => note.categId === selectedCategoryId);
+              }
+              
+              // Filter to only show notes from categories user has view permission for
+              filteredNotes = filteredNotes.filter(note => {
+                // If note has no category, show it (null category notes are accessible)
+                if (!note.categId) {
+                  return true;
+                }
+                // Only show if user has view permission for this category
+                return accessibleCategoryIds.includes(note.categId);
+              });
+              
+              return filteredNotes.length > 0 ? (
+                <div className="space-y-2 pt-2">
+                  {[...filteredNotes]
+                    .sort((a, b) => {
+                      const dateA = new Date(a.createdAt || a.created_at).getTime();
+                      const dateB = new Date(b.createdAt || b.created_at).getTime();
+                      return dateB - dateA; // Descending order (most recent first)
+                    })
+                    .slice(0, showAllNotes ? filteredNotes.length : 3)
+                    .map((note) => (
+                      <NoteItemCompact 
+                        key={note.id}
+                        note={note}
+                        onDelete={handleDeleteNote}
+                        onEdit={handleEditNote}
+                      />
+                    ))}
+                  {filteredNotes.length > 3 && !showAllNotes && (
+                    <p 
+                      className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                      onClick={() => setShowAllNotes(true)}
                     >
-                      Supprimer
-                    </Button>
-                  </div>
+                      + {filteredNotes.length - 3} autre(s) note(s)
+                    </p>
+                  )}
+                  {showAllNotes && filteredNotes.length > 3 && (
+                    <p 
+                      className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
+                      onClick={() => setShowAllNotes(false)}
+                    >
+                      Afficher moins
+                    </p>
+                  )}
                 </div>
-              ))}
-              {notes.length > 3 && !showAllNotes && (
-                <p 
-                  className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
-                  onClick={() => setShowAllNotes(true)}
-                >
-                  + {notes.length - 3} autre(s) note(s)
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Aucune note dans cette catégorie
                 </p>
-              )}
-              {showAllNotes && notes.length > 3 && (
-                <p 
-                  className="text-xs text-slate-500 text-center pt-1 cursor-pointer hover:text-slate-700 hover:underline"
-                  onClick={() => setShowAllNotes(false)}
-                >
-                  Afficher moins
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      )}
 
       {/* 1. Informations générales */}
       <Card>

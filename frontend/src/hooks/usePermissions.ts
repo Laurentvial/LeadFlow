@@ -83,3 +83,85 @@ export function useHasStatusesPermission(): boolean {
   });
 }
 
+/**
+ * Hook to check if user has permission to view the note categories (Fiche contact) management page
+ * Returns true only if user has the general 'note_categories' view permission
+ * @returns boolean indicating if user has note categories management permission
+ */
+export function useHasNoteCategoriesPermission(): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has the general 'note_categories' view permission
+  return permissions.some((perm) => {
+    return perm.component === 'note_categories' && 
+           perm.action === 'view' && 
+           !perm.fieldName && // Exclude field-level permissions
+           !perm.statusId; // Only general note_categories permission
+  });
+}
+
+/**
+ * Hook to check if user has permission for a specific note category
+ * @param categoryId - The category ID
+ * @param action - The action to check (e.g., 'view', 'create', 'edit', 'delete')
+ * @returns boolean indicating if user has the permission for this category
+ */
+export function useHasNoteCategoryPermission(
+  categoryId: string | null,
+  action: 'view' | 'create' | 'edit' | 'delete'
+): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  if (!categoryId) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has permission for this specific category (categoryId stored in fieldName)
+  return permissions.some((perm) => {
+    return perm.component === 'note_categories' && 
+           perm.action === action && 
+           perm.fieldName === categoryId &&
+           !perm.statusId;
+  });
+}
+
+/**
+ * Hook to get all category IDs the user has view permission for
+ * @returns Array of category IDs the user can view
+ */
+export function useAccessibleNoteCategoryIds(): string[] {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return [];
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Get all category IDs (stored in fieldName) where user has view permission
+  const categoryIds = permissions
+    .filter((perm) => {
+      return perm.component === 'note_categories' && 
+             perm.action === 'view' && 
+             perm.fieldName !== null &&
+             !perm.statusId;
+    })
+    .map((perm) => perm.fieldName!)
+    .filter((id): id is string => id !== null);
+
+  // Remove duplicates
+  return Array.from(new Set(categoryIds));
+}
+

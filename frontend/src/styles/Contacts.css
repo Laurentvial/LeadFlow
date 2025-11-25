@@ -148,11 +148,32 @@
 }
 
 .contacts-column-header-button {
-  transition: color 0.2s;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #3b82f6;
+  transition: all 0.2s ease;
 }
 
 .contacts-column-header-button:hover {
-  color: #3b82f6 !important;
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #2563eb !important;
+}
+
+.contacts-column-header-button:active {
+  background: #cbd5e1;
+  transform: scale(0.98);
 }
 
 .contacts-table tbody tr {
@@ -248,6 +269,30 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* Column filter scrollbar styling */
+.contacts-column-filter-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+
+.contacts-column-filter-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.contacts-column-filter-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.contacts-column-filter-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.contacts-column-filter-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .contacts-name-link {

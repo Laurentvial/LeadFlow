@@ -138,7 +138,7 @@ class NoteCategorySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = NoteCategory
-        fields = ['id', 'name', 'color', 'orderIndex', 'createdAt', 'updatedAt']
+        fields = ['id', 'name', 'orderIndex', 'createdAt', 'updatedAt']
         extra_kwargs = {
             'id': {'required': False}
         }
@@ -156,11 +156,10 @@ class NoteSerializer(serializers.ModelSerializer):
     createdBy = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     categoryName = serializers.SerializerMethodField()
-    categoryColor = serializers.SerializerMethodField()
     
     class Meta:
         model = Note
-        fields = ['id', 'contactId', 'userId', 'categId', 'text', 'created_at', 'updated_at', 'createdBy', 'createdAt', 'categoryName', 'categoryColor']
+        fields = ['id', 'contactId', 'userId', 'categId', 'text', 'created_at', 'updated_at', 'createdBy', 'createdAt', 'categoryName']
         extra_kwargs = {
             'userId': {'read_only': True},
             'id': {'required': False}
@@ -180,10 +179,6 @@ class NoteSerializer(serializers.ModelSerializer):
         """Get the category name"""
         return obj.categ_id.name if obj.categ_id else None
     
-    def get_categoryColor(self, obj):
-        """Get the category color"""
-        return obj.categ_id.color if obj.categ_id else None
-    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         # Expose contactId and categId as string IDs in API response
@@ -192,7 +187,6 @@ class NoteSerializer(serializers.ModelSerializer):
         ret['createdBy'] = self.get_createdBy(instance)
         ret['createdAt'] = instance.created_at
         ret['categoryName'] = self.get_categoryName(instance)
-        ret['categoryColor'] = self.get_categoryColor(instance)
         return ret
     
     def to_internal_value(self, data):

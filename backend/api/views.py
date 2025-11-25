@@ -448,6 +448,28 @@ class NoteListCreateView(generics.ListCreateAPIView):
             categ_id=validated_data.get('categ_id')  # Can be None/null
         )
 
+class NoteUpdateView(generics.UpdateAPIView):
+    serializer_class = NoteSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+    lookup_url_kwarg = 'pk'
+    
+    def get_queryset(self):
+        user = self.request.user
+        return Note.objects.filter(userId=user)
+    
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+        
+        return Response(serializer.data)
+
 class NoteDeleteView(generics.DestroyAPIView):
     serializer_class = NoteSerializer
     permission_classes = [IsAuthenticated]
@@ -640,22 +662,77 @@ class ContactView(generics.ListAPIView):
                 # Apply multi-select filters
                 for column_id, values in multi_select_filters.items():
                     if values:
-                        if column_id == 'status':
-                            queryset = queryset.filter(status_id__in=values)
-                        elif column_id == 'source':
-                            queryset = queryset.filter(source_id__in=values)
-                        elif column_id == 'teleoperator':
-                            queryset = queryset.filter(teleoperator_id__in=values)
-                        elif column_id == 'confirmateur':
-                            queryset = queryset.filter(confirmateur_id__in=values)
-                        elif column_id == 'creator':
-                            queryset = queryset.filter(creator_id__in=values)
-                        elif column_id == 'postalCode':
-                            queryset = queryset.filter(postal_code__in=values)
-                        elif column_id == 'nationality':
-                            queryset = queryset.filter(nationality__in=values)
-                        elif column_id == 'campaign':
-                            queryset = queryset.filter(campaign__in=values)
+                        # Check if empty option is selected
+                        has_empty = '__empty__' in values
+                        # Filter out empty option from values for regular filtering
+                        regular_values = [v for v in values if v != '__empty__']
+                        
+                        # Build Q objects for filtering
+                        q_objects = []
+                        
+                        # Add empty/null filter if empty option is selected
+                        if has_empty:
+                            if column_id == 'status':
+                                q_objects.append(models.Q(status_id__isnull=True))
+                            elif column_id == 'source':
+                                q_objects.append(models.Q(source_id__isnull=True))
+                            elif column_id == 'teleoperator':
+                                q_objects.append(models.Q(teleoperator_id__isnull=True))
+                            elif column_id == 'confirmateur':
+                                q_objects.append(models.Q(confirmateur_id__isnull=True))
+                            elif column_id == 'creator':
+                                q_objects.append(models.Q(creator_id__isnull=True))
+                            elif column_id == 'postalCode':
+                                q_objects.append(models.Q(postal_code__isnull=True) | models.Q(postal_code=''))
+                            elif column_id == 'nationality':
+                                q_objects.append(models.Q(nationality__isnull=True) | models.Q(nationality=''))
+                            elif column_id == 'campaign':
+                                q_objects.append(models.Q(campaign__isnull=True) | models.Q(campaign=''))
+                            elif column_id == 'civility':
+                                q_objects.append(models.Q(civility__isnull=True) | models.Q(civility=''))
+                            elif column_id == 'managerTeam':
+                                # For managerTeam, we need to check if the contact's teleoperator/confirmateur has no team
+                                # This is more complex, so we'll filter contacts where teleoperator or confirmateur has no team
+                                q_objects.append(
+                                    models.Q(teleoperator__isnull=True) |
+                                    models.Q(teleoperator__user_details__team_memberships__isnull=True) |
+                                    models.Q(confirmateur__isnull=True) |
+                                    models.Q(confirmateur__user_details__team_memberships__isnull=True)
+                                )
+                        
+                        # Add regular value filters if any
+                        if regular_values:
+                            if column_id == 'status':
+                                q_objects.append(models.Q(status_id__in=regular_values))
+                            elif column_id == 'source':
+                                q_objects.append(models.Q(source_id__in=regular_values))
+                            elif column_id == 'teleoperator':
+                                q_objects.append(models.Q(teleoperator_id__in=regular_values))
+                            elif column_id == 'confirmateur':
+                                q_objects.append(models.Q(confirmateur_id__in=regular_values))
+                            elif column_id == 'creator':
+                                q_objects.append(models.Q(creator_id__in=regular_values))
+                            elif column_id == 'postalCode':
+                                q_objects.append(models.Q(postal_code__in=regular_values))
+                            elif column_id == 'nationality':
+                                q_objects.append(models.Q(nationality__in=regular_values))
+                            elif column_id == 'campaign':
+                                q_objects.append(models.Q(campaign__in=regular_values))
+                            elif column_id == 'civility':
+                                q_objects.append(models.Q(civility__in=regular_values))
+                            elif column_id == 'managerTeam':
+                                # For managerTeam, filter by team memberships
+                                q_objects.append(
+                                    models.Q(teleoperator__user_details__team_memberships__team_id__in=regular_values) |
+                                    models.Q(confirmateur__user_details__team_memberships__team_id__in=regular_values)
+                                )
+                        
+                        # Apply combined filter (OR logic: empty OR regular values)
+                        if q_objects:
+                            combined_q = q_objects[0]
+                            for q_obj in q_objects[1:]:
+                                combined_q |= q_obj
+                            queryset = queryset.filter(combined_q)
                 
                 # Apply date range filters
                 for column_id, date_range in date_range_filters.items():
@@ -878,29 +955,81 @@ class FosseContactView(generics.ListAPIView):
                 # Apply multi-select filters
                 for column_id, values in multi_select_filters.items():
                     if values:
-                        if column_id == 'status':
-                            queryset = queryset.filter(status_id__in=values)
-                        elif column_id == 'source':
-                            queryset = queryset.filter(source_id__in=values)
-                        elif column_id == 'teleoperator':
-                            # For Fosse, teleoperator is always null, so this filter would exclude all contacts
-                            # Skip this filter - return empty queryset since no Fosse contacts have teleoperator
-                            queryset = queryset.none()
-                        elif column_id == 'confirmateur':
-                            # For Fosse, confirmateur is always null, so this filter would exclude all contacts
-                            # Skip this filter - return empty queryset since no Fosse contacts have confirmateur
-                            queryset = queryset.none()
-                        elif column_id == 'creator':
-                            queryset = queryset.filter(creator_id__in=values)
-                        elif column_id == 'postalCode':
-                            queryset = queryset.filter(postal_code__in=values)
-                        elif column_id == 'nationality':
-                            queryset = queryset.filter(nationality__in=values)
-                        elif column_id == 'campaign':
-                            queryset = queryset.filter(campaign__in=values)
-                        elif column_id == 'civility':
-                            queryset = queryset.filter(civility__in=values)
-                        elif column_id == 'managerTeam':
+                        # Check if empty option is selected
+                        has_empty = '__empty__' in values
+                        # Filter out empty option from values for regular filtering
+                        regular_values = [v for v in values if v != '__empty__']
+                        
+                        # Build Q objects for filtering
+                        q_objects = []
+                        
+                        # Add empty/null filter if empty option is selected
+                        if has_empty:
+                            if column_id == 'status':
+                                q_objects.append(models.Q(status_id__isnull=True))
+                            elif column_id == 'source':
+                                q_objects.append(models.Q(source_id__isnull=True))
+                            elif column_id == 'teleoperator':
+                                # For Fosse, teleoperator is always null, so empty option matches all
+                                # Don't add filter - all Fosse contacts already have null teleoperator
+                                pass
+                            elif column_id == 'confirmateur':
+                                # For Fosse, confirmateur is always null, so empty option matches all
+                                # Don't add filter - all Fosse contacts already have null confirmateur
+                                pass
+                            elif column_id == 'creator':
+                                q_objects.append(models.Q(creator_id__isnull=True))
+                            elif column_id == 'postalCode':
+                                q_objects.append(models.Q(postal_code__isnull=True) | models.Q(postal_code=''))
+                            elif column_id == 'nationality':
+                                q_objects.append(models.Q(nationality__isnull=True) | models.Q(nationality=''))
+                            elif column_id == 'campaign':
+                                q_objects.append(models.Q(campaign__isnull=True) | models.Q(campaign=''))
+                            elif column_id == 'civility':
+                                q_objects.append(models.Q(civility__isnull=True) | models.Q(civility=''))
+                            elif column_id == 'managerTeam':
+                                # For Fosse, contacts have no teleoperator/confirmateur, so they have no team
+                                # Empty option matches all Fosse contacts
+                                pass
+                        
+                        # Add regular value filters if any
+                        if regular_values:
+                            if column_id == 'status':
+                                q_objects.append(models.Q(status_id__in=regular_values))
+                            elif column_id == 'source':
+                                q_objects.append(models.Q(source_id__in=regular_values))
+                            elif column_id == 'teleoperator':
+                                # For Fosse, teleoperator is always null, so regular values would exclude all
+                                # Only allow empty option for teleoperator in Fosse
+                                queryset = queryset.none()
+                                break
+                            elif column_id == 'confirmateur':
+                                # For Fosse, confirmateur is always null, so regular values would exclude all
+                                # Only allow empty option for confirmateur in Fosse
+                                queryset = queryset.none()
+                                break
+                            elif column_id == 'creator':
+                                q_objects.append(models.Q(creator_id__in=regular_values))
+                            elif column_id == 'postalCode':
+                                q_objects.append(models.Q(postal_code__in=regular_values))
+                            elif column_id == 'nationality':
+                                q_objects.append(models.Q(nationality__in=regular_values))
+                            elif column_id == 'campaign':
+                                q_objects.append(models.Q(campaign__in=regular_values))
+                            elif column_id == 'civility':
+                                q_objects.append(models.Q(civility__in=regular_values))
+                            elif column_id == 'managerTeam':
+                                # For Fosse, contacts have no team, so regular values would exclude all
+                                # Only allow empty option for managerTeam in Fosse
+                                queryset = queryset.none()
+                                break
+                        
+                        # Apply combined filter (OR logic: empty OR regular values)
+                        if q_objects:
+                            combined_q = q_objects[0]
+                            for q_obj in q_objects[1:]:
+                                combined_q |= q_obj
+                            queryset = queryset.filter(combined_q)
                             # Filter by creator's team for Fosse contacts
                             # Since Fosse contacts have null teleoperator/confirmateur, filter by creator's team
                             # Get team members for the specified teams
@@ -2598,6 +2727,39 @@ def note_category_delete(request, category_id):
     category = get_object_or_404(NoteCategory, id=category_id)
     category.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def note_category_reorder(request):
+    """Update orderIndex for multiple note categories"""
+    try:
+        categories_data = request.data.get('categories', [])
+        if not isinstance(categories_data, list):
+            return Response(
+                {'error': 'categories must be a list'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        for item in categories_data:
+            category_id = item.get('id')
+            order_index = item.get('orderIndex')
+            
+            if not category_id or order_index is None:
+                continue
+                
+            try:
+                category_obj = NoteCategory.objects.get(id=category_id)
+                category_obj.order_index = order_index
+                category_obj.save()
+            except NoteCategory.DoesNotExist:
+                continue
+        
+        return Response({'success': True}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response(
+            {'error': str(e)}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

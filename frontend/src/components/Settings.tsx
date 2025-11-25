@@ -4,16 +4,19 @@ import '../styles/UsersTeam.css';
 import '../styles/PageHeader.css';
 import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
-import { useHasPermission, useHasStatusesPermission } from '../hooks/usePermissions';
+import { ContactFormTab } from './ContactFormTab';
+import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
 
 export function Settings() {
   const hasPermissionsPermission = useHasPermission('permissions', 'view');
   const hasStatusesPermission = useHasStatusesPermission();
+  const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   
   // Determine default tab based on available permissions
   const getDefaultTab = () => {
     if (hasPermissionsPermission) return 'permissions';
     if (hasStatusesPermission) return 'statuses';
+    if (hasNoteCategoriesPermission) return 'contact-form';
     return 'permissions'; // Fallback
   };
 
@@ -24,6 +27,7 @@ export function Settings() {
   const visibleTabs: string[] = [];
   if (hasPermissionsPermission) visibleTabs.push('permissions');
   if (hasStatusesPermission) visibleTabs.push('statuses');
+  if (hasNoteCategoriesPermission) visibleTabs.push('contact-form');
 
   return (
     <div className="users-teams-container">
@@ -37,6 +41,7 @@ export function Settings() {
           <TabsList>
             {hasPermissionsPermission && <TabsTrigger value="permissions">Permissions</TabsTrigger>}
             {hasStatusesPermission && <TabsTrigger value="statuses">Statuts</TabsTrigger>}
+            {hasNoteCategoriesPermission && <TabsTrigger value="contact-form">Fiche contact</TabsTrigger>}
           </TabsList>
 
           {hasPermissionsPermission && (
@@ -48,6 +53,12 @@ export function Settings() {
           {hasStatusesPermission && (
             <TabsContent value="statuses" className="users-teams-tab-content">
               <StatusesTab />
+            </TabsContent>
+          )}
+
+          {hasNoteCategoriesPermission && (
+            <TabsContent value="contact-form" className="users-teams-tab-content">
+              <ContactFormTab />
             </TabsContent>
           )}
         </Tabs>

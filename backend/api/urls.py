@@ -4,8 +4,9 @@ from . import views as api_views
 urlpatterns = [
     # Notes endpoints
     path('notes/', api_views.NoteListCreateView.as_view(), name='note-list-create'),
-    path('notes/delete/<str:pk>/', api_views.NoteDeleteView.as_view(), name='note-delete'),
     path('notes/create/', api_views.NoteListCreateView.as_view(), name='note-create'),
+    path('notes/<str:pk>/update/', api_views.NoteUpdateView.as_view(), name='note-update'),
+    path('notes/delete/<str:pk>/', api_views.NoteDeleteView.as_view(), name='note-delete'),
     # Contacts endpoints
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),
     path('contacts/fosse/', api_views.FosseContactView.as_view(), name='fosse-contact-list'),
@@ -72,6 +73,7 @@ urlpatterns = [
     # Note Categories endpoints
     path('note-categories/', api_views.note_category_list, name='note-category-list'),
     path('note-categories/create/', api_views.note_category_create, name='note-category-create'),
+    path('note-categories/reorder/', api_views.note_category_reorder, name='note-category-reorder'),
     path('note-categories/<str:category_id>/', api_views.note_category_update, name='note-category-update'),
     path('note-categories/<str:category_id>/delete/', api_views.note_category_delete, name='note-category-delete'),
     # Stats endpoint
