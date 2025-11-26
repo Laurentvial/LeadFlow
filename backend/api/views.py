@@ -4557,46 +4557,59 @@ def chat_messages(request, chat_room_id):
             chat_room.save()
             
             # Send message via WebSocket to chat room
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                message_data = {
-                    'id': message.id,
-                    'chatRoomId': message.chat_room.id,
-                    'senderId': message.sender.id,
-                    'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
-                    'content': message.content,
-                    'isRead': message.is_read,
-                    'createdAt': message.created_at.isoformat(),
-                }
-                
-                async_to_sync(channel_layer.group_send)(
-                    f'chat_{chat_room.id}',
-                    {
-                        'type': 'chat_message',
-                        'message': message_data,
-                        'sender_id': request.user.id
+            # Wrap in try-except to prevent message send failure if WebSocket fails
+            try:
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    message_data = {
+                        'id': message.id,
+                        'chatRoomId': message.chat_room.id,
+                        'senderId': message.sender.id,
+                        'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                        'content': message.content,
+                        'isRead': message.is_read,
+                        'createdAt': message.created_at.isoformat(),
                     }
-                )
-                
-                # Send message notification via WebSocket (no database notification for messages)
-                # This allows real-time popup without cluttering notifications
-                participants = chat_room.participants.exclude(id=request.user.id)
-                for participant in participants:
+                    
                     async_to_sync(channel_layer.group_send)(
-                        f'chat_message_{participant.id}',
+                        f'chat_{chat_room.id}',
                         {
-                            'type': 'new_message',
-                            'message': {
-                                'id': message.id,
-                                'chatRoomId': chat_room.id,
-                                'senderId': message.sender.id,
-                                'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
-                                'content': message.content,
-                                'createdAt': message.created_at.isoformat(),
-                            },
-                            'chat_room_id': chat_room.id,
+                            'type': 'chat_message',
+                            'message': message_data,
+                            'sender_id': request.user.id
                         }
                     )
+                    
+                    # Send message notification via WebSocket (no database notification for messages)
+                    # This allows real-time popup without cluttering notifications
+                    participants = chat_room.participants.exclude(id=request.user.id)
+                    for participant in participants:
+                        try:
+                            async_to_sync(channel_layer.group_send)(
+                                f'chat_message_{participant.id}',
+                                {
+                                    'type': 'new_message',
+                                    'message': {
+                                        'id': message.id,
+                                        'chatRoomId': chat_room.id,
+                                        'senderId': message.sender.id,
+                                        'senderName': f"{message.sender.first_name} {message.sender.last_name}".strip() or message.sender.username,
+                                        'content': message.content,
+                                        'createdAt': message.created_at.isoformat(),
+                                    },
+                                    'chat_room_id': chat_room.id,
+                                }
+                            )
+                        except Exception as ws_error:
+                            # Log but don't fail - message is already saved
+                            import traceback
+                            print(f"Error sending WebSocket notification to participant {participant.id}: {str(ws_error)}")
+                            print(traceback.format_exc())
+            except Exception as e:
+                # Log but don't fail - message is already saved
+                import traceback
+                print(f"Error sending message via WebSocket: {str(e)}")
+                print(traceback.format_exc())
             
             serializer = MessageSerializer(message)
             return Response(serializer.data, status=status.HTTP_201_CREATED)

@@ -98,8 +98,10 @@ REDIS_URL = os.getenv('REDIS_URL', None)
 
 if REDIS_URL:
     # Heroku Redis or other cloud Redis with URL
-    # Parse Redis URL to handle SSL properly
+    # channels-redis can accept Redis URL directly, but needs special handling for SSL
+    # For Heroku Redis with rediss:// (SSL), we need to parse and configure SSL
     from urllib.parse import urlparse
+    import ssl
     
     # Parse the Redis URL
     parsed = urlparse(REDIS_URL)
@@ -109,24 +111,38 @@ if REDIS_URL:
     redis_port = parsed.port or 6379
     redis_password = parsed.password
     
-    # Configure channel layers with SSL support for Heroku Redis
-    # channels-redis requires a tuple format with SSL options
-    import ssl
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {
-                "hosts": [{
-                    'address': (redis_host, redis_port),
-                    'password': redis_password,
-                    'ssl': True,
-                    'ssl_cert_reqs': ssl.CERT_NONE,  # Disable SSL certificate verification for Heroku Redis
-                }],
-                "capacity": 1500,
-                "expiry": 10,
+    # Check if SSL is required (rediss://)
+    use_ssl = parsed.scheme == 'rediss'
+    
+    if use_ssl:
+        # Configure channel layers with SSL support for Heroku Redis
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                'CONFIG': {
+                    "hosts": [{
+                        'address': (redis_host, redis_port),
+                        'password': redis_password,
+                        'ssl': True,
+                        'ssl_cert_reqs': ssl.CERT_NONE,  # Disable SSL certificate verification for Heroku Redis
+                    }],
+                    "capacity": 1500,
+                    "expiry": 10,
+                },
             },
-        },
-    }
+        }
+    else:
+        # Non-SSL Redis (shouldn't happen on Heroku, but handle it)
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                'CONFIG': {
+                    "hosts": [REDIS_URL],
+                    "capacity": 1500,
+                    "expiry": 10,
+                },
+            },
+        }
 elif os.getenv('USE_REDIS', 'False') == 'True':
     # Local Redis with host/port
     CHANNEL_LAYERS = {
