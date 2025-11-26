@@ -103,4 +103,8 @@ urlpatterns = [
     path('notifications/unread-count/', api_views.notification_unread_count, name='notification-unread-count'),
     path('notifications/<str:notification_id>/read/', api_views.notification_mark_read, name='notification-mark-read'),
     path('notifications/mark-all-read/', api_views.notification_mark_all_read, name='notification-mark-all-read'),
+    # Notification Preferences endpoints
+    path('notification-preferences/', api_views.notification_preference_list, name='notification-preference-list'),
+    path('notification-preferences/<str:role_id>/', api_views.notification_preference_detail, name='notification-preference-detail'),
+    path('notification-preferences/<str:role_id>/update/', api_views.notification_preference_update, name='notification-preference-update'),
 ]

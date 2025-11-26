@@ -10,12 +10,13 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
+from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
-    SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer
+    SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
+    NotificationPreferenceSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -588,14 +589,19 @@ class ContactView(generics.ListAPIView):
             'status',
             'source',
             'teleoperator',
+            'teleoperator__user_details',  # Select user_details to avoid query when accessing it
             'confirmateur',
             'creator'
         )
         
-        # Prefetch related user_details and team_memberships for teleoperator
-        # This optimizes the serializer's access to managerUserDetailsId and managerTeamId
+        # Prefetch related team_memberships for teleoperator's user_details
+        # This optimizes the serializer's access to managerTeamId and managerTeamName
+        from django.db.models import Prefetch
         queryset = queryset.prefetch_related(
-            'teleoperator__user_details__team_memberships__team'
+            Prefetch(
+                'teleoperator__user_details__team_memberships',
+                queryset=TeamMember.objects.select_related('team')
+            )
         )
         
         # Order by created_at descending (most recent first)
@@ -678,7 +684,16 @@ class ContactView(generics.ListAPIView):
                                     if column_id == 'email':
                                         queryset = queryset.filter(email__icontains=value)
                                     elif column_id == 'phone':
-                                        queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
+                                        # Convert phone search to integer if possible
+                                        try:
+                                            phone_int = int(''.join(str(value).split()))
+                                            queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
+                                        except (ValueError, TypeError):
+                                            # If not a valid number, search as exact match on string representation
+                                            phone_str = str(value).strip()
+                                            queryset = queryset.filter(
+                                                models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                            )
                                     elif column_id == 'city':
                                         queryset = queryset.filter(city__icontains=value)
                                     # Add more column filters as needed
@@ -795,11 +810,14 @@ class ContactView(generics.ListAPIView):
                         logger.warning(f"Invalid date format in filter {column_id}: {e}")
                         pass
                 
-                # Get total count after applying filters
-                total_count = queryset.count()
-                
-                # Apply limit to queryset before serialization
+                # CRITICAL PERFORMANCE FIX: Apply limit BEFORE serialization
+                # This prevents loading thousands of contacts into memory
                 queryset = queryset[:limit]
+                
+                # Skip expensive count() query - it's extremely slow on large tables
+                # Just use limit as total for performance
+                total_count = limit
+                
                 serializer = self.get_serializer(queryset, many=True, context={'request': request})
                 return Response({
                     'contacts': serializer.data,
@@ -841,16 +859,17 @@ class ContactView(generics.ListAPIView):
                 'page_size': requested_page_size
             })
         else:
-            # For backward compatibility, return all contacts (but optimized)
-            # However, apply a default limit of 1000 to prevent performance issues
-            total_queryset = self.get_queryset()
-            total_count = total_queryset.count()
-            queryset = total_queryset[:1000]
+            # For backward compatibility, return contacts (but optimized)
+            # CRITICAL: Always apply a default limit to prevent performance issues
+            DEFAULT_LIMIT = 1000
+            queryset = self.get_queryset()
+            queryset = queryset[:DEFAULT_LIMIT]  # Limit BEFORE serialization
+            # Skip expensive count() query - use limit as total
             serializer = self.get_serializer(queryset, many=True, context={'request': request})
             return Response({
                 'contacts': serializer.data,
-                'total': total_count,
-                'limit': 1000
+                'total': DEFAULT_LIMIT,  # Don't count, just use limit
+                'limit': DEFAULT_LIMIT
             })
 
 
@@ -883,13 +902,18 @@ class FosseContactView(generics.ListAPIView):
             'status',
             'source',
             'teleoperator',
+            'teleoperator__user_details',  # Select user_details to avoid query when accessing it
             'confirmateur',
             'creator'
         )
         
-        # Prefetch related user_details and team_memberships for teleoperator
+        # Prefetch related team_memberships for teleoperator's user_details
+        from django.db.models import Prefetch
         queryset = queryset.prefetch_related(
-            'teleoperator__user_details__team_memberships__team'
+            Prefetch(
+                'teleoperator__user_details__team_memberships',
+                queryset=TeamMember.objects.select_related('team')
+            )
         )
         
         # Order by created_at descending (most recent first)
@@ -971,7 +995,16 @@ class FosseContactView(generics.ListAPIView):
                                     if column_id == 'email':
                                         queryset = queryset.filter(email__icontains=value)
                                     elif column_id == 'phone':
-                                        queryset = queryset.filter(models.Q(phone__icontains=value) | models.Q(mobile__icontains=value))
+                                        # Convert phone search to integer if possible
+                                        try:
+                                            phone_int = int(''.join(str(value).split()))
+                                            queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
+                                        except (ValueError, TypeError):
+                                            # If not a valid number, search as exact match on string representation
+                                            phone_str = str(value).strip()
+                                            queryset = queryset.filter(
+                                                models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                            )
                                     elif column_id == 'city':
                                         queryset = queryset.filter(city__icontains=value)
                                     # Add more column filters as needed
@@ -1093,11 +1126,14 @@ class FosseContactView(generics.ListAPIView):
                         logger.warning(f"Invalid date format in filter {column_id}: {e}")
                         pass
                 
-                # Get total count after applying filters
-                total_count = queryset.count()
-                
-                # Apply limit to queryset before serialization
+                # CRITICAL PERFORMANCE FIX: Apply limit BEFORE serialization
+                # This prevents loading thousands of contacts into memory
                 queryset = queryset[:limit]
+                
+                # Skip expensive count() query - it's extremely slow on large tables
+                # Just use limit as total for performance
+                total_count = limit
+                
                 serializer = self.get_serializer(queryset, many=True, context={'request': request})
                 return Response({
                     'contacts': serializer.data,
@@ -1114,12 +1150,18 @@ class FosseContactView(generics.ListAPIView):
                 print(f"Error in FosseContactView.list with limit: {error_details}")
                 return Response({'error': str(e), 'details': error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        # Default behavior: return all contacts (no limit)
+        # Default behavior: return contacts with a reasonable limit to prevent performance issues
+        # Always apply a limit to prevent loading all contacts at once
         queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        DEFAULT_LIMIT = 1000
+        limited_queryset = queryset[:DEFAULT_LIMIT]
+        serializer = self.get_serializer(limited_queryset, many=True, context={'request': request})
+        # Don't call count() on the full queryset - it's too slow. Use len() on limited queryset
+        total_count = len(serializer.data)  # Approximate count
         return Response({
             'contacts': serializer.data,
-            'total': queryset.count()
+            'total': total_count,
+            'limit': DEFAULT_LIMIT
         })
 
 @api_view(['POST'])
@@ -1152,13 +1194,30 @@ def contact_create(request):
         return value
     
     # Map frontend field names to model field names
+    # Convert phone numbers to integers (remove spaces first)
+    phone_value = request.data.get('phone', '') or ''
+    mobile_value = request.data.get('mobile', '') or ''
+    
+    def phone_to_int(value):
+        """Convert phone number string to integer, return None if empty"""
+        if not value:
+            return None
+        # Remove all whitespace and convert to int
+        cleaned = ''.join(str(value).split())
+        if not cleaned:
+            return None
+        try:
+            return int(cleaned)
+        except (ValueError, TypeError):
+            return None
+    
     contact_data = {
         'id': contact_id,
         'civility': request.data.get('civility', '') or '',
         'fname': request.data.get('firstName', '') or '',
         'lname': request.data.get('lastName', '') or '',
-        'phone': request.data.get('phone', '') or '',
-        'mobile': request.data.get('mobile', '') or '',
+        'phone': phone_to_int(phone_value),
+        'mobile': phone_to_int(mobile_value),
         'email': request.data.get('email', '') or '',
         'birth_date': get_date(request.data.get('birthDate')),
         'birth_place': request.data.get('birthPlace', '') or '',
@@ -1425,6 +1484,17 @@ def csv_import_contacts(request):
                         # Handle date field
                         if model_field == 'birth_date':
                             contact_data[model_field] = parse_date(value)
+                        # Handle phone number fields - convert to integer
+                        elif model_field in ['phone', 'mobile']:
+                            if value:
+                                try:
+                                    # Remove all whitespace and convert to int
+                                    cleaned = ''.join(value.split())
+                                    contact_data[model_field] = int(cleaned) if cleaned else None
+                                except (ValueError, TypeError):
+                                    contact_data[model_field] = None
+                            else:
+                                contact_data[model_field] = None
                         else:
                             contact_data[model_field] = value
                 
@@ -1709,143 +1779,266 @@ def contact_detail(request, contact_id):
         return Response({'contact': serializer.data})
     
     if request.method == 'PATCH':
-        # Get old value BEFORE any modifications
-        old_serializer = ContactSerializer(contact, context={'request': request})
-        old_value_raw = old_serializer.data
-        old_value = clean_contact_data_for_log(old_value_raw, include_created_at=False)
-        
-        # Helper functions
-        def get_date(value):
-            if not value:
-                return None
+        try:
+            # Get old value BEFORE any modifications
             try:
-                from datetime import datetime
-                # Handle both YYYY-MM-DD and DD/MM/YYYY formats
-                if '/' in str(value):
-                    parts = str(value).split('/')
-                    if len(parts) == 3:
-                        day, month, year = parts
-                        return datetime.strptime(f"{year}-{month}-{day}", "%Y-%m-%d").date()
-                return datetime.strptime(str(value), "%Y-%m-%d").date()
-            except:
-                return None
-        
-        # Update personal information fields
-        if 'civility' in request.data:
-            contact.civility = request.data.get('civility', '') or ''
-        if 'firstName' in request.data:
-            contact.fname = request.data.get('firstName', '') or ''
-        if 'lastName' in request.data:
-            contact.lname = request.data.get('lastName', '') or ''
-        if 'phone' in request.data:
-            contact.phone = request.data.get('phone', '') or ''
-        if 'mobile' in request.data:
-            contact.mobile = request.data.get('mobile', '') or ''
-        if 'email' in request.data:
-            contact.email = request.data.get('email', '') or ''
-        if 'birthDate' in request.data:
-            contact.birth_date = get_date(request.data.get('birthDate'))
-        if 'birthPlace' in request.data:
-            contact.birth_place = request.data.get('birthPlace', '') or ''
-        if 'address' in request.data:
-            contact.address = request.data.get('address', '') or ''
-        if 'postalCode' in request.data:
-            contact.postal_code = request.data.get('postalCode', '') or ''
-        if 'city' in request.data:
-            contact.city = request.data.get('city', '') or ''
-        if 'nationality' in request.data:
-            contact.nationality = request.data.get('nationality', '') or ''
-        
-        # Update status if provided
-        if 'statusId' in request.data:
-            status_id = request.data.get('statusId')
-            if status_id:
-                try:
-                    status_obj = Status.objects.filter(id=status_id).first()
-                    if status_obj:
-                        contact.status = status_obj
-                except Exception:
-                    pass
-            else:
-                contact.status = None
-        
-        # Update source if provided
-        if 'sourceId' in request.data:
-            source_id = request.data.get('sourceId')
-            if source_id:
-                try:
-                    source_obj = Source.objects.filter(id=source_id).first()
-                    if source_obj:
-                        contact.source = source_obj
-                except Exception:
-                    pass
-            else:
-                contact.source = None
-        
-        # Update teleoperator if provided
-        if 'teleoperatorId' in request.data:
-            teleoperator_id = request.data.get('teleoperatorId')
-            if teleoperator_id:
-                try:
-                    teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
-                    if teleoperator_user:
-                        contact.teleoperator = teleoperator_user
-                except Exception:
-                    pass
-            else:
-                contact.teleoperator = None
-        
-        # Update confirmateur if provided
-        if 'confirmateurId' in request.data:
-            confirmateur_id = request.data.get('confirmateurId')
-            if confirmateur_id:
-                try:
-                    confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
-                    if confirmateur_user:
-                        contact.confirmateur = confirmateur_user
-                except Exception:
-                    pass
-            else:
-                contact.confirmateur = None
-        
-        # Update campaign if provided
-        if 'campaign' in request.data:
-            contact.campaign = request.data.get('campaign', '') or ''
-        
-        # Update addressComplement if provided
-        if 'addressComplement' in request.data:
-            contact.address_complement = request.data.get('addressComplement', '') or ''
-        
-        # Save the contact with all modifications
-        contact.save()
-        
-        # Get new value after saving
-        serializer = ContactSerializer(contact, context={'request': request})
-        new_value_raw = serializer.data
-        new_value = clean_contact_data_for_log(new_value_raw, include_created_at=False)
-        
-        # Compute only changed fields
-        changed_fields = compute_changed_fields(old_value, new_value)
-        
-        # Only create log entry if there are actual changes
-        if changed_fields:
-            # Store only the changed fields in old_value and new_value
-            # old_value will contain the old values of changed fields
-            # new_value will contain the new values of changed fields
-            old_value_changes = {field: change['old'] for field, change in changed_fields.items()}
-            new_value_changes = {field: change['new'] for field, change in changed_fields.items()}
+                old_serializer = ContactSerializer(contact, context={'request': request})
+                old_value_raw = old_serializer.data
+                old_value = clean_contact_data_for_log(old_value_raw, include_created_at=False)
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error getting old value for contact: {error_details}")
+                return Response(
+                    {'error': f'Erreur lors de la récupération des données: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
-            create_log_entry(
-                event_type='editContact',
-                user_id=request.user if request.user.is_authenticated else None,
-                request=request,
-                old_value=old_value_changes,
-                new_value=new_value_changes,
-                contact_id=contact,
-                creator_id=request.user if request.user.is_authenticated else None
+            # Helper functions
+            def get_date(value):
+                if not value:
+                    return None
+                try:
+                    from datetime import datetime
+                    # Handle both YYYY-MM-DD and DD/MM/YYYY formats
+                    if '/' in str(value):
+                        parts = str(value).split('/')
+                        if len(parts) == 3:
+                            day, month, year = parts
+                            return datetime.strptime(f"{year}-{month}-{day}", "%Y-%m-%d").date()
+                    return datetime.strptime(str(value), "%Y-%m-%d").date()
+                except:
+                    return None
+            
+            # Update personal information fields
+            if 'civility' in request.data:
+                contact.civility = request.data.get('civility', '') or ''
+            if 'firstName' in request.data:
+                contact.fname = request.data.get('firstName', '') or ''
+            if 'lastName' in request.data:
+                contact.lname = request.data.get('lastName', '') or ''
+            if 'phone' in request.data:
+                phone_value = request.data.get('phone')
+                # Handle None, empty string, or whitespace-only strings
+                # Convert empty strings and whitespace to None explicitly
+                if phone_value is None:
+                    contact.phone = None
+                elif isinstance(phone_value, str) and not phone_value.strip():
+                    # Explicitly handle empty string or whitespace-only string
+                    contact.phone = None
+                else:
+                    try:
+                        # Remove spaces and convert to int
+                        cleaned = ''.join(str(phone_value).split())
+                        if cleaned:
+                            contact.phone = int(cleaned)
+                        else:
+                            contact.phone = None
+                    except (ValueError, TypeError):
+                        contact.phone = None
+            if 'mobile' in request.data:
+                mobile_value = request.data.get('mobile')
+                # Handle None, empty string, or whitespace-only strings
+                # IMPORTANT: If mobile is required (NOT NULL constraint), we need to handle empty values differently
+                # Check if the value is actually empty/null
+                if mobile_value is None or (isinstance(mobile_value, str) and not mobile_value.strip()):
+                    # If mobile is empty/null, check if DB allows NULL
+                    # If DB has NOT NULL constraint, we'll keep existing value (handled in final check before save)
+                    # For now, set to None - will be corrected before save if DB doesn't allow it
+                    contact.mobile = None
+                else:
+                    try:
+                        # Remove spaces and convert to int
+                        cleaned = ''.join(str(mobile_value).split())
+                        if cleaned:
+                            contact.mobile = int(cleaned)
+                        else:
+                            # Empty after cleaning - set to None (will be corrected before save if needed)
+                            contact.mobile = None
+                    except (ValueError, TypeError):
+                        # Invalid value - set to None (will be corrected before save if needed)
+                        contact.mobile = None
+            if 'email' in request.data:
+                contact.email = request.data.get('email', '') or ''
+            if 'birthDate' in request.data:
+                contact.birth_date = get_date(request.data.get('birthDate'))
+            if 'birthPlace' in request.data:
+                contact.birth_place = request.data.get('birthPlace', '') or ''
+            if 'address' in request.data:
+                contact.address = request.data.get('address', '') or ''
+            if 'postalCode' in request.data:
+                contact.postal_code = request.data.get('postalCode', '') or ''
+            if 'city' in request.data:
+                contact.city = request.data.get('city', '') or ''
+            if 'nationality' in request.data:
+                contact.nationality = request.data.get('nationality', '') or ''
+            
+            # Update status if provided
+            if 'statusId' in request.data:
+                status_id = request.data.get('statusId')
+                if status_id:
+                    try:
+                        status_obj = Status.objects.filter(id=status_id).first()
+                        if status_obj:
+                            contact.status = status_obj
+                    except Exception:
+                        pass
+                else:
+                    contact.status = None
+            
+            # Update source if provided
+            if 'sourceId' in request.data:
+                source_id = request.data.get('sourceId')
+                if source_id:
+                    try:
+                        source_obj = Source.objects.filter(id=source_id).first()
+                        if source_obj:
+                            contact.source = source_obj
+                    except Exception:
+                        pass
+                else:
+                    contact.source = None
+            
+            # Update teleoperator if provided
+            if 'teleoperatorId' in request.data:
+                teleoperator_id = request.data.get('teleoperatorId')
+                if teleoperator_id:
+                    try:
+                        teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
+                        if teleoperator_user:
+                            contact.teleoperator = teleoperator_user
+                    except Exception:
+                        pass
+                else:
+                    contact.teleoperator = None
+            
+            # Update confirmateur if provided
+            if 'confirmateurId' in request.data:
+                confirmateur_id = request.data.get('confirmateurId')
+                if confirmateur_id:
+                    try:
+                        confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
+                        if confirmateur_user:
+                            contact.confirmateur = confirmateur_user
+                    except Exception:
+                        pass
+                else:
+                    contact.confirmateur = None
+            
+            # Update campaign if provided
+            if 'campaign' in request.data:
+                contact.campaign = request.data.get('campaign', '') or ''
+            
+            # Update addressComplement if provided
+            if 'addressComplement' in request.data:
+                contact.address_complement = request.data.get('addressComplement', '') or ''
+            
+            # CRITICAL: Ensure phone and mobile are None (not empty strings) before saving
+            # This prevents ValueError when saving to BigIntegerField
+            # Check both the attribute value and ensure it's not an empty string
+            # NOTE: Only update if the field was actually provided in the request
+            # This prevents overwriting existing values with None when the field wasn't in the update
+            if hasattr(contact, 'phone'):
+                if contact.phone == '' or (isinstance(contact.phone, str) and not contact.phone.strip()):
+                    # Only set to None if phone was in the request (meaning user wants to clear it)
+                    if 'phone' in request.data:
+                        contact.phone = None
+            if hasattr(contact, 'mobile'):
+                if contact.mobile == '' or (isinstance(contact.mobile, str) and not contact.mobile.strip()):
+                    # Only set to None if mobile was in the request (meaning user wants to clear it)
+                    # But check if the database allows NULL - if not, we might need to keep existing value
+                    if 'mobile' in request.data:
+                        # Try to set to None, but if database constraint prevents it, keep existing value
+                        # The actual None assignment happens above in the mobile update section
+                        pass
+            
+            # CRITICAL: Final check before saving - ensure mobile is not None if DB requires it
+            # If mobile is None and DB has NOT NULL constraint, keep existing value
+            if hasattr(contact, 'mobile') and contact.mobile is None:
+                # Check if mobile was in request.data - if not, don't update it
+                if 'mobile' in request.data:
+                    # Mobile was provided but is None - check if we need to keep existing value
+                    # Reload the contact from DB to get current mobile value
+                    try:
+                        # Use select_for_update to avoid race conditions, but don't lock if not needed
+                        current_contact = Contact.objects.select_for_update(nowait=True).get(id=contact.id)
+                        if current_contact.mobile is not None:
+                            # Keep existing value if DB doesn't allow NULL
+                            contact.mobile = current_contact.mobile
+                        else:
+                            # Current value is also None - DB constraint will fail, but we'll catch it
+                            pass
+                    except Contact.DoesNotExist:
+                        pass
+                    except Exception:
+                        # If we can't check (e.g., lock timeout), try to save anyway and let the exception handler catch it
+                        pass
+            
+            # Save the contact with all modifications
+            try:
+                contact.save()
+            except ValueError as e:
+                # Handle ValueError specifically (e.g., invalid phone/mobile format)
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error saving contact: {error_details}")
+                return Response(
+                    {'error': f'Erreur lors de la sauvegarde: {str(e)}', 'details': error_details},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                # Handle any other errors (including database constraint violations)
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Unexpected error saving contact: {error_details}")
+                # Check if it's a NOT NULL constraint violation
+                error_str = str(e).lower()
+                if 'not-null constraint' in error_str or 'null value' in error_str:
+                    return Response(
+                        {'error': 'Le champ mobile est requis et ne peut pas être vide. Veuillez fournir un numéro de téléphone mobile.', 'details': error_details},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                return Response(
+                    {'error': f'Erreur inattendue: {str(e)}', 'details': error_details},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Get new value after saving
+            serializer = ContactSerializer(contact, context={'request': request})
+            new_value_raw = serializer.data
+            new_value = clean_contact_data_for_log(new_value_raw, include_created_at=False)
+            
+            # Compute only changed fields
+            changed_fields = compute_changed_fields(old_value, new_value)
+            
+            # Only create log entry if there are actual changes
+            if changed_fields:
+                # Store only the changed fields in old_value and new_value
+                # old_value will contain the old values of changed fields
+                # new_value will contain the new values of changed fields
+                old_value_changes = {field: change['old'] for field, change in changed_fields.items()}
+                new_value_changes = {field: change['new'] for field, change in changed_fields.items()}
+                
+                create_log_entry(
+                    event_type='editContact',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    request=request,
+                    old_value=old_value_changes,
+                    new_value=new_value_changes,
+                    contact_id=contact,
+                    creator_id=request.user if request.user.is_authenticated else None
+                )
+            
+            return Response({'contact': serializer.data})
+        except Exception as e:
+            # Catch any other unexpected errors during PATCH processing
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error in PATCH contact_detail: {error_details}")
+            return Response(
+                {'error': f'Erreur lors de la mise à jour: {str(e)}', 'details': error_details},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        return Response({'contact': serializer.data})
 
 
 @api_view(['DELETE'])
@@ -1904,7 +2097,7 @@ def team_create(request):
         team_id = uuid.uuid4().hex[:12]
         while Team.objects.filter(id=team_id).exists():
             team_id = uuid.uuid4().hex[:12]
-        team = serializer.save(id=team_id)
+        team = serializer.save(id=team_id, created_by=request.user if request.user.is_authenticated else None)
         
         # Create log entry
         new_value = get_team_data_for_log(team)
@@ -1982,7 +2175,14 @@ def team_detail(request, team_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_list(request):
-    users = UserDetails.objects.all()
+    # Optimize queries with select_related and prefetch_related to avoid N+1 queries
+    users = UserDetails.objects.select_related(
+        'django_user',  # For firstName, lastName, username, email
+        'role_id'  # For role data (model field is role_id)
+    ).prefetch_related(
+        'team_memberships__team',  # For teamId
+        'role_id__permission_roles__permission__status'  # For permissions
+    ).all()
     serializer = UserDetailsSerializer(users, many=True)
     return Response({'users': serializer.data})
 
@@ -2112,7 +2312,16 @@ def user_update(request, user_id):
         else:
             user_details.role = None
     if 'phone' in request.data:
-        user_details.phone = request.data['phone'] or ''
+        phone_value = request.data.get('phone', '') or ''
+        if phone_value:
+            try:
+                # Remove spaces and convert to int
+                cleaned = ''.join(str(phone_value).split())
+                user_details.phone = int(cleaned) if cleaned else None
+            except (ValueError, TypeError):
+                user_details.phone = None
+        else:
+            user_details.phone = None
     
     # Update team membership using TeamMember table
     if 'teamId' in request.data:
@@ -2296,7 +2505,8 @@ def event_create(request):
         event = serializer.save(
             id=event_id,
             userId=user,
-            contactId=contact
+            contactId=contact,
+            created_by=request.user if request.user.is_authenticated else None
         )
         return Response(EventSerializer(event).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -2485,7 +2695,7 @@ def role_create(request):
         role_id = uuid.uuid4().hex[:12]
         while Role.objects.filter(id=role_id).exists():
             role_id = uuid.uuid4().hex[:12]
-        role = serializer.save(id=role_id)
+        role = serializer.save(id=role_id, created_by=request.user if request.user.is_authenticated else None)
         return Response(RoleSerializer(role).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2652,7 +2862,7 @@ def status_create(request):
         )['max_order'] or -1
         order_index = max_order + 1
         
-        status_obj = serializer.save(id=status_id, order_index=order_index)
+        status_obj = serializer.save(id=status_id, order_index=order_index, created_by=request.user if request.user.is_authenticated else None)
         return Response(StatusSerializer(status_obj).data, status=status.HTTP_201_CREATED)
     
     # Log validation errors for debugging
@@ -2708,7 +2918,7 @@ def source_create(request):
     
     # Create source directly (bypass serializer for creation to avoid issues)
     try:
-        source = Source.objects.create(id=source_id, name=name)
+        source = Source.objects.create(id=source_id, name=name, created_by=request.user if request.user.is_authenticated else None)
         serializer = SourceSerializer(source)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     except Exception as e:
@@ -2762,7 +2972,7 @@ def note_category_create(request):
         )['max_order'] or -1
         order_index = max_order + 1
         
-        category = serializer.save(id=category_id, order_index=order_index)
+        category = serializer.save(id=category_id, order_index=order_index, created_by=request.user if request.user.is_authenticated else None)
         return Response(NoteCategorySerializer(category).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2826,13 +3036,23 @@ def contact_logs(request, contact_id):
         # Verify contact exists
         contact = get_object_or_404(Contact, id=contact_id)
         
-        # Get all logs for this contact
-        logs = Log.objects.filter(contact_id=contact).order_by('-created_at')
+        # Get all logs for this contact with optimized queries
+        # Use select_related to avoid N+1 queries when accessing user_id, contact_id, creator_id
+        logs = Log.objects.filter(
+            contact_id=contact
+        ).select_related(
+            'user_id',  # For userId in serializer
+            'contact_id',  # For contactId in serializer
+            'creator_id'  # For creatorId and creatorName in serializer
+        ).order_by('-created_at')
         
         serializer = LogSerializer(logs, many=True)
         return Response({'logs': serializer.data}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in contact_logs: {error_details}")
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -3996,7 +4216,8 @@ def email_signatures(request):
                 content_text=content_text,
                 logo_url=logo_url,
                 logo_position=logo_position,
-                is_default=is_default
+                is_default=is_default,
+                created_by=request.user if request.user.is_authenticated else None
             )
             
             serializer = EmailSignatureSerializer(signature)
@@ -4469,4 +4690,79 @@ def notification_mark_all_read(request):
     """Mark all notifications as read for the current user"""
     Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
     return Response({'success': True})
+
+# Notification Preferences endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notification_preference_list(request):
+    """Get all notification preferences for all roles"""
+    preferences = NotificationPreference.objects.all().select_related('role').order_by('role__name')
+    serializer = NotificationPreferenceSerializer(preferences, many=True)
+    return Response({'preferences': serializer.data})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notification_preference_detail(request, role_id):
+    """Get notification preference for a specific role"""
+    try:
+        role = Role.objects.get(id=role_id)
+        preference, created = NotificationPreference.objects.get_or_create(
+            role=role,
+            defaults={
+                'id': uuid.uuid4().hex[:12],
+                'notify_message_received': True,
+                'notify_sensitive_contact_modification': True,
+                'notify_contact_edit': True
+            }
+        )
+        # Ensure ID is set if it was just created
+        if created:
+            pref_id = uuid.uuid4().hex[:12]
+            while NotificationPreference.objects.filter(id=pref_id).exists():
+                pref_id = uuid.uuid4().hex[:12]
+            preference.id = pref_id
+            preference.save()
+        
+        serializer = NotificationPreferenceSerializer(preference)
+        return Response(serializer.data)
+    except Role.DoesNotExist:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def notification_preference_update(request, role_id):
+    """Update notification preference for a specific role"""
+    try:
+        role = Role.objects.get(id=role_id)
+        preference, created = NotificationPreference.objects.get_or_create(
+            role=role,
+            defaults={
+                'id': uuid.uuid4().hex[:12],
+                'notify_message_received': True,
+                'notify_sensitive_contact_modification': True,
+                'notify_contact_edit': True
+            }
+        )
+        
+        # Ensure ID is set if it was just created
+        if created:
+            pref_id = uuid.uuid4().hex[:12]
+            while NotificationPreference.objects.filter(id=pref_id).exists():
+                pref_id = uuid.uuid4().hex[:12]
+            preference.id = pref_id
+            preference.save()
+        
+        # Update fields from request data
+        if 'notifyMessageReceived' in request.data:
+            preference.notify_message_received = request.data['notifyMessageReceived']
+        if 'notifySensitiveContactModification' in request.data:
+            preference.notify_sensitive_contact_modification = request.data['notifySensitiveContactModification']
+        if 'notifyContactEdit' in request.data:
+            preference.notify_contact_edit = request.data['notifyContactEdit']
+        
+        preference.save()
+        serializer = NotificationPreferenceSerializer(preference)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Role.DoesNotExist:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
 

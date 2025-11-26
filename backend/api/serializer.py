@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -198,10 +198,14 @@ class ContactSerializer(serializers.ModelSerializer):
     fullName = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     source = serializers.SerializerMethodField()
+    phone = serializers.SerializerMethodField()
+    mobile = serializers.SerializerMethodField()
     
     class Meta:
         model = Contact
         fields = '__all__'
+        # Phone and mobile are handled via SerializerMethodField above
+        # The queryset defers these fields to avoid ORM conversion errors
     
     def get_firstName(self, obj):
         return obj.fname
@@ -212,6 +216,25 @@ class ContactSerializer(serializers.ModelSerializer):
     def get_fullName(self, obj):
         return f"{obj.fname} {obj.lname}".strip()
     
+    def get_phone(self, obj):
+        """Handle phone field - returns integer as string or empty string"""
+        try:
+            phone_value = getattr(obj, 'phone', None)
+            if phone_value is None:
+                return ''
+            return str(phone_value)
+        except (ValueError, TypeError, AttributeError):
+            return ''
+    
+    def get_mobile(self, obj):
+        """Handle mobile field - returns integer as string or empty string"""
+        try:
+            mobile_value = getattr(obj, 'mobile', None)
+            if mobile_value is None:
+                return ''
+            return str(mobile_value)
+        except (ValueError, TypeError, AttributeError):
+            return ''
     
     def get_source(self, obj):
         if obj.source:
@@ -219,6 +242,8 @@ class ContactSerializer(serializers.ModelSerializer):
         return ''
     
     def to_representation(self, instance):
+        # Since phone and mobile are excluded from fields, super() won't try to serialize them
+        # This avoids the conversion error when database has empty strings
         ret = super().to_representation(instance)
         # S'assurer que tous les champs sont présents et convertir en camelCase
         ret['firstName'] = instance.fname
@@ -238,6 +263,9 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['confirmateurName'] = f"{instance.confirmateur.first_name} {instance.confirmateur.last_name}".strip() if instance.confirmateur else ''
         ret['creatorId'] = instance.creator_id if hasattr(instance, 'creator_id') else (instance.creator.id if instance.creator else None)
         ret['creatorName'] = f"{instance.creator.first_name} {instance.creator.last_name}".strip() if instance.creator else ''
+        # Phone and mobile are handled by SerializerMethodField - use the methods
+        ret['phone'] = self.get_phone(instance)
+        ret['mobile'] = self.get_mobile(instance)
         
         # Manager is the teleoperator (the one selected in teleoperateur select during creation)
         if instance.teleoperator:
@@ -247,24 +275,39 @@ class ContactSerializer(serializers.ModelSerializer):
             ret['managerEmail'] = instance.teleoperator.email or ''
             # Optimize: Use prefetched data efficiently
             try:
+                # Access user_details - should be prefetched via select_related
                 user_details = getattr(instance.teleoperator, 'user_details', None)
                 ret['managerUserDetailsId'] = user_details.id if user_details else None
                 
                 # Use prefetched team_memberships if available
                 if user_details:
-                    # Check if team_memberships is prefetched
-                    prefetched = getattr(user_details, '_prefetched_objects_cache', {})
-                    team_memberships = prefetched.get('team_memberships', None)
-                    
-                    if team_memberships is None:
-                        # Not prefetched, try to access directly (may cause query)
-                        team_memberships = list(user_details.team_memberships.all()) if hasattr(user_details, 'team_memberships') else []
-                    
-                    teleoperator_team_member = team_memberships[0] if team_memberships else None
-                    if teleoperator_team_member:
-                        ret['managerTeamId'] = teleoperator_team_member.team.id if hasattr(teleoperator_team_member, 'team') else None
-                        ret['managerTeamName'] = teleoperator_team_member.team.name if hasattr(teleoperator_team_member, 'team') else ''
-                    else:
+                    # Try to access prefetched team_memberships
+                    # The prefetch path is: teleoperator__user_details__team_memberships__team
+                    # So team_memberships should be in the prefetch cache
+                    try:
+                        # Check if prefetched
+                        if hasattr(user_details, '_prefetched_objects_cache'):
+                            prefetched = user_details._prefetched_objects_cache
+                            team_memberships = prefetched.get('team_memberships', None)
+                            if team_memberships is not None:
+                                # Use prefetched data
+                                teleoperator_team_member = team_memberships[0] if team_memberships else None
+                            else:
+                                # Not prefetched - return None to avoid query
+                                teleoperator_team_member = None
+                        else:
+                            # No prefetch cache - return None to avoid query
+                            teleoperator_team_member = None
+                        
+                        if teleoperator_team_member:
+                            # Team should be select_related in the prefetch
+                            ret['managerTeamId'] = teleoperator_team_member.team.id if hasattr(teleoperator_team_member, 'team') else None
+                            ret['managerTeamName'] = teleoperator_team_member.team.name if hasattr(teleoperator_team_member, 'team') else ''
+                        else:
+                            ret['managerTeamId'] = None
+                            ret['managerTeamName'] = ''
+                    except (AttributeError, IndexError, KeyError):
+                        # If anything fails, set defaults without querying
                         ret['managerTeamId'] = None
                         ret['managerTeamName'] = ''
                 else:
@@ -333,15 +376,31 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         return obj.django_user.email if obj.django_user else ''
 
     def get_phone(self, obj):
-        return obj.phone if obj.phone else ''
+        phone_value = getattr(obj, 'phone', None)
+        # Handle both integer (after migration) and string (before migration) values
+        if phone_value is None or phone_value == '':
+            return ''
+        return str(phone_value)
 
     def get_mobile(self, obj):
         # mobile field does not exist on UserDetails; return empty string
         return ''
 
     def get_teamId(self, obj):
-        # Get team from TeamMember relationship
-        team_member = obj.team_memberships.first()
+        # Get team from TeamMember relationship - use prefetched data if available
+        try:
+            # Check if team_memberships is prefetched
+            if hasattr(obj, '_prefetched_objects_cache'):
+                prefetched = obj._prefetched_objects_cache
+                team_memberships = prefetched.get('team_memberships', None)
+                if team_memberships is not None and len(team_memberships) > 0:
+                    team_member = team_memberships[0]
+                    return team_member.team.id if hasattr(team_member, 'team') else None
+        except (AttributeError, KeyError, IndexError):
+            pass
+        
+        # Fallback: query if not prefetched (shouldn't happen with proper prefetch)
+        team_member = obj.team_memberships.select_related('team').first()
         return team_member.team.id if team_member else None
     
     def get_permissions(self, obj):
@@ -349,8 +408,31 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         if not obj.role:
             return []
         
-        # Get all PermissionRole objects for this role
-        permission_roles = obj.role.permission_roles.select_related('permission').all()
+        # Try to use prefetched permission_roles if available
+        # The prefetch is on role_id, so check that object
+        try:
+            role_obj = obj.role_id if hasattr(obj, 'role_id') else obj.role
+            if role_obj and hasattr(role_obj, '_prefetched_objects_cache'):
+                prefetched = role_obj._prefetched_objects_cache
+                permission_roles = prefetched.get('permission_roles', None)
+                if permission_roles is not None:
+                    # Use prefetched data
+                    permissions = []
+                    for pr in permission_roles:
+                        perm = pr.permission
+                        permissions.append({
+                            'id': perm.id,
+                            'component': perm.component,
+                            'fieldName': perm.field_name,
+                            'action': perm.action,
+                            'statusId': perm.status.id if perm.status else None,
+                        })
+                    return permissions
+        except (AttributeError, KeyError):
+            pass
+        
+        # Fallback: query if not prefetched (shouldn't happen with proper prefetch)
+        permission_roles = obj.role.permission_roles.select_related('permission', 'permission__status').all()
         
         # Serialize permissions
         permissions = []
@@ -384,9 +466,23 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             ret['isConfirmateur'] = False
             ret['dataAccess'] = 'own_only'  # Default to most restrictive
         ret['isLeader'] = instance.role and instance.role.name.lower() == 'teamleader'
-        # Get teamId from TeamMember relationship
-        team_member = instance.team_memberships.first()
-        ret['teamId'] = team_member.team.id if team_member else None
+        # Get teamId from TeamMember relationship - use prefetched data if available
+        try:
+            # Check if team_memberships is prefetched
+            if hasattr(instance, '_prefetched_objects_cache'):
+                prefetched = instance._prefetched_objects_cache
+                team_memberships = prefetched.get('team_memberships', None)
+                if team_memberships is not None and len(team_memberships) > 0:
+                    team_member = team_memberships[0]
+                    ret['teamId'] = team_member.team.id if hasattr(team_member, 'team') else None
+                else:
+                    ret['teamId'] = None
+            else:
+                # Fallback: query if not prefetched
+                team_member = instance.team_memberships.select_related('team').first()
+                ret['teamId'] = team_member.team.id if team_member else None
+        except (AttributeError, KeyError, IndexError):
+            ret['teamId'] = None
         # Include permissions
         ret['permissions'] = self.get_permissions(instance)
         return ret
@@ -985,6 +1081,32 @@ class NotificationSerializer(serializers.ModelSerializer):
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    """Serializer for NotificationPreference model"""
+    roleId = serializers.CharField(source='role.id', read_only=True)
+    roleName = serializers.CharField(source='role.name', read_only=True)
+    notifyMessageReceived = serializers.BooleanField(source='notify_message_received')
+    notifySensitiveContactModification = serializers.BooleanField(source='notify_sensitive_contact_modification')
+    notifyContactEdit = serializers.BooleanField(source='notify_contact_edit')
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = NotificationPreference
+        fields = ['id', 'roleId', 'roleName', 'notifyMessageReceived', 'notifySensitiveContactModification', 'notifyContactEdit', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'roleId', 'roleName', 'createdAt', 'updatedAt']
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['roleId'] = instance.role.id
+        ret['roleName'] = instance.role.name
+        ret['notifyMessageReceived'] = instance.notify_message_received
+        ret['notifySensitiveContactModification'] = instance.notify_sensitive_contact_modification
+        ret['notifyContactEdit'] = instance.notify_contact_edit
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret

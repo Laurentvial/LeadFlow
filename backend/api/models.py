@@ -6,6 +6,7 @@ class Source(models.Model):
     """Sources for contacts"""
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     name = models.CharField(max_length=100, unique=True, default="")
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_sources')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -20,8 +21,8 @@ class Contact(models.Model):
     civility = models.CharField(max_length=10, default="", blank=True)  # Monsieur, Madame, etc.
     fname = models.CharField(max_length=50, default="")
     lname = models.CharField(max_length=50, default="")
-    phone = models.CharField(max_length=20, default="", blank=True)
-    mobile = models.CharField(max_length=20, default="", blank=True)
+    phone = models.BigIntegerField(null=True, blank=True)
+    mobile = models.BigIntegerField(null=True, blank=True)
     email = models.EmailField(max_length=100, default="", blank=True)
     birth_date = models.DateField(null=True, blank=True)
     birth_place = models.CharField(max_length=100, default="", blank=True)
@@ -40,14 +41,29 @@ class Contact(models.Model):
     creator = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_contacts')
     
     # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['teleoperator_id', '-created_at']),  # Optimize queries filtering by teleoperator
+            models.Index(fields=['confirmateur_id', '-created_at']),  # Optimize queries filtering by confirmateur
+            models.Index(fields=['creator_id', '-created_at']),  # Optimize queries filtering by creator
+            models.Index(fields=['status_id', '-created_at']),  # Optimize queries filtering by status
+            models.Index(fields=['source_id', '-created_at']),  # Optimize queries filtering by source
+            models.Index(fields=['fname', 'lname']),  # Optimize search queries
+            models.Index(fields=['email']),  # Optimize email search
+            models.Index(fields=['phone']),  # Optimize phone search
+            models.Index(fields=['mobile']),  # Optimize mobile search
+            models.Index(fields=['-created_at']),  # Optimize ordering by created_at
+        ]
 
 class NoteCategory(models.Model):
     """Categories for notes"""
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     name = models.CharField(max_length=100, unique=True, default="")
     order_index = models.IntegerField(default=0)
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_note_categories')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -78,7 +94,7 @@ class UserDetails(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     django_user = models.OneToOneField(DjangoUser, on_delete=models.CASCADE, related_name='user_details')
     role_id = models.ForeignKey('Role', on_delete=models.SET_NULL, null=True, blank=True, related_name='users', db_column='role_id')
-    phone = models.CharField(max_length=20, default="", blank=True)
+    phone = models.BigIntegerField(null=True, blank=True)
     active = models.BooleanField(null=False, default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -151,6 +167,7 @@ class Status(models.Model):
     type = models.CharField(max_length=10, choices=STATUS_TYPE_CHOICES, default='lead')
     color = models.CharField(max_length=20, default="", blank=True)
     order_index = models.IntegerField(default=0)
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_statuses')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -173,11 +190,31 @@ class Role(models.Model):
     data_access = models.CharField(max_length=20, choices=DATA_ACCESS_CHOICES, default='own_only')
     is_teleoperateur = models.BooleanField(default=False)
     is_confirmateur = models.BooleanField(default=False)
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_roles')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         return self.name
+
+class NotificationPreference(models.Model):
+    """Notification preferences per role"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    role = models.ForeignKey('Role', on_delete=models.CASCADE, related_name='notification_preferences')
+    
+    # Notification types
+    notify_message_received = models.BooleanField(default=True)  # Notification de message recu
+    notify_sensitive_contact_modification = models.BooleanField(default=True)  # Notification de modification sensible d'un contact
+    notify_contact_edit = models.BooleanField(default=True)  # Notification de modification de contact (phone, mobile, email)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['role']  # One preference per role
+    
+    def __str__(self):
+        return f"Notification Preferences - {self.role.name}"
 
 class Permission(models.Model):
     """Permissions for components and fields"""
@@ -221,6 +258,7 @@ class PermissionRole(models.Model):
 class Team(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     name = models.CharField(max_length=50, default="")
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_teams')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -241,6 +279,7 @@ class Event(models.Model):
     userId = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='events')
     contactId = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True)
     comment = models.TextField(default="", blank=True)
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_events')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -380,6 +419,7 @@ class EmailSignature(models.Model):
     
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     user = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='email_signatures')
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_email_signatures')
     
     # Signature details
     name = models.CharField(max_length=100, default="")  # Name/label for the signature

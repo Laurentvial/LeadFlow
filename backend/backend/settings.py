@@ -92,22 +92,40 @@ ASGI_APPLICATION = 'backend.asgi.application'
 
 # Channel layers configuration
 # For production, use Redis. For development, use in-memory channel layer
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [(
-                os.getenv('REDIS_HOST', 'localhost'),
-                int(os.getenv('REDIS_PORT', 6379))
-            )],
-            "capacity": 1500,  # default 100
-            "expiry": 10,  # default 60
-        },
-    },
-}
 
-# Fallback to in-memory channel layer if Redis is not available (for local dev)
-if os.getenv('USE_REDIS', 'False') != 'True':
+# Check if we're on Heroku (REDIS_URL is automatically set by Heroku Redis addon)
+REDIS_URL = os.getenv('REDIS_URL', None)
+
+if REDIS_URL:
+    # Heroku Redis or other cloud Redis with URL
+    # channels-redis accepts Redis URL directly
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [REDIS_URL],
+                "capacity": 1500,
+                "expiry": 10,
+            },
+        },
+    }
+elif os.getenv('USE_REDIS', 'False') == 'True':
+    # Local Redis with host/port
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [(
+                    os.getenv('REDIS_HOST', 'localhost'),
+                    int(os.getenv('REDIS_PORT', 6379))
+                )],
+                "capacity": 1500,
+                "expiry": 10,
+            },
+        },
+    }
+else:
+    # Fallback to in-memory channel layer (for local dev without Redis)
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels.layers.InMemoryChannelLayer',

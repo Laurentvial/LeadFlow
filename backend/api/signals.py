@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save
 from django.db.models import Q
 from django.dispatch import receiver
-from .models import Status, Role, Permission, PermissionRole
+from .models import Status, Role, Permission, PermissionRole, NotificationPreference
 import uuid
 
 # Predefined components that should have permissions
@@ -122,4 +122,15 @@ def create_permissions_for_new_role(sender, instance, created, **kwargs):
             permission=permission,
             defaults={'id': generate_unique_id(PermissionRole)}
         )
+    
+    # Create default notification preferences for the new role
+    NotificationPreference.objects.get_or_create(
+        role=instance,
+        defaults={
+            'id': generate_unique_id(NotificationPreference),
+            'notify_message_received': True,
+            'notify_sensitive_contact_modification': True,
+            'notify_contact_edit': True
+        }
+    )
 
