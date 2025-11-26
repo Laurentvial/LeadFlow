@@ -200,13 +200,14 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
     });
 
     // Try WebSocket first, fallback to API
-    if (chatWs.isConnected) {
+    // Only use WebSocket if it's connected and not disabled
+    if (chatWs.isConnected && !chatWs.isDisabled) {
       chatWs.send({
         type: 'chat_message',
         content: content,
       });
     } else {
-      // Fallback to API if WebSocket is not connected
+      // Fallback to API if WebSocket is not connected or disabled
       try {
         const newMessage = await apiCall(`/api/chat/rooms/${selectedRoom.id}/messages/`, {
           method: 'POST',
@@ -334,8 +335,8 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
             return newMap;
           });
           
-          // Mark as read if room is open
-          if (chatWs.isConnected) {
+          // Mark as read if room is open and WebSocket is available
+          if (chatWs.isConnected && !chatWs.isDisabled) {
             chatWs.send({
               type: 'mark_read',
             });

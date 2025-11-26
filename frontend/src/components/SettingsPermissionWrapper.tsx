@@ -10,7 +10,8 @@ interface SettingsPermissionWrapperProps {
 
 /**
  * Wrapper for Settings page that allows access if user has permission for
- * PermissionsTab (permissions component), StatusesTab (statuses component), or ContactFormTab (note-categories component)
+ * PermissionsTab (permissions component), StatusesTab (statuses component), ContactFormTab (note-categories component),
+ * or NotificationPreferencesTab (always visible for authenticated users)
  */
 export function SettingsPermissionWrapper({ children }: SettingsPermissionWrapperProps) {
   const { currentUser, loading } = useUser();
@@ -18,8 +19,8 @@ export function SettingsPermissionWrapper({ children }: SettingsPermissionWrappe
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   
-  // User has access if they can view permissions, statuses, or note categories
-  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission;
+  // User has access if they can view permissions, statuses, note categories, or if they're authenticated (for notifications tab)
+  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || !!currentUser;
 
   // Show loading while user data is being fetched
   if (loading) {

@@ -210,12 +210,13 @@ export default function Notifications() {
   }, [loading, loadNotifications, loadUnreadCount]);
 
   // Mark as read via WebSocket when notification is clicked
+  // Only use WebSocket if it's connected and not disabled
   useEffect(() => {
-    if (ws.isConnected) {
+    if (ws.isConnected && !ws.isDisabled) {
       // Send mark read via WebSocket when needed
       // This is handled in handleNotificationClick
     }
-  }, [ws.isConnected]);
+  }, [ws.isConnected, ws.isDisabled]);
 
   return (
     <div className="notifications-container">

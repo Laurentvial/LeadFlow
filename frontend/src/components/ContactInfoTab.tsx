@@ -13,6 +13,7 @@ import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
+import { formatPhoneNumber, removePhoneSpaces, formatPhoneNumberAsYouType } from '../utils/phoneNumber';
 import '../styles/Contacts.css';
 import '../styles/Modal.css';
 import '../styles/ContactTab.css';
@@ -619,7 +620,14 @@ export function ContactInfoTab({
       
       const apiFieldName = fieldMap[fieldName];
       if (apiFieldName) {
-        payload[apiFieldName] = value === '' || value === 'none' ? null : value;
+        // Remove spaces from phone numbers before sending to backend
+        if (fieldName === 'phone' || fieldName === 'mobile') {
+          // Ensure we remove all spaces - convert to string first, then remove spaces
+          const cleanedValue = value === '' || value === 'none' ? '' : removePhoneSpaces(String(value));
+          payload[apiFieldName] = cleanedValue === '' ? null : cleanedValue;
+        } else {
+          payload[apiFieldName] = value === '' || value === 'none' ? null : value;
+        }
       }
       
       const response = await apiCall(`/api/contacts/${contactId}/`, {
@@ -641,7 +649,10 @@ export function ContactInfoTab({
       }
     } catch (error: any) {
       console.error('Error updating field:', error);
-      toast.error(error?.message || 'Erreur lors de la mise à jour');
+      // Extract error message from API response
+      const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
+      console.error('Error details:', error?.response);
+      toast.error(errorMessage);
     } finally {
       setIsSaving(false);
     }
@@ -650,7 +661,13 @@ export function ContactInfoTab({
   function startEditing(fieldName: string, currentValue: any) {
     if (!canEdit) return;
     setEditingField(fieldName);
-    setFieldValue(currentValue || '');
+    // For phone numbers, show the raw value without spaces when editing
+    // (spaces are only for display, not for editing)
+    if (fieldName === 'phone' || fieldName === 'mobile') {
+      setFieldValue(removePhoneSpaces(currentValue) || '');
+    } else {
+      setFieldValue(currentValue || '');
+    }
   }
 
   function cancelEditing() {
@@ -1320,9 +1337,13 @@ export function ContactInfoTab({
                 <div className="contact-field-input-wrapper">
                   <Input
                     value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
+                    onChange={(e) => {
+                      // Remove spaces as user types - keep it without spaces for editing
+                      setFieldValue(removePhoneSpaces(e.target.value));
+                    }}
                     disabled={isSaving}
                     className="flex-1 h-10"
+                    type="number"
                   />
                   <Button size="sm" onClick={() => saveField('mobile')} disabled={isSaving}>✓</Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
@@ -1332,7 +1353,7 @@ export function ContactInfoTab({
                   className={`contact-field-display ${canEdit ? 'editable' : ''}`}
                   onClick={() => startEditing('mobile', contact.mobile)}
                 >
-                  {contact.mobile || '-'}
+                  {formatPhoneNumber(contact.mobile) || '-'}
                 </div>
               )}
             </div>
@@ -1342,9 +1363,13 @@ export function ContactInfoTab({
                 <div className="contact-field-input-wrapper">
                   <Input
                     value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
+                    onChange={(e) => {
+                      // Remove spaces as user types - keep it without spaces for editing
+                      setFieldValue(removePhoneSpaces(e.target.value));
+                    }}
                     disabled={isSaving}
                     className="flex-1 h-10"
+                    type="number"
                   />
                   <Button size="sm" onClick={() => saveField('phone')} disabled={isSaving}>✓</Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
@@ -1354,7 +1379,7 @@ export function ContactInfoTab({
                   className={`contact-field-display ${canEdit ? 'editable' : ''}`}
                   onClick={() => startEditing('phone', contact.phone)}
                 >
-                  {contact.phone || '-'}
+                  {formatPhoneNumber(contact.phone) || '-'}
                 </div>
               )}
             </div>

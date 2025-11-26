@@ -5,6 +5,7 @@ import '../styles/PageHeader.css';
 import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
 import { ContactFormTab } from './ContactFormTab';
+import { NotificationPreferencesTab } from './NotificationPreferencesTab';
 import { useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 
@@ -32,13 +33,14 @@ export function Settings() {
     if (hasPermissionsPermission) return 'permissions';
     if (hasStatusesPermission) return 'statuses';
     if (hasNoteCategoriesPermission) return 'contact-form';
-    return 'permissions'; // Fallback
+    return 'notifications'; // Fallback to notifications if no other permissions
   };
 
   const [defaultTab] = useState(getDefaultTab());
 
   // Include tabs based on permissions
-  const visibleTabs: string[] = [];
+  // Notification preferences is always visible for authenticated users
+  const visibleTabs: string[] = ['notifications'];
   if (hasPermissionsPermission) visibleTabs.push('permissions');
   if (hasStatusesPermission) visibleTabs.push('statuses');
   if (hasNoteCategoriesPermission) visibleTabs.push('contact-form');
@@ -53,10 +55,15 @@ export function Settings() {
       {visibleTabs.length > 0 ? (
         <Tabs defaultValue={defaultTab} className="users-teams-tabs">
           <TabsList>
+            <TabsTrigger value="notifications">Notifications</TabsTrigger>
             {hasPermissionsPermission && <TabsTrigger value="permissions">Permissions</TabsTrigger>}
             {hasStatusesPermission && <TabsTrigger value="statuses">Statuts</TabsTrigger>}
             {hasNoteCategoriesPermission && <TabsTrigger value="contact-form">Fiche contact</TabsTrigger>}
           </TabsList>
+
+          <TabsContent value="notifications" className="users-teams-tab-content">
+            <NotificationPreferencesTab />
+          </TabsContent>
 
           {hasPermissionsPermission && (
             <TabsContent value="permissions" className="users-teams-tab-content">

@@ -19,6 +19,7 @@ import { useSources } from '../hooks/useSources';
 import { useHasPermission } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
+import { formatPhoneNumber } from '../utils/phoneNumber';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -840,9 +841,9 @@ export function ContactList({
       case 'civility':
         return <td key={columnId} title={contact.civility || ''}>{truncateText(contact.civility || '-')}</td>;
       case 'phone':
-        return <td key={columnId} title={contact.phone || ''}>{truncateText(contact.phone || '-')}</td>;
+        return <td key={columnId} title={formatPhoneNumber(contact.phone) || ''}>{truncateText(formatPhoneNumber(contact.phone) || '-')}</td>;
       case 'mobile':
-        return <td key={columnId} title={contact.mobile || ''}>{truncateText(contact.mobile || '-')}</td>;
+        return <td key={columnId} title={formatPhoneNumber(contact.mobile) || ''}>{truncateText(formatPhoneNumber(contact.mobile) || '-')}</td>;
       case 'email':
         return (
           <td key={columnId} className="contacts-table-email">

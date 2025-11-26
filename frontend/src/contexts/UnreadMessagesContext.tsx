@@ -170,12 +170,13 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
   }, [messagePopup]);
 
   // Also listen to chat rooms updates via notifications WebSocket
+  // Only use WebSocket if it's connected and not disabled
   useEffect(() => {
-    console.log('[UnreadMessagesContext] WebSocket connection status:', ws.isConnected, 'shouldInitialize:', shouldInitialize);
-    if (ws.isConnected && shouldInitialize) {
+    console.log('[UnreadMessagesContext] WebSocket connection status:', ws.isConnected, 'isDisabled:', ws.isDisabled, 'shouldInitialize:', shouldInitialize);
+    if (ws.isConnected && !ws.isDisabled && shouldInitialize) {
       loadUnreadCount();
     }
-  }, [ws.isConnected, shouldInitialize, loadUnreadCount]);
+  }, [ws.isConnected, ws.isDisabled, shouldInitialize, loadUnreadCount]);
   
   // Update when active chat room changes
   useEffect(() => {

@@ -9,6 +9,7 @@ import { apiCall } from '../utils/api';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
+import { formatPhoneNumber, formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
 import '../styles/Modal.css';
 import '../styles/Contacts.css';
 
@@ -127,8 +128,8 @@ export function EditPersonalInfoModal({
         firstName: contact.firstName || '',
         lastName: contact.lastName || '',
         email: contact.email || '',
-        mobile: contact.mobile || '',
-        phone: contact.phone || '',
+        mobile: removePhoneSpaces(contact.mobile) || '',
+        phone: removePhoneSpaces(contact.phone) || '',
         birthDate: contact.birthDate || '',
         nationality: contact.nationality || '',
         address: contact.address || '',
@@ -153,8 +154,8 @@ export function EditPersonalInfoModal({
         firstName: editPersonalInfoForm.firstName || '',
         lastName: editPersonalInfoForm.lastName || '',
         email: editPersonalInfoForm.email || '',
-        mobile: editPersonalInfoForm.mobile || '',
-        phone: editPersonalInfoForm.phone || '',
+        mobile: removePhoneSpaces(String(editPersonalInfoForm.mobile)),
+        phone: removePhoneSpaces(String(editPersonalInfoForm.phone)),
         birthDate: editPersonalInfoForm.birthDate || '',
         nationality: editPersonalInfoForm.nationality || '',
         address: editPersonalInfoForm.address || '',
@@ -310,9 +311,10 @@ export function EditPersonalInfoModal({
                 <Label htmlFor="editMobile">Portable *</Label>
                 <Input
                   id="editMobile"
+                  type="number"
                   value={editPersonalInfoForm.mobile}
-                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, mobile: e.target.value })}
-                  placeholder="Portable"
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, mobile: removePhoneSpaces(e.target.value) })}
+                  placeholder="0612345678"
                   required
                 />
               </div>
@@ -321,9 +323,10 @@ export function EditPersonalInfoModal({
                 <Label htmlFor="editPhone">Téléphone</Label>
                 <Input
                   id="editPhone"
+                  type="number"
                   value={editPersonalInfoForm.phone}
-                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, phone: e.target.value })}
-                  placeholder="Téléphone"
+                  onChange={(e) => setEditPersonalInfoForm({ ...editPersonalInfoForm, phone: removePhoneSpaces(e.target.value) })}
+                  placeholder="0123456789"
                 />
               </div>
 

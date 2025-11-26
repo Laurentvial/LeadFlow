@@ -12,6 +12,7 @@ import {
 import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
+import { formatPhoneNumber, formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
 import { User } from '../types';
 import { useTeams } from '../hooks/useTeams';
 import { useRoles } from '../hooks/useRoles';
@@ -46,7 +47,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
         firstName: user.firstName || '',
         lastName: user.lastName || '',
         email: user.email || '',
-        phone: user.phone || '',
+        phone: formatPhoneNumber(user.phone) || '',
         role: user.role ? String(user.role) : '',
         teamId: user.teamId ? String(user.teamId) : '',
       });
@@ -77,7 +78,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           first_name: formData.firstName,
           last_name: formData.lastName,
           email: formData.email,
-          phone: formData.phone,
+          phone: removePhoneSpaces(String(formData.phone)),
           roleId: formData.role || null,
           teamId: formData.teamId || null,
         }),
@@ -161,7 +162,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
               type="tel"
               value={formData.phone}
               onChange={(e) =>
-                setFormData({ ...formData, phone: e.target.value })
+                setFormData({ ...formData, phone: formatPhoneNumberAsYouType(e.target.value) })
               }
               placeholder="+33 6 12 34 56 78"
             />

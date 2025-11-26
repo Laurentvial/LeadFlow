@@ -33,9 +33,13 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
   async function loadLogs() {
     try {
       const data = await apiCall(`/api/contacts/${contactId}/logs/`);
-      setLogs(data.logs || []);
+      console.log('Logs data received:', data); // Debug log
+      const logsArray = data?.logs || data || [];
+      console.log('Logs array:', logsArray); // Debug log
+      setLogs(Array.isArray(logsArray) ? logsArray : []);
     } catch (error) {
       console.error('Error loading logs:', error);
+      setLogs([]); // Ensure logs is set to empty array on error
     }
   }
 

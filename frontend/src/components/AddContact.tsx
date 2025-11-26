@@ -11,6 +11,7 @@ import { apiCall } from '../utils/api';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
+import { formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
 
@@ -145,8 +146,8 @@ export function AddContact() {
           firstName: formData.firstName,
           lastName: formData.lastName,
         email: formData.email || '',
-        mobile: formData.mobile,
-          phone: formData.phone || '',
+        mobile: removePhoneSpaces(String(formData.mobile)),
+          phone: removePhoneSpaces(String(formData.phone)),
           address: formData.address || '',
         addressComplement: formData.addressComplement || '',
           postalCode: formData.postalCode || '',
@@ -344,11 +345,11 @@ export function AddContact() {
                 <Label htmlFor="mobile">Portable *</Label>
                 <Input
                   id="mobile"
-                  type="tel"
+                  type="number"
                   value={formData.mobile}
-                  onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, mobile: removePhoneSpaces(e.target.value) })}
                   required
-                  placeholder="06 12 34 56 78"
+                  placeholder="0612345678"
                 />
               </div>
 
@@ -356,10 +357,10 @@ export function AddContact() {
                 <Label htmlFor="phone">Téléphone</Label>
                 <Input
                   id="phone"
-                  type="tel"
+                  type="number"
                   value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="01 23 45 67 89"
+                  onChange={(e) => setFormData({ ...formData, phone: removePhoneSpaces(e.target.value) })}
+                  placeholder="0123456789"
                 />
               </div>
               </div>

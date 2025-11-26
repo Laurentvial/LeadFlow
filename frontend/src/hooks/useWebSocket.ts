@@ -40,6 +40,8 @@ export function useWebSocket({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const shouldReconnectRef = useRef(true);
+  const consecutiveFailuresRef = useRef(0);
+  const maxConsecutiveFailures = 3; // Stop trying after 3 consecutive failures
 
   const connect = useCallback(() => {
     if (!token || !url) {
@@ -75,6 +77,7 @@ export function useWebSocket({
       ws.onopen = () => {
         setIsConnected(true);
         setReconnectAttempts(0);
+        consecutiveFailuresRef.current = 0; // Reset failure count on successful connection
         onOpen?.();
       };
 
@@ -89,6 +92,12 @@ export function useWebSocket({
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
+        // Increment failure count on error
+        consecutiveFailuresRef.current += 1;
+        if (consecutiveFailuresRef.current >= maxConsecutiveFailures) {
+          console.warn(`[useWebSocket] WebSocket server appears to be unavailable. Stopping reconnection attempts after ${maxConsecutiveFailures} failures.`);
+          shouldReconnectRef.current = false;
+        }
         onError?.(error);
       };
 
@@ -97,13 +106,36 @@ export function useWebSocket({
         console.log('[useWebSocket] Connection closed. Code:', event.code, 'Reason:', event.reason, 'Clean:', event.wasClean);
         onClose?.();
 
+        // Check if this was a server error (404, 500, etc.) or connection refused
+        // WebSocket close codes: 1006 = abnormal closure, 1002 = protocol error, etc.
+        const isServerError = event.code === 1006 || event.code === 1002 || 
+                             (event.code >= 1002 && event.code <= 1015) ||
+                             !event.wasClean;
+        
+        if (isServerError) {
+          consecutiveFailuresRef.current += 1;
+          console.log(`[useWebSocket] Connection failed. Consecutive failures: ${consecutiveFailuresRef.current}/${maxConsecutiveFailures}`);
+          
+          // Stop trying if we've failed too many times
+          if (consecutiveFailuresRef.current >= maxConsecutiveFailures) {
+            console.warn(`[useWebSocket] WebSocket server appears to be unavailable. Stopping reconnection attempts after ${maxConsecutiveFailures} failures.`);
+            shouldReconnectRef.current = false;
+            return;
+          }
+        } else {
+          // Reset failure count for clean closures
+          consecutiveFailuresRef.current = 0;
+        }
+
         // Only attempt to reconnect if the connection was not intentionally closed
-        // and if we still have token and URL
-        if (shouldReconnectRef.current && reconnect && token && url) {
+        // and if we still have token and URL, and we haven't exceeded max failures
+        if (shouldReconnectRef.current && reconnect && token && url && 
+            consecutiveFailuresRef.current < maxConsecutiveFailures) {
           // Don't reconnect if it was a normal closure (code 1000) or if we're cleaning up
           if (event.code !== 1000) {
             reconnectTimeoutRef.current = setTimeout(() => {
-              if (shouldReconnectRef.current && token && url) {
+              if (shouldReconnectRef.current && token && url && 
+                  consecutiveFailuresRef.current < maxConsecutiveFailures) {
                 console.log('[useWebSocket] Attempting to reconnect...');
                 setReconnectAttempts((prev) => prev + 1);
                 connect();
@@ -178,6 +210,7 @@ export function useWebSocket({
     send,
     disconnect,
     reconnectAttempts,
+    isDisabled: consecutiveFailuresRef.current >= maxConsecutiveFailures,
   };
 }
 

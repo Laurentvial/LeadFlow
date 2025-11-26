@@ -12,6 +12,7 @@ import {
 import { X } from "lucide-react";
 import { apiCall } from "../utils/api";
 import { toast } from "sonner";
+import { formatPhoneNumberAsYouType, removePhoneSpaces } from "../utils/phoneNumber";
 import { useTeams } from "../hooks/useTeams";
 import { useRoles } from "../hooks/useRoles";
 import LoadingIndicator from "./LoadingIndicator";
@@ -103,7 +104,7 @@ export function CreateUserModal({
           password: formData.password,
           first_name: formData.firstName,
           last_name: formData.lastName,
-          phone: formData.phone,
+          phone: removePhoneSpaces(String(formData.phone)),
           roleId: formData.role,
           teamId: formData.teamId || null,
         }),
@@ -200,7 +201,7 @@ export function CreateUserModal({
               type="tel"
               value={formData.phone}
               onChange={(e) =>
-                setFormData({ ...formData, phone: e.target.value })
+                setFormData({ ...formData, phone: formatPhoneNumberAsYouType(e.target.value) })
               }
               placeholder="+33 6 12 34 56 78"
             />
