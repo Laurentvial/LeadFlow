@@ -1,4 +1,5 @@
 import json
+import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import User as DjangoUser
@@ -99,6 +100,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             await self.close()
         except DjangoUser.DoesNotExist as e:
             logger.error(f"[NotificationConsumer] User not found: {e}")
+            await self.close()
+        except asyncio.CancelledError:
+            # Connection was cancelled, this is normal when client disconnects
+            logger.debug("[NotificationConsumer] Connection cancelled")
             await self.close()
         except Exception as e:
             logger.error(f"[NotificationConsumer] Unexpected error: {type(e).__name__}: {str(e)}")
@@ -239,6 +244,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 chat_room=chat_room
             ).exclude(sender=self.user).update)(is_read=True)
             
+        except asyncio.CancelledError:
+            # Connection was cancelled, this is normal when client disconnects
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug("[ChatConsumer] Connection cancelled")
+            await self.close()
         except (InvalidToken, TokenError, DjangoUser.DoesNotExist, ChatRoom.DoesNotExist) as e:
             await self.close()
     
