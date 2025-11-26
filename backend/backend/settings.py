@@ -99,7 +99,6 @@ REDIS_URL = os.getenv('REDIS_URL', None)
 if REDIS_URL:
     # Heroku Redis or other cloud Redis with URL
     # Parse Redis URL to handle SSL properly
-    import redis.connection
     from urllib.parse import urlparse
     
     # Parse the Redis URL
@@ -111,6 +110,8 @@ if REDIS_URL:
     redis_password = parsed.password
     
     # Configure channel layers with SSL support for Heroku Redis
+    # channels-redis requires a tuple format with SSL options
+    import ssl
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -119,7 +120,7 @@ if REDIS_URL:
                     'address': (redis_host, redis_port),
                     'password': redis_password,
                     'ssl': True,
-                    'ssl_cert_reqs': None,  # Disable SSL certificate verification for Heroku Redis
+                    'ssl_cert_reqs': ssl.CERT_NONE,  # Disable SSL certificate verification for Heroku Redis
                 }],
                 "capacity": 1500,
                 "expiry": 10,
