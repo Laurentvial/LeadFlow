@@ -27,6 +27,21 @@ interface DashboardProps {
   user?: any;
 }
 
+// Helper function to format date as YYYY-MM-DD
+function formatDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Get today's date in YYYY-MM-DD format
+function getTodayDate(): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return formatDate(today);
+}
+
 export function Dashboard({ user: userProp }: DashboardProps) {
   const { currentUser } = useUser();
   const user = userProp || currentUser;
@@ -35,8 +50,10 @@ export function Dashboard({ user: userProp }: DashboardProps) {
   const [users, setUsers] = useState<any[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [selectedUser, setSelectedUser] = useState<string>('all');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const todayDate = getTodayDate();
+  const [dateFrom, setDateFrom] = useState(todayDate);
+  const [dateTo, setDateTo] = useState(todayDate);
+  const [dateRangeShortcut, setDateRangeShortcut] = useState<string>('today');
   
   // Loading states for each section
   const [loadingStats, setLoadingStats] = useState(true);
@@ -76,6 +93,78 @@ export function Dashboard({ user: userProp }: DashboardProps) {
       console.error('Error loading users:', error);
     } finally {
       setLoadingUsers(false);
+    }
+  }
+
+  // Function to apply date range shortcut
+  function applyDateRangeShortcut(shortcut: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let from: Date | null = null;
+    let to: Date = new Date(today);
+    
+    switch (shortcut) {
+      case 'today':
+        from = new Date(today);
+        break;
+      case 'yesterday':
+        from = new Date(today);
+        from.setDate(from.getDate() - 1);
+        to = new Date(from);
+        break;
+      case 'last7days':
+        from = new Date(today);
+        from.setDate(from.getDate() - 6); // Include today, so 7 days total
+        break;
+      case 'last30days':
+        from = new Date(today);
+        from.setDate(from.getDate() - 29); // Include today, so 30 days total
+        break;
+      case 'thisMonth':
+        from = new Date(today.getFullYear(), today.getMonth(), 1);
+        break;
+      case 'lastMonth':
+        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        from = new Date(lastMonth);
+        to = new Date(today.getFullYear(), today.getMonth(), 0); // Last day of last month
+        break;
+      case 'thisYear':
+        from = new Date(today.getFullYear(), 0, 1);
+        break;
+      case 'lastYear':
+        from = new Date(today.getFullYear() - 1, 0, 1);
+        to = new Date(today.getFullYear() - 1, 11, 31);
+        break;
+      case 'custom':
+        // Don't change dates, user will set them manually
+        setDateRangeShortcut('custom');
+        return;
+      default:
+        return;
+    }
+    
+    if (from) {
+      setDateFrom(formatDate(from));
+      setDateTo(formatDate(to));
+      setDateRangeShortcut(shortcut);
+    }
+  }
+
+  // Handle manual date changes - reset shortcut to allow custom dates
+  function handleDateFromChange(value: string) {
+    setDateFrom(value);
+    // Reset shortcut when dates are manually changed
+    if (dateRangeShortcut && dateRangeShortcut !== 'custom') {
+      setDateRangeShortcut('custom');
+    }
+  }
+
+  function handleDateToChange(value: string) {
+    setDateTo(value);
+    // Reset shortcut when dates are manually changed
+    if (dateRangeShortcut && dateRangeShortcut !== 'custom') {
+      setDateRangeShortcut('custom');
     }
   }
 
@@ -164,17 +253,36 @@ export function Dashboard({ user: userProp }: DashboardProps) {
         <CardContent>
           <div className="dashboard-filters-grid">
             <div className="dashboard-filter-field">
+              <Label>Période rapide</Label>
+              <Select value={dateRangeShortcut || 'custom'} onValueChange={applyDateRangeShortcut}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner une période" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="custom">Personnalisé</SelectItem>
+                  <SelectItem value="today">Aujourd'hui</SelectItem>
+                  <SelectItem value="yesterday">Hier</SelectItem>
+                  <SelectItem value="last7days">7 derniers jours</SelectItem>
+                  <SelectItem value="last30days">30 derniers jours</SelectItem>
+                  <SelectItem value="thisMonth">Ce mois</SelectItem>
+                  <SelectItem value="lastMonth">Mois dernier</SelectItem>
+                  <SelectItem value="thisYear">Cette année</SelectItem>
+                  <SelectItem value="lastYear">Année dernière</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="dashboard-filter-field">
               <Label>Du</Label>
               <DateInput 
                 value={dateFrom} 
-                onChange={(value) => setDateFrom(value)} 
+                onChange={handleDateFromChange} 
               />
             </div>
             <div className="dashboard-filter-field">
               <Label>Au</Label>
               <DateInput 
                 value={dateTo} 
-                onChange={(value) => setDateTo(value)} 
+                onChange={handleDateToChange} 
               />
             </div>
             <div className="dashboard-filter-field">
@@ -306,6 +414,36 @@ export function Dashboard({ user: userProp }: DashboardProps) {
             )}
           </CardContent>
         </Card>
+
+        {/* Notes by User - Only for admins */}
+        {currentUser?.dataAccess === 'all' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="dashboard-section-header">
+                <FileText className="dashboard-section-icon" />
+                Notes par utilisateur
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingStats ? (
+                <p style={{ color: '#64748b', fontSize: '14px', textAlign: 'center', padding: '20px' }}>Chargement...</p>
+              ) : stats?.notesByUser && stats.notesByUser.length > 0 ? (
+                <div className="dashboard-list">
+                  {stats.notesByUser.map((userNote: any, index: number) => (
+                    <div key={index} className="dashboard-list-item">
+                      <div className="dashboard-list-content">
+                        <p className="dashboard-list-name">{userNote.name}</p>
+                        <p className="dashboard-list-count">{userNote.count} notes</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="dashboard-empty-message">Aucune note</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Upcoming Events */}

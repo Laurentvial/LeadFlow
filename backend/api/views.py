@@ -511,6 +511,10 @@ class ContactView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]  # Explicitly set permission
     
     def get_queryset(self):
+        # If we have a filtered queryset stored, use it (for pagination counting)
+        # This is set in list() method after applying filters
+        if hasattr(self, '_filtered_queryset') and self._filtered_queryset is not None:
+            return self._filtered_queryset
         """
         Filter contacts based on user's role data_access level:
         - own_only: 
@@ -609,214 +613,426 @@ class ContactView(generics.ListAPIView):
         
         return queryset
     
+    def _apply_filters(self, queryset, request):
+        """Helper method to apply all filters to a queryset"""
+        # Apply search filter
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                models.Q(fname__icontains=search) |
+                models.Q(lname__icontains=search) |
+                models.Q(email__icontains=search)
+            )
+        
+        # Apply team filter (filter by teleoperator's team)
+        team_id = request.query_params.get('team')
+        if team_id and team_id != 'all':
+            # Get team members
+            team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
+            queryset = queryset.filter(
+                models.Q(teleoperator__id__in=team_user_ids) |
+                models.Q(confirmateur__id__in=team_user_ids) |
+                models.Q(creator__id__in=team_user_ids)
+            )
+        
+        # Apply status type filter
+        status_type = request.query_params.get('status_type')
+        if status_type and status_type != 'all':
+            queryset = queryset.filter(status__type=status_type)
+        
+        # Apply column filters
+        # First, collect date range filters separately
+        date_range_filters = {}
+        # Collect multi-select filters (same key can appear multiple times)
+        multi_select_filters = {}
+        
+        # Debug: Print all filter parameters
+        filter_params = {k: request.query_params.getlist(k) if k.startswith('filter_') and k.replace('filter_', '') in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam'] else request.query_params.get(k) for k in request.query_params.keys() if k.startswith('filter_')}
+        if filter_params:
+            print(f"[DEBUG] Received filter parameters: {filter_params}")
+            print(f"[DEBUG] Full query string: {request.META.get('QUERY_STRING', '')}")
+        
+        # Process all filter parameters
+        for key in request.query_params.keys():
+            if key.startswith('filter_'):
+                if key.endswith('_from') or key.endswith('_to'):
+                    # This is a date range filter
+                    base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
+                    value = request.query_params.get(key)
+                    if value:
+                        if base_column not in date_range_filters:
+                            date_range_filters[base_column] = {}
+                        if key.endswith('_from'):
+                            date_range_filters[base_column]['from'] = value
+                        elif key.endswith('_to'):
+                            date_range_filters[base_column]['to'] = value
+                else:
+                    # Regular filter - check if it's a multi-select column
+                    column_id = key.replace('filter_', '')
+                    # Multi-select columns: status, creator, teleoperator, confirmateur, source, postalCode, nationality, campaign, civility, managerTeam
+                    if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
+                        # Use getlist to get all values for this key
+                        values = request.query_params.getlist(key)
+                        if values:
+                            print(f"[DEBUG] Found multi-select filter for '{column_id}': {values}")
+                            multi_select_filters[column_id] = values
+                    else:
+                        # Single value filter
+                        value = request.query_params.get(key)
+                        if value:
+                            value = value.strip()  # Strip whitespace
+                            if not value:  # Skip empty strings after stripping
+                                continue
+                            
+                            count_before = queryset.count()
+                            
+                            if column_id == 'email':
+                                queryset = queryset.filter(email__icontains=value)
+                            elif column_id == 'phone':
+                                # Convert phone search to integer if possible
+                                try:
+                                    phone_int = int(''.join(str(value).split()))
+                                    queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
+                                except (ValueError, TypeError):
+                                    # If not a valid number, search as exact match on string representation
+                                    phone_str = str(value).strip()
+                                    queryset = queryset.filter(
+                                        models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                    )
+                            elif column_id == 'mobile':
+                                # Convert mobile search to integer if possible
+                                try:
+                                    mobile_int = int(''.join(str(value).split()))
+                                    queryset = queryset.filter(mobile=mobile_int)
+                                except (ValueError, TypeError):
+                                    # If not a valid number, skip filter
+                                    pass
+                            elif column_id == 'fullName':
+                                # Search in both first name and last name
+                                queryset = queryset.filter(
+                                    models.Q(fname__icontains=value) | models.Q(lname__icontains=value)
+                                )
+                            elif column_id == 'firstName':
+                                queryset = queryset.filter(fname__icontains=value)
+                            elif column_id == 'lastName':
+                                queryset = queryset.filter(lname__icontains=value)
+                            elif column_id == 'city':
+                                queryset = queryset.filter(city__icontains=value)
+                            elif column_id == 'address':
+                                queryset = queryset.filter(address__icontains=value)
+                            elif column_id == 'addressComplement':
+                                queryset = queryset.filter(address_complement__icontains=value)
+                            elif column_id == 'birthPlace':
+                                queryset = queryset.filter(birth_place__icontains=value)
+                            elif column_id == 'campaign':
+                                queryset = queryset.filter(campaign__icontains=value)
+                            else:
+                                # Unknown filter column, skip it
+                                continue
+                            
+                            count_after = queryset.count()
+                            print(f"[DEBUG] Filter '{column_id}' applied with value '{value}': {count_before} -> {count_after} contacts")
+                            # Add more column filters as needed
+        
+        # Apply multi-select filters
+        for column_id, values in multi_select_filters.items():
+            if values:
+                # Strip and filter out empty strings
+                values = [v.strip() if isinstance(v, str) else str(v).strip() for v in values if v and str(v).strip()]
+                
+                if not values:
+                    continue
+                
+                # Check if empty option is selected
+                has_empty = '__empty__' in values
+                # Filter out empty option from values for regular filtering
+                regular_values = [v for v in values if v != '__empty__']
+                
+                # Debug logging
+                print(f"[DEBUG] Applying filter for column '{column_id}': values={values}, regular_values={regular_values}, has_empty={has_empty}")
+                
+                # Build Q objects for filtering
+                q_objects = []
+                
+                # If only empty is selected (has_empty=True and regular_values is empty), we should ONLY show empty/null
+                # This is a special case that needs to be handled first
+                if has_empty and not regular_values:
+                    print(f"[DEBUG] Only empty option selected for '{column_id}' - will filter for null/empty only")
+                
+                # Add regular value filters if any
+                # IMPORTANT: If regular_values exist, we should filter by them
+                if regular_values:
+                    if column_id == 'status':
+                        q_objects.append(models.Q(status_id__in=regular_values))
+                    elif column_id == 'source':
+                        print(f"[DEBUG] Filtering by source_id__in={regular_values}")
+                        # Check if source IDs exist in database
+                        from api.models import Source
+                        existing_source_ids = list(Source.objects.filter(id__in=regular_values).values_list('id', flat=True))
+                        print(f"[DEBUG] Found {len(existing_source_ids)} matching sources in DB: {existing_source_ids}")
+                        if existing_source_ids:
+                            q_objects.append(models.Q(source_id__in=existing_source_ids))
+                        else:
+                            print(f"[DEBUG] WARNING: No matching sources found in database for IDs: {regular_values}")
+                            # Still apply filter to return empty result
+                            q_objects.append(models.Q(source_id__in=regular_values))
+                    elif column_id == 'teleoperator':
+                        q_objects.append(models.Q(teleoperator_id__in=regular_values))
+                    elif column_id == 'confirmateur':
+                        q_objects.append(models.Q(confirmateur_id__in=regular_values))
+                    elif column_id == 'creator':
+                        q_objects.append(models.Q(creator_id__in=regular_values))
+                    elif column_id == 'postalCode':
+                        q_objects.append(models.Q(postal_code__in=regular_values))
+                    elif column_id == 'nationality':
+                        q_objects.append(models.Q(nationality__in=regular_values))
+                    elif column_id == 'campaign':
+                        q_objects.append(models.Q(campaign__in=regular_values))
+                    elif column_id == 'civility':
+                        q_objects.append(models.Q(civility__in=regular_values))
+                    elif column_id == 'managerTeam':
+                        # For managerTeam, filter by team memberships
+                        q_objects.append(
+                            models.Q(teleoperator__user_details__team_memberships__team_id__in=regular_values) |
+                            models.Q(confirmateur__user_details__team_memberships__team_id__in=regular_values)
+                        )
+                
+                # Add empty/null filter if empty option is selected
+                # If we have regular_values, combine with OR (regular values OR empty)
+                # If we only have empty option, filter by null/empty only
+                if has_empty:
+                    if column_id == 'status':
+                        empty_q = models.Q(status_id__isnull=True)
+                    elif column_id == 'source':
+                        empty_q = models.Q(source_id__isnull=True)
+                        print(f"[DEBUG] Created empty_q for source: {empty_q}")
+                    elif column_id == 'teleoperator':
+                        empty_q = models.Q(teleoperator_id__isnull=True)
+                    elif column_id == 'confirmateur':
+                        empty_q = models.Q(confirmateur_id__isnull=True)
+                    elif column_id == 'creator':
+                        empty_q = models.Q(creator_id__isnull=True)
+                    elif column_id == 'postalCode':
+                        empty_q = models.Q(postal_code__isnull=True) | models.Q(postal_code='')
+                    elif column_id == 'nationality':
+                        empty_q = models.Q(nationality__isnull=True) | models.Q(nationality='')
+                    elif column_id == 'campaign':
+                        empty_q = models.Q(campaign__isnull=True) | models.Q(campaign='')
+                    elif column_id == 'civility':
+                        empty_q = models.Q(civility__isnull=True) | models.Q(civility='')
+                    elif column_id == 'managerTeam':
+                        # For managerTeam, we need to check if the contact's teleoperator/confirmateur has no team
+                        empty_q = (
+                            models.Q(teleoperator__isnull=True) |
+                            models.Q(teleoperator__user_details__team_memberships__isnull=True) |
+                            models.Q(confirmateur__isnull=True) |
+                            models.Q(confirmateur__user_details__team_memberships__isnull=True)
+                        )
+                    else:
+                        empty_q = None
+                        print(f"[DEBUG] WARNING: No empty_q created for column '{column_id}'")
+                    
+                    if empty_q:
+                        if regular_values:
+                            # Combine regular values with empty: (regular_values) OR (empty)
+                            # This means: show contacts with selected sources OR contacts with no source
+                            print(f"[DEBUG] Combining regular values with empty filter for '{column_id}'")
+                            q_objects.append(empty_q)
+                        else:
+                            # Only empty option selected - show ONLY contacts with no source
+                            # Clear any existing q_objects and only use empty filter
+                            q_objects = [empty_q]
+                            print(f"[DEBUG] Only empty option selected for '{column_id}', q_objects set to: {q_objects}")
+                    else:
+                        print(f"[DEBUG] ERROR: empty_q is None for column '{column_id}' even though has_empty=True")
+                
+                # Apply combined filter
+                print(f"[DEBUG] Final q_objects for '{column_id}': {len(q_objects)} object(s)")
+                if q_objects:
+                    print(f"[DEBUG] Applying {len(q_objects)} Q object(s) for column '{column_id}': {q_objects}")
+                    queryset_before_count = queryset.count()
+                    # Sample a few source_ids before filtering to verify
+                    if column_id == 'source':
+                        sample_before = list(queryset.values_list('source_id', flat=True)[:5])
+                        null_count_before = queryset.filter(source_id__isnull=True).count()
+                        print(f"[DEBUG] Sample source_ids before filter: {sample_before}")
+                        print(f"[DEBUG] Contacts with null source_id before filter: {null_count_before}")
+                    
+                    if len(q_objects) == 1:
+                        # Single filter - apply directly
+                        print(f"[DEBUG] Applying single Q object: {q_objects[0]}")
+                        queryset = queryset.filter(q_objects[0])
+                    else:
+                        # Multiple filters - combine with OR (regular values OR empty)
+                        combined_q = q_objects[0]
+                        for q_obj in q_objects[1:]:
+                            combined_q |= q_obj
+                        print(f"[DEBUG] Applying combined Q object: {combined_q}")
+                        queryset = queryset.filter(combined_q)
+                    
+                    queryset_after_count = queryset.count()
+                    # Sample a few source_ids after filtering to verify
+                    if column_id == 'source':
+                        sample_after = list(queryset.values_list('source_id', flat=True)[:5])
+                        print(f"[DEBUG] Sample source_ids after filter: {sample_after}")
+                        # Verify filter correctness
+                        if has_empty and not regular_values:
+                            # Should only have null source_ids
+                            non_null_sources = queryset.exclude(source_id__isnull=True).values_list('source_id', flat=True).distinct()[:5]
+                            if non_null_sources:
+                                print(f"[DEBUG] ERROR: Found contacts with non-null source_ids when filtering for empty only: {list(non_null_sources)}")
+                            else:
+                                print(f"[DEBUG] Verified: All filtered contacts have null source_id (empty source)")
+                        elif regular_values:
+                            # Should only have source_ids in regular_values
+                            wrong_sources = queryset.exclude(source_id__in=regular_values).exclude(source_id__isnull=True).values_list('source_id', flat=True).distinct()[:5]
+                            if wrong_sources and not has_empty:
+                                print(f"[DEBUG] WARNING: Found contacts with wrong source_ids: {list(wrong_sources)}")
+                            else:
+                                print(f"[DEBUG] Verified: All filtered contacts have source_id in {regular_values} or null")
+                    
+                    print(f"[DEBUG] Filter '{column_id}' applied: {queryset_before_count} -> {queryset_after_count} contacts")
+                else:
+                    print(f"[DEBUG] WARNING: No q_objects to apply for column '{column_id}' - filter will NOT be applied!")
+        
+        # Apply date range filters
+        for column_id, date_range in date_range_filters.items():
+            try:
+                if column_id == 'createdAt':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        # Filter contacts created on or after this date (start of day)
+                        queryset = queryset.filter(created_at__date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        # Filter contacts created on or before this date (end of day)
+                        # Use __lt with next day to ensure we only include contacts up to end of selected day
+                        date_to_next = date_to + timedelta(days=1)
+                        queryset = queryset.filter(created_at__date__lt=date_to_next)
+                elif column_id == 'updatedAt':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(updated_at__date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        # Use __lt with next day to ensure we only include contacts up to end of selected day
+                        date_to_next = date_to + timedelta(days=1)
+                        queryset = queryset.filter(updated_at__date__lt=date_to_next)
+                elif column_id == 'birthDate':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(birth_date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(birth_date__lte=date_to)
+            except (ValueError, TypeError) as e:
+                # Invalid date format, skip this filter
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Invalid date format in filter {column_id}: {e}")
+                pass
+        
+        return queryset
+    
     def list(self, request, *args, **kwargs):
-        # Check if limit is requested (for performance - limits number of contacts returned)
+        # Check if pagination is requested (preferred method for large datasets)
+        requested_page = request.query_params.get('page')
+        requested_page_size = request.query_params.get('page_size')
+        
+        # Use pagination if page or page_size are provided
+        if requested_page or requested_page_size:
+            # Use pagination for large datasets
+            from rest_framework.pagination import PageNumberPagination
+            
+            page_size = int(requested_page_size) if requested_page_size else 100
+            page = int(requested_page) if requested_page else 1
+            
+            # Ensure reasonable page size (max 50000 per page for "all" option)
+            if page_size > 50000:
+                page_size = 50000
+            if page_size < 1:
+                page_size = 100
+            
+            # Capture page_size for use in class definition
+            pagination_page_size = page_size
+            
+            class ContactPagination(PageNumberPagination):
+                page_size = pagination_page_size
+                page_size_query_param = 'page_size'
+                max_page_size = 50000
+            
+            # Get base queryset
+            queryset = self.get_queryset()
+            
+            # Apply all filters
+            queryset = self._apply_filters(queryset, request)
+            
+            # CRITICAL: Store the filtered queryset so get_queryset() returns it
+            # This ensures DRF pagination uses the filtered queryset for counting
+            self._filtered_queryset = queryset
+            
+            # Use pagination
+            self.pagination_class = ContactPagination
+            
+            # Debug: Check queryset count before pagination
+            final_count = queryset.count()
+            print(f"[DEBUG] Final queryset count before pagination: {final_count}")
+            
+            try:
+                response = super().list(request, *args, **kwargs)
+                
+                # Debug: Check what pagination returned
+                pagination_count = response.data.get('count', 0)
+                print(f"[DEBUG] Pagination returned count: {pagination_count}")
+                print(f"[DEBUG] Expected count: {final_count}, Actual pagination count: {pagination_count}")
+                
+                # If pagination count doesn't match, use our calculated count
+                if pagination_count != final_count:
+                    print(f"[DEBUG] WARNING: Pagination count mismatch! Using calculated count: {final_count}")
+                    return Response({
+                        'contacts': response.data['results'],
+                        'total': final_count,
+                        'next': response.data.get('next'),
+                        'previous': response.data.get('previous'),
+                        'page': page,
+                        'page_size': page_size
+                    })
+                
+                return Response({
+                    'contacts': response.data['results'],
+                    'total': response.data['count'],
+                    'next': response.data.get('next'),
+                    'previous': response.data.get('previous'),
+                    'page': page,
+                    'page_size': page_size
+                })
+            finally:
+                # Clear the filtered queryset to avoid affecting other requests
+                self._filtered_queryset = None
+        
+        # Check if limit is requested (for backward compatibility)
         limit = request.query_params.get('limit')
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 10000)
-                if limit > 10000:
-                    limit = 10000
+                # Ensure limit is reasonable (max 50000)
+                if limit > 50000:
+                    limit = 50000
                 if limit < 1:
                     limit = 1
                 # Get base queryset
                 queryset = self.get_queryset()
                 
-                # Apply search filter
-                search = request.query_params.get('search', '').strip()
-                if search:
-                    queryset = queryset.filter(
-                        models.Q(fname__icontains=search) |
-                        models.Q(lname__icontains=search) |
-                        models.Q(email__icontains=search)
-                    )
+                # Apply all filters using helper method
+                queryset = self._apply_filters(queryset, request)
                 
-                # Apply team filter (filter by teleoperator's team)
-                team_id = request.query_params.get('team')
-                if team_id and team_id != 'all':
-                    # Get team members
-                    team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
-                    queryset = queryset.filter(
-                        models.Q(teleoperator__id__in=team_user_ids) |
-                        models.Q(confirmateur__id__in=team_user_ids) |
-                        models.Q(creator__id__in=team_user_ids)
-                    )
-                
-                # Apply status type filter
-                status_type = request.query_params.get('status_type')
-                if status_type and status_type != 'all':
-                    queryset = queryset.filter(status__type=status_type)
-                
-                # Apply column filters
-                # First, collect date range filters separately
-                date_range_filters = {}
-                # Collect multi-select filters (same key can appear multiple times)
-                multi_select_filters = {}
-                
-                # Process all filter parameters
-                for key in request.query_params.keys():
-                    if key.startswith('filter_'):
-                        if key.endswith('_from') or key.endswith('_to'):
-                            # This is a date range filter
-                            base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
-                            value = request.query_params.get(key)
-                            if value:
-                                if base_column not in date_range_filters:
-                                    date_range_filters[base_column] = {}
-                                if key.endswith('_from'):
-                                    date_range_filters[base_column]['from'] = value
-                                elif key.endswith('_to'):
-                                    date_range_filters[base_column]['to'] = value
-                        else:
-                            # Regular filter - check if it's a multi-select column
-                            column_id = key.replace('filter_', '')
-                            # Multi-select columns: status, creator, teleoperator, confirmateur, source, postalCode, nationality, campaign, civility, managerTeam
-                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
-                                # Use getlist to get all values for this key
-                                values = request.query_params.getlist(key)
-                                if values:
-                                    multi_select_filters[column_id] = values
-                            else:
-                                # Single value filter
-                                value = request.query_params.get(key)
-                                if value:
-                                    if column_id == 'email':
-                                        queryset = queryset.filter(email__icontains=value)
-                                    elif column_id == 'phone':
-                                        # Convert phone search to integer if possible
-                                        try:
-                                            phone_int = int(''.join(str(value).split()))
-                                            queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
-                                        except (ValueError, TypeError):
-                                            # If not a valid number, search as exact match on string representation
-                                            phone_str = str(value).strip()
-                                            queryset = queryset.filter(
-                                                models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
-                                            )
-                                    elif column_id == 'city':
-                                        queryset = queryset.filter(city__icontains=value)
-                                    # Add more column filters as needed
-                
-                # Apply multi-select filters
-                for column_id, values in multi_select_filters.items():
-                    if values:
-                        # Check if empty option is selected
-                        has_empty = '__empty__' in values
-                        # Filter out empty option from values for regular filtering
-                        regular_values = [v for v in values if v != '__empty__']
-                        
-                        # Build Q objects for filtering
-                        q_objects = []
-                        
-                        # Add empty/null filter if empty option is selected
-                        if has_empty:
-                            if column_id == 'status':
-                                q_objects.append(models.Q(status_id__isnull=True))
-                            elif column_id == 'source':
-                                q_objects.append(models.Q(source_id__isnull=True))
-                            elif column_id == 'teleoperator':
-                                q_objects.append(models.Q(teleoperator_id__isnull=True))
-                            elif column_id == 'confirmateur':
-                                q_objects.append(models.Q(confirmateur_id__isnull=True))
-                            elif column_id == 'creator':
-                                q_objects.append(models.Q(creator_id__isnull=True))
-                            elif column_id == 'postalCode':
-                                q_objects.append(models.Q(postal_code__isnull=True) | models.Q(postal_code=''))
-                            elif column_id == 'nationality':
-                                q_objects.append(models.Q(nationality__isnull=True) | models.Q(nationality=''))
-                            elif column_id == 'campaign':
-                                q_objects.append(models.Q(campaign__isnull=True) | models.Q(campaign=''))
-                            elif column_id == 'civility':
-                                q_objects.append(models.Q(civility__isnull=True) | models.Q(civility=''))
-                            elif column_id == 'managerTeam':
-                                # For managerTeam, we need to check if the contact's teleoperator/confirmateur has no team
-                                # This is more complex, so we'll filter contacts where teleoperator or confirmateur has no team
-                                q_objects.append(
-                                    models.Q(teleoperator__isnull=True) |
-                                    models.Q(teleoperator__user_details__team_memberships__isnull=True) |
-                                    models.Q(confirmateur__isnull=True) |
-                                    models.Q(confirmateur__user_details__team_memberships__isnull=True)
-                                )
-                        
-                        # Add regular value filters if any
-                        if regular_values:
-                            if column_id == 'status':
-                                q_objects.append(models.Q(status_id__in=regular_values))
-                            elif column_id == 'source':
-                                q_objects.append(models.Q(source_id__in=regular_values))
-                            elif column_id == 'teleoperator':
-                                q_objects.append(models.Q(teleoperator_id__in=regular_values))
-                            elif column_id == 'confirmateur':
-                                q_objects.append(models.Q(confirmateur_id__in=regular_values))
-                            elif column_id == 'creator':
-                                q_objects.append(models.Q(creator_id__in=regular_values))
-                            elif column_id == 'postalCode':
-                                q_objects.append(models.Q(postal_code__in=regular_values))
-                            elif column_id == 'nationality':
-                                q_objects.append(models.Q(nationality__in=regular_values))
-                            elif column_id == 'campaign':
-                                q_objects.append(models.Q(campaign__in=regular_values))
-                            elif column_id == 'civility':
-                                q_objects.append(models.Q(civility__in=regular_values))
-                            elif column_id == 'managerTeam':
-                                # For managerTeam, filter by team memberships
-                                q_objects.append(
-                                    models.Q(teleoperator__user_details__team_memberships__team_id__in=regular_values) |
-                                    models.Q(confirmateur__user_details__team_memberships__team_id__in=regular_values)
-                                )
-                        
-                        # Apply combined filter (OR logic: empty OR regular values)
-                        if q_objects:
-                            combined_q = q_objects[0]
-                            for q_obj in q_objects[1:]:
-                                combined_q |= q_obj
-                            queryset = queryset.filter(combined_q)
-                
-                # Apply date range filters
-                for column_id, date_range in date_range_filters.items():
-                    try:
-                        if column_id == 'createdAt':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                # Filter contacts created on or after this date (start of day)
-                                queryset = queryset.filter(created_at__date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                # Filter contacts created on or before this date (end of day)
-                                # Use __lt with next day to ensure we only include contacts up to end of selected day
-                                date_to_next = date_to + timedelta(days=1)
-                                queryset = queryset.filter(created_at__date__lt=date_to_next)
-                        elif column_id == 'updatedAt':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(updated_at__date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                # Use __lt with next day to ensure we only include contacts up to end of selected day
-                                date_to_next = date_to + timedelta(days=1)
-                                queryset = queryset.filter(updated_at__date__lt=date_to_next)
-                        elif column_id == 'birthDate':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(birth_date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(birth_date__lte=date_to)
-                    except (ValueError, TypeError) as e:
-                        # Invalid date format, skip this filter
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"Invalid date format in filter {column_id}: {e}")
-                        pass
+                # Get actual total count BEFORE applying limit
+                # This gives users the real total number of contacts matching their filters
+                total_count = queryset.count()
                 
                 # CRITICAL PERFORMANCE FIX: Apply limit BEFORE serialization
                 # This prevents loading thousands of contacts into memory
                 queryset = queryset[:limit]
-                
-                # Skip expensive count() query - it's extremely slow on large tables
-                # Just use limit as total for performance
-                total_count = limit
                 
                 serializer = self.get_serializer(queryset, many=True, context={'request': request})
                 return Response({
@@ -921,218 +1137,253 @@ class FosseContactView(generics.ListAPIView):
         
         return queryset
     
+    def _apply_filters_fosse(self, queryset, request):
+        """Helper method to apply all filters to a Fosse queryset"""
+        # Apply search filter
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                models.Q(fname__icontains=search) |
+                models.Q(lname__icontains=search) |
+                models.Q(email__icontains=search)
+            )
+        
+        # Apply team filter (filter by creator's team for Fosse contacts)
+        # Note: For fosse, contacts are unassigned (teleoperator and confirmateur are null),
+        # so we only filter by creator's team
+        team_id = request.query_params.get('team')
+        if team_id and team_id != 'all':
+            # Get team members
+            team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
+            # For Fosse, only filter by creator since teleoperator and confirmateur are null
+            queryset = queryset.filter(creator__id__in=team_user_ids)
+        
+        # Apply status type filter
+        status_type = request.query_params.get('status_type')
+        if status_type and status_type != 'all':
+            queryset = queryset.filter(status__type=status_type)
+        
+        # Apply column filters (similar to ContactView but with Fosse-specific handling)
+        date_range_filters = {}
+        multi_select_filters = {}
+        
+        for key in request.query_params.keys():
+            if key.startswith('filter_'):
+                if key.endswith('_from') or key.endswith('_to'):
+                    base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
+                    value = request.query_params.get(key)
+                    if value:
+                        if base_column not in date_range_filters:
+                            date_range_filters[base_column] = {}
+                        if key.endswith('_from'):
+                            date_range_filters[base_column]['from'] = value
+                        elif key.endswith('_to'):
+                            date_range_filters[base_column]['to'] = value
+                else:
+                    column_id = key.replace('filter_', '')
+                    if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
+                        values = request.query_params.getlist(key)
+                        if values:
+                            multi_select_filters[column_id] = values
+                    else:
+                        value = request.query_params.get(key)
+                        if value:
+                            if column_id == 'email':
+                                queryset = queryset.filter(email__icontains=value)
+                            elif column_id == 'phone':
+                                try:
+                                    phone_int = int(''.join(str(value).split()))
+                                    queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
+                                except (ValueError, TypeError):
+                                    phone_str = str(value).strip()
+                                    queryset = queryset.filter(
+                                        models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                    )
+                            elif column_id == 'city':
+                                queryset = queryset.filter(city__icontains=value)
+        
+        # Apply multi-select filters with Fosse-specific logic
+        for column_id, values in multi_select_filters.items():
+            if values:
+                # Strip and filter out empty strings
+                values = [v.strip() if isinstance(v, str) else str(v).strip() for v in values if v and str(v).strip()]
+                
+                if not values:
+                    continue
+                
+                has_empty = '__empty__' in values
+                regular_values = [v for v in values if v != '__empty__']
+                q_objects = []
+                
+                if has_empty:
+                    if column_id == 'status':
+                        q_objects.append(models.Q(status_id__isnull=True))
+                    elif column_id == 'source':
+                        q_objects.append(models.Q(source_id__isnull=True))
+                    elif column_id == 'teleoperator':
+                        # For Fosse, teleoperator is always null, so empty option matches all
+                        pass
+                    elif column_id == 'confirmateur':
+                        # For Fosse, confirmateur is always null, so empty option matches all
+                        pass
+                    elif column_id == 'creator':
+                        q_objects.append(models.Q(creator_id__isnull=True))
+                    elif column_id == 'postalCode':
+                        q_objects.append(models.Q(postal_code__isnull=True) | models.Q(postal_code=''))
+                    elif column_id == 'nationality':
+                        q_objects.append(models.Q(nationality__isnull=True) | models.Q(nationality=''))
+                    elif column_id == 'campaign':
+                        q_objects.append(models.Q(campaign__isnull=True) | models.Q(campaign=''))
+                    elif column_id == 'civility':
+                        q_objects.append(models.Q(civility__isnull=True) | models.Q(civility=''))
+                    elif column_id == 'managerTeam':
+                        # For Fosse, contacts have no team
+                        pass
+                
+                # Add regular value filters if any
+                if regular_values:
+                    if column_id == 'status':
+                        q_objects.append(models.Q(status_id__in=regular_values))
+                    elif column_id == 'source':
+                        q_objects.append(models.Q(source_id__in=regular_values))
+                    elif column_id == 'teleoperator':
+                        # For Fosse, teleoperator is always null, so regular values would exclude all
+                        queryset = queryset.none()
+                        break
+                    elif column_id == 'confirmateur':
+                        # For Fosse, confirmateur is always null, so regular values would exclude all
+                        queryset = queryset.none()
+                        break
+                    elif column_id == 'creator':
+                        q_objects.append(models.Q(creator_id__in=regular_values))
+                    elif column_id == 'postalCode':
+                        q_objects.append(models.Q(postal_code__in=regular_values))
+                    elif column_id == 'nationality':
+                        q_objects.append(models.Q(nationality__in=regular_values))
+                    elif column_id == 'campaign':
+                        q_objects.append(models.Q(campaign__in=regular_values))
+                    elif column_id == 'civility':
+                        q_objects.append(models.Q(civility__in=regular_values))
+                    elif column_id == 'managerTeam':
+                        # For Fosse, contacts have no team, so regular values would exclude all
+                        queryset = queryset.none()
+                        break
+                
+                # Apply combined filter
+                if q_objects:
+                    if len(q_objects) == 1:
+                        # Single filter - apply directly
+                        queryset = queryset.filter(q_objects[0])
+                    else:
+                        # Multiple filters - combine with OR (empty OR regular values)
+                        combined_q = q_objects[0]
+                        for q_obj in q_objects[1:]:
+                            combined_q |= q_obj
+                        queryset = queryset.filter(combined_q)
+                    
+                    # Special handling for managerTeam in Fosse
+                    if column_id == 'managerTeam' and regular_values:
+                        # Filter by creator's team for Fosse contacts
+                        team_user_ids = TeamMember.objects.filter(team_id__in=regular_values).values_list('user__django_user__id', flat=True)
+                        queryset = queryset.filter(creator_id__in=team_user_ids)
+        
+        # Apply date range filters
+        for column_id, date_range in date_range_filters.items():
+            try:
+                if column_id == 'createdAt':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(created_at__date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        date_to_next = date_to + timedelta(days=1)
+                        queryset = queryset.filter(created_at__date__lt=date_to_next)
+                elif column_id == 'updatedAt':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(updated_at__date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        date_to_next = date_to + timedelta(days=1)
+                        queryset = queryset.filter(updated_at__date__lt=date_to_next)
+                elif column_id == 'birthDate':
+                    if 'from' in date_range and date_range['from']:
+                        date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(birth_date__gte=date_from)
+                    if 'to' in date_range and date_range['to']:
+                        date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
+                        queryset = queryset.filter(birth_date__lte=date_to)
+            except (ValueError, TypeError) as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Invalid date format in filter {column_id}: {e}")
+                pass
+        
+        return queryset
+    
     def list(self, request, *args, **kwargs):
-        # Check if limit is requested (for performance - limits number of contacts returned)
+        # Check if pagination is requested (preferred method for large datasets)
+        requested_page = request.query_params.get('page')
+        requested_page_size = request.query_params.get('page_size')
+        
+        # Use pagination if page or page_size are provided
+        if requested_page or requested_page_size:
+            from rest_framework.pagination import PageNumberPagination
+            
+            page_size = int(requested_page_size) if requested_page_size else 100
+            page = int(requested_page) if requested_page else 1
+            
+            # Ensure reasonable page size (max 50000 per page for "all" option)
+            if page_size > 50000:
+                page_size = 50000
+            if page_size < 1:
+                page_size = 100
+            
+            # Capture page_size for use in class definition
+            pagination_page_size = page_size
+            
+            class FosseContactPagination(PageNumberPagination):
+                page_size = pagination_page_size
+                page_size_query_param = 'page_size'
+                max_page_size = 50000
+            
+            queryset = self.get_queryset()
+            queryset = self._apply_filters_fosse(queryset, request)
+            
+            self.pagination_class = FosseContactPagination
+            response = super().list(request, *args, **kwargs)
+            return Response({
+                'contacts': response.data['results'],
+                'total': response.data['count'],
+                'next': response.data.get('next'),
+                'previous': response.data.get('previous'),
+                'page': page,
+                'page_size': page_size
+            })
+        
+        # Check if limit is requested (for backward compatibility)
         limit = request.query_params.get('limit')
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 10000)
-                if limit > 10000:
-                    limit = 10000
+                # Ensure limit is reasonable (max 50000)
+                if limit > 50000:
+                    limit = 50000
                 if limit < 1:
                     limit = 1
                 # Get base queryset
                 queryset = self.get_queryset()
                 
-                # Apply search filter
-                search = request.query_params.get('search', '').strip()
-                if search:
-                    queryset = queryset.filter(
-                        models.Q(fname__icontains=search) |
-                        models.Q(lname__icontains=search) |
-                        models.Q(email__icontains=search)
-                    )
+                # Apply all filters using helper method
+                queryset = self._apply_filters_fosse(queryset, request)
                 
-                # Apply team filter (filter by creator's team for Fosse contacts)
-                # Note: For fosse, contacts are unassigned (teleoperator and confirmateur are null),
-                # so we only filter by creator's team
-                team_id = request.query_params.get('team')
-                if team_id and team_id != 'all':
-                    # Get team members
-                    team_user_ids = TeamMember.objects.filter(team_id=team_id).values_list('user__django_user__id', flat=True)
-                    # For Fosse, only filter by creator since teleoperator and confirmateur are null
-                    queryset = queryset.filter(creator__id__in=team_user_ids)
-                
-                # Apply status type filter
-                status_type = request.query_params.get('status_type')
-                if status_type and status_type != 'all':
-                    queryset = queryset.filter(status__type=status_type)
-                
-                # Apply column filters
-                # First, collect date range filters separately
-                date_range_filters = {}
-                # Collect multi-select filters (same key can appear multiple times)
-                multi_select_filters = {}
-                
-                # Process all filter parameters
-                for key in request.query_params.keys():
-                    if key.startswith('filter_'):
-                        if key.endswith('_from') or key.endswith('_to'):
-                            # This is a date range filter
-                            base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
-                            value = request.query_params.get(key)
-                            if value:
-                                if base_column not in date_range_filters:
-                                    date_range_filters[base_column] = {}
-                                if key.endswith('_from'):
-                                    date_range_filters[base_column]['from'] = value
-                                elif key.endswith('_to'):
-                                    date_range_filters[base_column]['to'] = value
-                        else:
-                            # Regular filter - check if it's a multi-select column
-                            column_id = key.replace('filter_', '')
-                            # Multi-select columns: status, creator, teleoperator, confirmateur, source, postalCode, nationality, campaign, civility, managerTeam
-                            if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
-                                # Use getlist to get all values for this key
-                                values = request.query_params.getlist(key)
-                                if values:
-                                    multi_select_filters[column_id] = values
-                            else:
-                                # Single value filter
-                                value = request.query_params.get(key)
-                                if value:
-                                    if column_id == 'email':
-                                        queryset = queryset.filter(email__icontains=value)
-                                    elif column_id == 'phone':
-                                        # Convert phone search to integer if possible
-                                        try:
-                                            phone_int = int(''.join(str(value).split()))
-                                            queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
-                                        except (ValueError, TypeError):
-                                            # If not a valid number, search as exact match on string representation
-                                            phone_str = str(value).strip()
-                                            queryset = queryset.filter(
-                                                models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
-                                            )
-                                    elif column_id == 'city':
-                                        queryset = queryset.filter(city__icontains=value)
-                                    # Add more column filters as needed
-                
-                # Apply multi-select filters
-                for column_id, values in multi_select_filters.items():
-                    if values:
-                        # Check if empty option is selected
-                        has_empty = '__empty__' in values
-                        # Filter out empty option from values for regular filtering
-                        regular_values = [v for v in values if v != '__empty__']
-                        
-                        # Build Q objects for filtering
-                        q_objects = []
-                        
-                        # Add empty/null filter if empty option is selected
-                        if has_empty:
-                            if column_id == 'status':
-                                q_objects.append(models.Q(status_id__isnull=True))
-                            elif column_id == 'source':
-                                q_objects.append(models.Q(source_id__isnull=True))
-                            elif column_id == 'teleoperator':
-                                # For Fosse, teleoperator is always null, so empty option matches all
-                                # Don't add filter - all Fosse contacts already have null teleoperator
-                                pass
-                            elif column_id == 'confirmateur':
-                                # For Fosse, confirmateur is always null, so empty option matches all
-                                # Don't add filter - all Fosse contacts already have null confirmateur
-                                pass
-                            elif column_id == 'creator':
-                                q_objects.append(models.Q(creator_id__isnull=True))
-                            elif column_id == 'postalCode':
-                                q_objects.append(models.Q(postal_code__isnull=True) | models.Q(postal_code=''))
-                            elif column_id == 'nationality':
-                                q_objects.append(models.Q(nationality__isnull=True) | models.Q(nationality=''))
-                            elif column_id == 'campaign':
-                                q_objects.append(models.Q(campaign__isnull=True) | models.Q(campaign=''))
-                            elif column_id == 'civility':
-                                q_objects.append(models.Q(civility__isnull=True) | models.Q(civility=''))
-                            elif column_id == 'managerTeam':
-                                # For Fosse, contacts have no teleoperator/confirmateur, so they have no team
-                                # Empty option matches all Fosse contacts
-                                pass
-                        
-                        # Add regular value filters if any
-                        if regular_values:
-                            if column_id == 'status':
-                                q_objects.append(models.Q(status_id__in=regular_values))
-                            elif column_id == 'source':
-                                q_objects.append(models.Q(source_id__in=regular_values))
-                            elif column_id == 'teleoperator':
-                                # For Fosse, teleoperator is always null, so regular values would exclude all
-                                # Only allow empty option for teleoperator in Fosse
-                                queryset = queryset.none()
-                                break
-                            elif column_id == 'confirmateur':
-                                # For Fosse, confirmateur is always null, so regular values would exclude all
-                                # Only allow empty option for confirmateur in Fosse
-                                queryset = queryset.none()
-                                break
-                        elif column_id == 'creator':
-                                q_objects.append(models.Q(creator_id__in=regular_values))
-                        elif column_id == 'postalCode':
-                                q_objects.append(models.Q(postal_code__in=regular_values))
-                        elif column_id == 'nationality':
-                                q_objects.append(models.Q(nationality__in=regular_values))
-                        elif column_id == 'campaign':
-                                q_objects.append(models.Q(campaign__in=regular_values))
-                        elif column_id == 'civility':
-                                q_objects.append(models.Q(civility__in=regular_values))
-                        elif column_id == 'managerTeam':
-                                # For Fosse, contacts have no team, so regular values would exclude all
-                                # Only allow empty option for managerTeam in Fosse
-                                queryset = queryset.none()
-                                break
-                        
-                        # Apply combined filter (OR logic: empty OR regular values)
-                        if q_objects:
-                            combined_q = q_objects[0]
-                            for q_obj in q_objects[1:]:
-                                combined_q |= q_obj
-                            queryset = queryset.filter(combined_q)
-                            # Filter by creator's team for Fosse contacts
-                            # Since Fosse contacts have null teleoperator/confirmateur, filter by creator's team
-                            # Get team members for the specified teams
-                            team_user_ids = TeamMember.objects.filter(team_id__in=values).values_list('user__django_user__id', flat=True)
-                            queryset = queryset.filter(creator_id__in=team_user_ids)
-                
-                # Apply date range filters
-                for column_id, date_range in date_range_filters.items():
-                    try:
-                        if column_id == 'createdAt':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(created_at__date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                date_to_next = date_to + timedelta(days=1)
-                                queryset = queryset.filter(created_at__date__lt=date_to_next)
-                        elif column_id == 'updatedAt':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(updated_at__date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                date_to_next = date_to + timedelta(days=1)
-                                queryset = queryset.filter(updated_at__date__lt=date_to_next)
-                        elif column_id == 'birthDate':
-                            if 'from' in date_range and date_range['from']:
-                                date_from = datetime.strptime(date_range['from'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(birth_date__gte=date_from)
-                            if 'to' in date_range and date_range['to']:
-                                date_to = datetime.strptime(date_range['to'], '%Y-%m-%d').date()
-                                queryset = queryset.filter(birth_date__lte=date_to)
-                    except (ValueError, TypeError) as e:
-                        # Invalid date format, skip this filter
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"Invalid date format in filter {column_id}: {e}")
-                        pass
+                # Get actual total count BEFORE applying limit
+                # This gives users the real total number of contacts matching their filters
+                total_count = queryset.count()
                 
                 # CRITICAL PERFORMANCE FIX: Apply limit BEFORE serialization
                 # This prevents loading thousands of contacts into memory
                 queryset = queryset[:limit]
-                
-                # Skip expensive count() query - it's extremely slow on large tables
-                # Just use limit as total for performance
-                total_count = limit
                 
                 serializer = self.get_serializer(queryset, many=True, context={'request': request})
                 return Response({
@@ -1373,6 +1624,22 @@ def csv_import_contacts(request):
     default_source_id = request.data.get('defaultSourceId')
     default_teleoperator_id = request.data.get('defaultTeleoperatorId')
     
+    # Clean and validate IDs (strip whitespace, handle empty strings)
+    if default_status_id:
+        default_status_id = str(default_status_id).strip()
+        if not default_status_id:
+            default_status_id = None
+    
+    if default_source_id:
+        default_source_id = str(default_source_id).strip()
+        if not default_source_id:
+            default_source_id = None
+    
+    if default_teleoperator_id:
+        default_teleoperator_id = str(default_teleoperator_id).strip()
+        if not default_teleoperator_id:
+            default_teleoperator_id = None
+    
     # Validate required mappings - only firstName is required
     required_fields = ['firstName']
     missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
@@ -1397,6 +1664,11 @@ def csv_import_contacts(request):
         source_obj = None
         if default_source_id:
             source_obj = Source.objects.filter(id=default_source_id).first()
+            if not source_obj:
+                # Log warning but don't fail - source is optional
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Source ID '{default_source_id}' not found during import")
         
         teleoperator_obj = None
         if default_teleoperator_id:
@@ -1520,7 +1792,8 @@ def csv_import_contacts(request):
                 contact_data['id'] = contact_id
                 contact_data['creator'] = request.user
                 contact_data['status'] = status_obj
-                if source_obj:
+                # Always set source if source_obj exists (even if None, to ensure it's saved)
+                if source_obj is not None:
                     contact_data['source'] = source_obj
                 if teleoperator_obj:
                     contact_data['teleoperator'] = teleoperator_obj
@@ -3387,24 +3660,27 @@ def get_stats(request):
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user)
                         )
-                        # For notes and events, filter by contacts accessible to user
+                        # For notes, filter by userId (user created the note)
+                        notes_qs = notes_qs.filter(userId=user)
+                        # For events, filter by contacts accessible to user
                         accessible_contact_ids = Contact.objects.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user)
                         ).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                     elif is_teleoperateur:
                         # Teleoperateur with own_only: only show contacts where user is teleoperator
                         contacts_qs = contacts_qs.filter(teleoperator=user)
+                        # For notes, filter by userId (user created the note)
+                        notes_qs = notes_qs.filter(userId=user)
                         accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                     elif is_confirmateur:
                         # Confirmateur with own_only: only show contacts where user is confirmateur
                         contacts_qs = contacts_qs.filter(confirmateur=user)
+                        # For notes, filter by userId (user created the note)
+                        notes_qs = notes_qs.filter(userId=user)
                         accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                     else:
                         # Default behavior: show contacts where user is teleoperator, confirmateur, or creator
@@ -3413,12 +3689,13 @@ def get_stats(request):
                             models.Q(confirmateur=user) |
                             models.Q(creator=user)
                         )
+                        # For notes, filter by userId (user created the note)
+                        notes_qs = notes_qs.filter(userId=user)
                         accessible_contact_ids = Contact.objects.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user) |
                             models.Q(creator=user)
                         ).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                         
                 elif data_access == 'team_only':
@@ -3439,7 +3716,9 @@ def get_stats(request):
                             models.Q(confirmateur__id__in=team_user_ids) |
                             models.Q(creator__id__in=team_user_ids)
                         )
-                        # For notes and events, filter by contacts accessible to user or team
+                        # For notes, filter by userId (notes created by users in the same team)
+                        notes_qs = notes_qs.filter(userId__id__in=team_user_ids)
+                        # For events, filter by contacts accessible to user or team
                         accessible_contact_ids = Contact.objects.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user) |
@@ -3448,7 +3727,6 @@ def get_stats(request):
                             models.Q(confirmateur__id__in=team_user_ids) |
                             models.Q(creator__id__in=team_user_ids)
                         ).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                     else:
                         # User has no team, fall back to own_only behavior
@@ -3457,12 +3735,13 @@ def get_stats(request):
                             models.Q(confirmateur=user) |
                             models.Q(creator=user)
                         )
+                        # For notes, filter by userId (user created the note)
+                        notes_qs = notes_qs.filter(userId=user)
                         accessible_contact_ids = Contact.objects.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user) |
                             models.Q(creator=user)
                         ).values_list('id', flat=True)
-                        notes_qs = notes_qs.filter(contactId__id__in=accessible_contact_ids)
                         events_qs = events_qs.filter(contactId__id__in=accessible_contact_ids)
                 # If user_details.role is None or data_access is 'all', show all data (no filtering)
             else:
@@ -3573,6 +3852,67 @@ def get_stats(request):
             for item in contacts_by_teleoperator
         ]
         
+        # Notes by user (only for admins - data_access == 'all')
+        notes_by_user = []
+        try:
+            user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
+            if user_details.role and user_details.role.data_access == 'all':
+                # Admin: show notes count for each user
+                # Get all notes (no filtering for admin)
+                all_notes_qs = Note.objects.all()
+                
+                # Apply date filters if provided
+                if date_from:
+                    try:
+                        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                        all_notes_qs = all_notes_qs.filter(created_at__date__gte=date_from_obj)
+                    except ValueError:
+                        pass
+                
+                if date_to:
+                    try:
+                        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                        date_to_next = date_to_obj + timedelta(days=1)
+                        all_notes_qs = all_notes_qs.filter(created_at__date__lt=date_to_next)
+                    except ValueError:
+                        pass
+                
+                # Apply team filter if provided
+                if team_id and team_id != 'all':
+                    try:
+                        team = Team.objects.get(id=team_id)
+                        team_members = TeamMember.objects.filter(team=team).values_list('user__django_user', flat=True)
+                        all_notes_qs = all_notes_qs.filter(userId__in=team_members)
+                    except Team.DoesNotExist:
+                        pass
+                
+                # Apply user filter if provided
+                if user_id and user_id != 'all':
+                    try:
+                        user_filter = DjangoUser.objects.get(id=user_id)
+                        all_notes_qs = all_notes_qs.filter(userId=user_filter)
+                    except DjangoUser.DoesNotExist:
+                        pass
+                
+                # Count notes by user
+                notes_by_user_data = all_notes_qs.values(
+                    'userId__id',
+                    'userId__first_name',
+                    'userId__last_name',
+                    'userId__username'
+                ).annotate(count=Count('id')).order_by('-count')
+                
+                notes_by_user = [
+                    {
+                        'userId': item['userId__id'],
+                        'name': f"{item['userId__first_name'] or ''} {item['userId__last_name'] or ''}".strip() or item['userId__username'] or 'Non défini',
+                        'count': item['count']
+                    }
+                    for item in notes_by_user_data
+                ]
+        except UserDetails.DoesNotExist:
+            pass
+        
         # Upcoming events (next 7 days)
         upcoming_events = events_qs.filter(
             datetime__gte=now,
@@ -3603,7 +3943,7 @@ def get_stats(request):
                 'createdAt': contact.created_at.isoformat()
             })
         
-        return Response({
+        response_data = {
             'totalContacts': total_contacts,
             'totalLeads': leads_count,
             'totalContactsCount': contacts_count,
@@ -3620,7 +3960,13 @@ def get_stats(request):
             'topTeleoperators': top_teleoperators,
             'upcomingEvents': upcoming_events_data,
             'recentContacts': recent_contacts_data
-        }, status=status.HTTP_200_OK)
+        }
+        
+        # Add notesByUser only for admins
+        if notes_by_user:
+            response_data['notesByUser'] = notes_by_user
+        
+        return Response(response_data, status=status.HTTP_200_OK)
         
     except Exception as e:
         import traceback
@@ -4778,4 +5124,45 @@ def notification_preference_update(request, role_id):
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Role.DoesNotExist:
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+
+# TEMPORARY ENDPOINT - DELETE ALL CONTACTS
+# WARNING: This is a dangerous operation that will delete ALL contacts from the database
+# Remove this endpoint after use
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def delete_all_contacts(request):
+    """
+    TEMPORARY ENDPOINT: Delete all contacts from the database.
+    WARNING: This operation cannot be undone!
+    
+    Requires confirmation parameter: {'confirm': 'DELETE_ALL'}
+    """
+    try:
+        # Require explicit confirmation to prevent accidental deletion
+        confirmation = request.data.get('confirm', '')
+        if confirmation != 'DELETE_ALL':
+            return Response({
+                'error': 'Confirmation required. Send {"confirm": "DELETE_ALL"} to proceed.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get count before deletion
+        total_count = Contact.objects.count()
+        
+        # Delete all contacts
+        deleted_count, _ = Contact.objects.all().delete()
+        
+        return Response({
+            'success': True,
+            'message': f'Successfully deleted {deleted_count} contact(s)',
+            'deleted_count': deleted_count,
+            'total_before_deletion': total_count
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({
+            'error': str(e),
+            'details': error_details
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

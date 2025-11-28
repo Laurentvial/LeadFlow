@@ -28,6 +28,18 @@
   }
 }
 
+@media (min-width: 1024px) {
+  .dashboard-filters-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .dashboard-filters-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
 .dashboard-filter-field {
   display: flex;
   flex-direction: column;

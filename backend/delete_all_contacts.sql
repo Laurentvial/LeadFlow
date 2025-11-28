@@ -1,37 +1,39 @@
--- SQL script to delete all contacts from the database
--- WARNING: This will permanently delete ALL contacts and cannot be undone!
--- Make sure you have a backup before running this script.
+-- TEMPORARY SQL SCRIPT: Delete all contacts and related data
+-- WARNING: This operation cannot be undone!
+-- Execute this script at your own risk
+-- 
+-- Usage:
+--   SQLite: sqlite3 db.sqlite3 < delete_all_contacts.sql
+--   PostgreSQL: psql -d your_database -f delete_all_contacts.sql
+--   MySQL: mysql -u username -p database_name < delete_all_contacts.sql
 
--- Step 1: Set foreign keys to NULL for records that use SET_NULL
--- This must be done BEFORE deleting contacts to avoid foreign key constraint violations
--- Django creates columns with _id suffix for ForeignKey fields
+BEGIN TRANSACTION;
 
--- Set contact_id_id to NULL in logs table (Django adds _id suffix to ForeignKey field names)
-UPDATE api_log SET contact_id_id = NULL WHERE contact_id_id IS NOT NULL;
+-- Step 1: Delete Documents (CASCADE relationship - will be deleted automatically, but explicit is safer)
+DELETE FROM api_document WHERE contact_id_id IN (SELECT id FROM api_contact);
 
--- Set contactId_id to NULL in events table
-UPDATE api_event SET "contactId_id" = NULL WHERE "contactId_id" IS NOT NULL;
+-- Step 2: Delete Notes (CASCADE relationship - will be deleted automatically, but explicit is safer)
+DELETE FROM api_note WHERE "contactId_id" IN (SELECT id FROM api_contact);
 
--- Set contact_id to NULL in emails table
-UPDATE api_email SET contact_id = NULL WHERE contact_id IS NOT NULL;
+-- Step 3: Delete Events linked to contacts (SET_NULL relationship - we delete them)
+DELETE FROM api_event WHERE "contactId_id" IN (SELECT id FROM api_contact);
 
--- Step 2: Delete records that have CASCADE relationships
--- Even though Django models specify CASCADE, raw SQL requires manual deletion
+-- Step 4: Delete Logs linked to contacts (SET_NULL relationship - we delete them)
+DELETE FROM api_log WHERE contact_id_id IN (SELECT id FROM api_contact);
 
--- Delete documents associated with contacts (CASCADE relationship)
-DELETE FROM api_document WHERE contact_id_id IS NOT NULL;
+-- Step 5: Delete Emails linked to contacts (SET_NULL relationship - we delete them)
+DELETE FROM api_email WHERE contact_id IN (SELECT id FROM api_contact);
 
--- Delete notes associated with contacts (CASCADE relationship)
-DELETE FROM api_note WHERE "contactId_id" IS NOT NULL;
-
--- Step 3: Now delete all contacts
+-- Step 6: Finally, delete all contacts
 DELETE FROM api_contact;
 
--- Verify deletion
-SELECT COUNT(*) as remaining_contacts FROM api_contact;
+-- Commit the transaction (or ROLLBACK if something went wrong)
+COMMIT;
 
--- Optional: Check related records that were set to NULL
--- SELECT COUNT(*) as events_with_null_contact FROM api_event WHERE "contactId_id" IS NULL;
--- SELECT COUNT(*) as logs_with_null_contact FROM api_log WHERE contact_id_id IS NULL;
--- SELECT COUNT(*) as emails_with_null_contact FROM api_email WHERE contact_id IS NULL;
-
+-- Verify deletion (uncomment to check)
+-- SELECT COUNT(*) as remaining_contacts FROM api_contact;
+-- SELECT COUNT(*) as remaining_documents FROM api_document;
+-- SELECT COUNT(*) as remaining_notes FROM api_note;
+-- SELECT COUNT(*) as remaining_events FROM api_event;
+-- SELECT COUNT(*) as remaining_logs FROM api_log;
+-- SELECT COUNT(*) as remaining_emails FROM api_email;

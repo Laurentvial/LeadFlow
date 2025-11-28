@@ -160,7 +160,7 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
             <CalendarIcon className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
+        <PopoverContent className="w-auto p-0" align="start" style={{ zIndex: 10002 }}>
           <Calendar
             mode="single"
             selected={selectedDate}

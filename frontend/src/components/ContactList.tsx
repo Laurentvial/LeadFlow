@@ -363,12 +363,11 @@ export function ContactList({
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Calculate limit: request enough contacts to cover multiple pages
-      const limit = Math.max(itemsPerPage * 10, 500);
-      
+      // Use server-side pagination for better performance
       // Build query parameters for filters
       const queryParams = new URLSearchParams();
-      queryParams.append('limit', limit.toString());
+      queryParams.append('page', currentPage.toString());
+      queryParams.append('page_size', itemsPerPage.toString());
       
       if (appliedSearchTerm) {
         queryParams.append('search', appliedSearchTerm);
@@ -382,6 +381,7 @@ export function ContactList({
         if (value) {
           if (Array.isArray(value)) {
             // Multi-select filter - send multiple query params
+            console.log(`[DEBUG] Sending filter for ${key}:`, value);
             value.forEach((val) => {
               queryParams.append(`filter_${key}`, val);
             });
@@ -400,6 +400,11 @@ export function ContactList({
         }
       });
       
+      // Debug: Log final query params
+      if (Object.keys(appliedColumnFilters).length > 0) {
+        console.log('[DEBUG] Final query params:', queryParams.toString());
+      }
+      
       // Load data in parallel for better performance
       const [contactsData, teamsData, statusesData] = await Promise.all([
         apiCall(`${apiEndpoint}?${queryParams.toString()}`),
@@ -409,8 +414,13 @@ export function ContactList({
       
       // Contacts are already sorted and filtered by the backend
       const contactsList = contactsData.contacts || [];
+      const totalFromAPI = contactsData.total || contactsData.count || contactsList.length;
+      console.log(`[DEBUG] Received from API - contacts: ${contactsList.length}, total: ${totalFromAPI}`);
+      console.log(`[DEBUG] Applied filters:`, appliedColumnFilters);
       setContacts(contactsList);
-      setTotalContacts(contactsData.total || contactsList.length);
+      // Use total from paginated response
+      setTotalContacts(totalFromAPI);
+      console.log(`[DEBUG] Set totalContacts to: ${totalFromAPI}`);
       setTeams(teamsData.teams || []);
       setStatuses(statusesData.statuses || []);
     } catch (error: any) {
@@ -419,7 +429,7 @@ export function ContactList({
     } finally {
       setIsLoading(false);
     }
-  }, [itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint]);
+  }, [currentPage, itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint]);
 
   useEffect(() => {
     loadData();
@@ -469,6 +479,7 @@ export function ContactList({
       }
     }
     
+    console.log(`[DEBUG] Applying filter for ${columnId}:`, newFilters[columnId]);
     setAppliedColumnFilters(newFilters);
     setColumnFilters(newFilters); // Keep for display
     setCurrentPage(1); // Reset to first page
@@ -708,7 +719,8 @@ export function ContactList({
 
   // Filter contacts based on status view permissions
   // Backend handles filtering, but we also filter by status view permissions on client side
-  const filteredContacts = React.useMemo(() => {
+  // With server-side pagination, contacts already represent the current page
+  const displayedContacts = React.useMemo(() => {
     const filtered = contacts.filter(contact => canViewContact(contact));
     
     // Debug: Log if there's a discrepancy between total and filtered
@@ -722,8 +734,8 @@ export function ContactList({
     return filtered;
   }, [contacts, canViewContact]);
 
-  // Calculate pagination
-  const totalPages = Math.ceil(filteredContacts.length / itemsPerPage);
+  // Calculate pagination based on server-side total
+  const totalPages = Math.ceil(totalContacts / itemsPerPage);
   
   // Reset to page 1 if current page is out of bounds or when filters change
   useEffect(() => {
@@ -736,9 +748,6 @@ export function ContactList({
   useEffect(() => {
     setCurrentPage(1);
   }, [appliedSearchTerm, appliedStatusType, appliedColumnFilters]);
-  
-  // Calculate displayed contacts based on pagination
-  const displayedContacts = filteredContacts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   // Gestion de la sélection
   function handleSelectContact(contactId: string) {
@@ -1326,7 +1335,7 @@ export function ContactList({
                 Chargement...
               </p>
             </div>
-          ) : filteredContacts.length > 0 ? (
+          ) : displayedContacts.length > 0 ? (
         <div className={`contacts-table-wrapper ${fullscreen ? 'contacts-table-wrapper-fullscreen' : ''}`}>
               <table className="contacts-table">
                 <thead>
@@ -1580,9 +1589,7 @@ export function ContactList({
                                   </div>
                                   {columnFilters[columnId] && (
                                     <p className="text-xs text-slate-500 mt-2">
-                                      {Array.isArray(columnFilters[columnId]) 
-                                        ? `${(columnFilters[columnId] as string[]).length} sélectionné(s)`
-                                        : filteredContacts.length} contact(s) correspondant
+                                      {totalContacts.toLocaleString('fr-FR')} contact(s) correspondant
                                     </p>
                                   )}
                                 </>
@@ -1658,7 +1665,7 @@ export function ContactList({
                                   </div>
                                   {columnFilters[columnId] && (
                                     <p className="text-xs text-slate-500">
-                                      {filteredContacts.length} contact(s) correspondant
+                                      {totalContacts.toLocaleString('fr-FR')} contact(s) correspondant
                                     </p>
                                   )}
                                 </>
@@ -1683,7 +1690,7 @@ export function ContactList({
                                   />
                                   {columnFilters[columnId] && (
                                     <p className="text-xs text-slate-500">
-                                      {filteredContacts.length} contact(s) correspondant
+                                      {totalContacts.toLocaleString('fr-FR')} contact(s) correspondant
                                     </p>
                                   )}
                                 </>
@@ -1771,11 +1778,11 @@ export function ContactList({
           )}
           
           {/* Pagination Controls */}
-          {totalPages > 1 && filteredContacts.length > 0 && (
+          {totalPages > 1 && displayedContacts.length > 0 && (
             <div className="contacts-pagination">
               <div className="contacts-pagination-info">
                 <span>
-                  Affichage de {((currentPage - 1) * itemsPerPage) + 1} à {Math.min(currentPage * itemsPerPage, filteredContacts.length)} sur {filteredContacts.length} contact(s)
+                  Affichage de {((currentPage - 1) * itemsPerPage) + 1} à {Math.min(currentPage * itemsPerPage, totalContacts)} sur {totalContacts} contact(s)
                 </span>
               </div>
               <div className="contacts-pagination-controls">
@@ -1926,6 +1933,8 @@ export function ContactList({
                   <SelectItem value="200">200</SelectItem>
                   <SelectItem value="500">500</SelectItem>
                   <SelectItem value="1000">1000</SelectItem>
+                  <SelectItem value="5000">5000</SelectItem>
+                  <SelectItem value="10000">10000</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2053,7 +2062,7 @@ export function ContactList({
                   Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (appliedStatusType !== 'all' ? 1 : 0)})
                 </Button>
               )}
-              {totalPages > 1 && filteredContacts.length > 0 && (
+              {totalPages > 1 && displayedContacts.length > 0 && (
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                   <Button
                     variant="outline"
