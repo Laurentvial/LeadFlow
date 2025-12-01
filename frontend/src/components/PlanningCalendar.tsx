@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
@@ -34,6 +34,10 @@ export function PlanningCalendar() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [clientSearchFocused, setClientSearchFocused] = useState(false);
+  const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
+  const [editClientSearchFocused, setEditClientSearchFocused] = useState(false);
   const [formData, setFormData] = useState({
     date: '',
     hour: '09',
@@ -99,6 +103,8 @@ export function PlanningCalendar() {
       
       setIsModalOpen(false);
       setFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+      setClientSearchQuery('');
+      setClientSearchFocused(false);
       loadData();
       toast.success('Événement créé avec succès');
     } catch (error) {
@@ -115,14 +121,17 @@ export function PlanningCalendar() {
     const minute = eventDate.getMinutes().toString().padStart(2, '0');
     
     setEditingEvent(event);
+    const selectedClientId = event.clientId_read || event.contactId || '';
+    const selectedClient = contacts.find(c => c.id === selectedClientId);
     setEditFormData({
       date: dateStr,
       hour: hour,
       minute: minute,
-      clientId: event.clientId_read || event.contactId || '',
+      clientId: selectedClientId,
       comment: event.comment || '',
       userId: event.userId || currentUser?.id || ''
     });
+    setEditClientSearchQuery(selectedClient ? `${selectedClient.fname} ${selectedClient.lname}` : '');
     setIsEditModalOpen(true);
   }
 
@@ -146,6 +155,8 @@ export function PlanningCalendar() {
       setIsEditModalOpen(false);
       setEditingEvent(null);
       setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+      setEditClientSearchQuery('');
+      setEditClientSearchFocused(false);
       loadData();
       toast.success('Événement modifié avec succès');
     } catch (error) {
@@ -185,6 +196,27 @@ export function PlanningCalendar() {
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
   ];
 
+  // Filter contacts based on search query for create modal
+  const filteredContacts = contacts.filter((client) => {
+    if (!clientSearchQuery) return false; // Only show results when typing
+    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
+    return fullName.includes(clientSearchQuery.toLowerCase());
+  });
+
+  // Filter contacts based on search query for edit modal
+  const filteredEditContacts = contacts.filter((client) => {
+    if (!editClientSearchQuery) return false; // Only show results when typing
+    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
+    return fullName.includes(editClientSearchQuery.toLowerCase());
+  });
+
+  // Get selected client name
+  const getSelectedClientName = (clientId: string) => {
+    if (!clientId || clientId === 'none') return 'Sélectionner un client';
+    const client = contacts.find(c => c.id === clientId);
+    return client ? `${client.fname} ${client.lname}` : 'Sélectionner un client';
+  };
+
   function getEventsForDay(day: number) {
     const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return events.filter(event => {
@@ -210,7 +242,11 @@ export function PlanningCalendar() {
         )}
         
         {isModalOpen && (
-          <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+          <div className="modal-overlay" onClick={() => {
+            setIsModalOpen(false);
+            setClientSearchQuery('');
+            setClientSearchFocused(false);
+          }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2 className="modal-title">Nouveau rendez-vous</h2>
@@ -219,7 +255,11 @@ export function PlanningCalendar() {
                   variant="ghost"
                   size="icon"
                   className="modal-close"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setClientSearchQuery('');
+                    setClientSearchFocused(false);
+                  }}
                 >
                   <X className="planning-icon-md" />
                 </Button>
@@ -279,19 +319,63 @@ export function PlanningCalendar() {
                 
                 <div className="modal-form-field">
                   <Label>Client (optionnel)</Label>
-                  <Select value={formData.clientId || "none"} onValueChange={(value) => setFormData({ ...formData, clientId: value === "none" ? "" : value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Sélectionner un client" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun client</SelectItem>
-                      {contacts.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.fname} {client.lname}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                      <Input
+                        type="text"
+                        placeholder="Rechercher un client..."
+                        value={clientSearchQuery}
+                        onChange={(e) => {
+                          setClientSearchQuery(e.target.value);
+                          setClientSearchFocused(true);
+                        }}
+                        onFocus={() => setClientSearchFocused(true)}
+                        onBlur={() => setTimeout(() => setClientSearchFocused(false), 200)}
+                        className="pl-10"
+                      />
+                    </div>
+                    {clientSearchFocused && clientSearchQuery && (
+                      <div className="absolute z-[99999] w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                        {filteredContacts.length > 0 ? (
+                          <div className="p-1">
+                            <div
+                              className="px-3 py-2 cursor-pointer hover:bg-accent rounded-sm text-sm"
+                              onClick={() => {
+                                setFormData({ ...formData, clientId: '' });
+                                setClientSearchQuery('');
+                                setClientSearchFocused(false);
+                              }}
+                            >
+                              Aucun client
+                            </div>
+                            {filteredContacts.map((client) => (
+                              <div
+                                key={client.id}
+                                className="px-3 py-2 cursor-pointer hover:bg-accent rounded-sm text-sm"
+                                onClick={() => {
+                                  setFormData({ ...formData, clientId: client.id });
+                                  setClientSearchQuery(`${client.fname} ${client.lname}`);
+                                  setClientSearchFocused(false);
+                                }}
+                              >
+                                {client.fname} {client.lname}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-3 text-sm text-muted-foreground text-center">
+                            Aucun client trouvé
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {formData.clientId && (
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Client sélectionné : {getSelectedClientName(formData.clientId)}
+                    </div>
+                  )}
                 </div>
 
                 <div className="modal-form-field">
@@ -325,7 +409,11 @@ export function PlanningCalendar() {
                 </div>
                 
                 <div className="modal-form-actions">
-                  <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>
+                  <Button type="button" variant="outline" onClick={() => {
+                    setIsModalOpen(false);
+                    setClientSearchQuery('');
+                    setClientSearchFocused(false);
+                  }}>
                     Annuler
                   </Button>
                   {canCreate && (
@@ -344,6 +432,8 @@ export function PlanningCalendar() {
             setIsEditModalOpen(false);
             setEditingEvent(null);
             setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+            setEditClientSearchQuery('');
+            setEditClientSearchFocused(false);
           }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
@@ -357,6 +447,8 @@ export function PlanningCalendar() {
                     setIsEditModalOpen(false);
                     setEditingEvent(null);
                     setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+                    setEditClientSearchQuery('');
+                    setEditClientSearchFocused(false);
                   }}
                 >
                   <X className="w-4 h-4" />
@@ -418,22 +510,64 @@ export function PlanningCalendar() {
                 
                 <div className="modal-form-field">
                   <Label htmlFor="edit-event-client">Client (optionnel)</Label>
-                  <Select 
-                    value={editFormData.clientId || "none"} 
-                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value === "none" ? "" : value })}
-                  >
-                    <SelectTrigger id="edit-event-client">
-                      <SelectValue placeholder="Sélectionner un client" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun client</SelectItem>
-                      {contacts.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.fname} {client.lname}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                      <Input
+                        id="edit-event-client"
+                        type="text"
+                        placeholder="Rechercher un client..."
+                        value={editClientSearchQuery}
+                        onChange={(e) => {
+                          setEditClientSearchQuery(e.target.value);
+                          setEditClientSearchFocused(true);
+                        }}
+                        onFocus={() => setEditClientSearchFocused(true)}
+                        onBlur={() => setTimeout(() => setEditClientSearchFocused(false), 200)}
+                        className="pl-10"
+                      />
+                    </div>
+                    {editClientSearchFocused && editClientSearchQuery && (
+                      <div className="absolute z-[99999] w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                        {filteredEditContacts.length > 0 ? (
+                          <div className="p-1">
+                            <div
+                              className="px-3 py-2 cursor-pointer hover:bg-accent rounded-sm text-sm"
+                              onClick={() => {
+                                setEditFormData({ ...editFormData, clientId: '' });
+                                setEditClientSearchQuery('');
+                                setEditClientSearchFocused(false);
+                              }}
+                            >
+                              Aucun client
+                            </div>
+                            {filteredEditContacts.map((client) => (
+                              <div
+                                key={client.id}
+                                className="px-3 py-2 cursor-pointer hover:bg-accent rounded-sm text-sm"
+                                onClick={() => {
+                                  setEditFormData({ ...editFormData, clientId: client.id });
+                                  setEditClientSearchQuery(`${client.fname} ${client.lname}`);
+                                  setEditClientSearchFocused(false);
+                                }}
+                              >
+                                {client.fname} {client.lname}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-3 text-sm text-muted-foreground text-center">
+                            Aucun client trouvé
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {editFormData.clientId && (
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Client sélectionné : {getSelectedClientName(editFormData.clientId)}
+                    </div>
+                  )}
                 </div>
 
                 <div className="modal-form-field">
@@ -477,6 +611,8 @@ export function PlanningCalendar() {
                       setIsEditModalOpen(false);
                       setEditingEvent(null);
                       setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+                      setEditClientSearchQuery('');
+                      setEditClientSearchFocused(false);
                     }}
                   >
                     Annuler
