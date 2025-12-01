@@ -1050,43 +1050,34 @@ class ContactView(generics.ListAPIView):
                 print(f"Error in ContactView.list with limit: {error_details}")
                 return Response({'error': str(e), 'details': error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        # Check if pagination is requested (default to False for backward compatibility)
-        paginate = request.query_params.get('paginate', 'false').lower() == 'true'
-        requested_page_size = int(request.query_params.get('page_size', '100'))
-        requested_page = int(request.query_params.get('page', '1'))
+        # Fallback: If no pagination params provided, use default pagination with reasonable limit
+        # This ensures we don't load all contacts at once (performance protection)
+        from rest_framework.pagination import PageNumberPagination
         
-        if paginate:
-            # Use pagination for large datasets
-            from rest_framework.pagination import PageNumberPagination
-            
-            class ContactPagination(PageNumberPagination):
-                page_size = requested_page_size
-                page_size_query_param = 'page_size'
-                max_page_size = 1000
-            
-            self.pagination_class = ContactPagination
+        class DefaultContactPagination(PageNumberPagination):
+            page_size = 50  # Default page size matching frontend default
+            page_size_query_param = 'page_size'
+            max_page_size = 50000  # Allow up to 50000 for "all" option
+        
+        self.pagination_class = DefaultContactPagination
+        queryset = self.get_queryset()
+        queryset = self._apply_filters(queryset, request)
+        
+        # Store filtered queryset for proper pagination counting
+        self._filtered_queryset = queryset
+        
+        try:
             response = super().list(request, *args, **kwargs)
             return Response({
                 'contacts': response.data['results'],
-                'count': response.data['count'],
+                'total': response.data['count'],
                 'next': response.data.get('next'),
                 'previous': response.data.get('previous'),
-                'page': requested_page,
-                'page_size': requested_page_size
+                'page': response.data.get('page', 1),
+                'page_size': response.data.get('page_size', 50)
             })
-        else:
-            # For backward compatibility, return contacts (but optimized)
-            # CRITICAL: Always apply a default limit to prevent performance issues
-            DEFAULT_LIMIT = 1000
-            queryset = self.get_queryset()
-            queryset = queryset[:DEFAULT_LIMIT]  # Limit BEFORE serialization
-            # Skip expensive count() query - use limit as total
-            serializer = self.get_serializer(queryset, many=True, context={'request': request})
-            return Response({
-                'contacts': serializer.data,
-                'total': DEFAULT_LIMIT,  # Don't count, just use limit
-                'limit': DEFAULT_LIMIT
-            })
+        finally:
+            self._filtered_queryset = None
 
 
 class FosseContactView(generics.ListAPIView):
