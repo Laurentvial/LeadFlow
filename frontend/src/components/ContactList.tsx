@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2 } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -2051,6 +2051,16 @@ export function ContactList({
               {totalPages > 1 && ` - Page ${currentPage} sur ${totalPages}`}
             </CardTitle>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => loadData()}
+                disabled={isLoading}
+                title="Rafraîchir la liste"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Rafraîchir
+              </Button>
               {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || appliedStatusType !== 'all') && (
                 <Button 
                   variant="outline" 
