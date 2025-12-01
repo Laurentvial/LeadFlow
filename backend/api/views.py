@@ -26,6 +26,8 @@ import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import Cast
+from django.db.models import CharField
 import boto3
 from botocore.exceptions import ClientError
 import os
@@ -689,24 +691,27 @@ class ContactView(generics.ListAPIView):
                             if column_id == 'email':
                                 queryset = queryset.filter(email__icontains=value)
                             elif column_id == 'phone':
-                                # Convert phone search to integer if possible
-                                try:
-                                    phone_int = int(''.join(str(value).split()))
-                                    queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
-                                except (ValueError, TypeError):
-                                    # If not a valid number, search as exact match on string representation
-                                    phone_str = str(value).strip()
-                                    queryset = queryset.filter(
-                                        models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                # Remove spaces from search value and convert to string
+                                phone_search = ''.join(str(value).split())
+                                if phone_search:
+                                    # Convert integer phone fields to strings for partial matching
+                                    queryset = queryset.annotate(
+                                        phone_str=Cast('phone', CharField()),
+                                        mobile_str=Cast('mobile', CharField())
+                                    ).filter(
+                                        models.Q(phone_str__contains=phone_search) | 
+                                        models.Q(mobile_str__contains=phone_search)
                                     )
                             elif column_id == 'mobile':
-                                # Convert mobile search to integer if possible
-                                try:
-                                    mobile_int = int(''.join(str(value).split()))
-                                    queryset = queryset.filter(mobile=mobile_int)
-                                except (ValueError, TypeError):
-                                    # If not a valid number, skip filter
-                                    pass
+                                # Remove spaces from search value and convert to string
+                                mobile_search = ''.join(str(value).split())
+                                if mobile_search:
+                                    # Convert integer mobile field to string for partial matching
+                                    queryset = queryset.annotate(
+                                        mobile_str=Cast('mobile', CharField())
+                                    ).filter(
+                                        models.Q(mobile_str__contains=mobile_search)
+                                    )
                             elif column_id == 'fullName':
                                 # Search in both first name and last name
                                 queryset = queryset.filter(
@@ -1182,13 +1187,16 @@ class FosseContactView(generics.ListAPIView):
                             if column_id == 'email':
                                 queryset = queryset.filter(email__icontains=value)
                             elif column_id == 'phone':
-                                try:
-                                    phone_int = int(''.join(str(value).split()))
-                                    queryset = queryset.filter(models.Q(phone=phone_int) | models.Q(mobile=phone_int))
-                                except (ValueError, TypeError):
-                                    phone_str = str(value).strip()
-                                    queryset = queryset.filter(
-                                        models.Q(phone__isnull=False) | models.Q(mobile__isnull=False)
+                                # Remove spaces from search value and convert to string
+                                phone_search = ''.join(str(value).split())
+                                if phone_search:
+                                    # Convert integer phone fields to strings for partial matching
+                                    queryset = queryset.annotate(
+                                        phone_str=Cast('phone', CharField()),
+                                        mobile_str=Cast('mobile', CharField())
+                                    ).filter(
+                                        models.Q(phone_str__contains=phone_search) | 
+                                        models.Q(mobile_str__contains=phone_search)
                                     )
                             elif column_id == 'city':
                                 queryset = queryset.filter(city__icontains=value)
