@@ -3,7 +3,7 @@
 .contacts-container {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 0.5rem;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden; /* Empêche le débordement horizontal du conteneur */
@@ -20,7 +20,7 @@
   z-index: 1000;
   padding: 1.5rem;
   overflow-y: auto;
-  gap: 1rem;
+  gap: 0.5rem;
 }
 
 .contacts-header {
@@ -45,7 +45,7 @@
   top: 80px; /* Ajuster selon la hauteur du header */
   background-color: white;
   z-index: 40;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
 }
 
@@ -320,8 +320,14 @@
 
 /* Barre d'actions multiples */
 .contacts-bulk-actions {
-  background-color: #f8fafc;
+  background-color: #ffffff;
   border: 1px solid #e2e8f0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.contacts-bulk-actions-content-wrapper {
+  padding: 0.75rem 1rem !important;
 }
 
 .contacts-bulk-actions-content {
@@ -329,15 +335,16 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
 .contacts-bulk-actions-info {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
   font-weight: 500;
   color: #475569;
+  font-size: 0.875rem;
 }
 
 .contacts-bulk-actions-buttons {
@@ -350,6 +357,15 @@
 .contacts-bulk-action-select {
   display: flex;
   align-items: center;
+}
+
+.contacts-bulk-action-select [data-slot="select-trigger"],
+.contacts-bulk-action-select [data-slot="select-value"] {
+  color: #000000 !important;
+}
+
+.contacts-bulk-action-select [data-slot="select-trigger"] * {
+  color: #000000 !important;
 }
 
 @media (max-width: 768px) {

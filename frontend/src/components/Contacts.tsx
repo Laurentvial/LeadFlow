@@ -22,8 +22,23 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       return new Set<string>();
     }
     const editPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
-      .map((p: any) => String(p.statusId).trim());
+      .filter((p: any) => {
+        // Check for status-specific edit permissions
+        // These have component='statuses', action='edit', and a statusId
+        return p.component === 'statuses' && 
+               p.action === 'edit' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
     return new Set(editPerms);
   }, [currentUser?.permissions]);
   
@@ -32,11 +47,21 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       return new Set<string>();
     }
     const viewPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .filter((p: any) => {
+        // Check for status-specific view permissions
+        // These have component='statuses', action='view', and a statusId
+        return p.component === 'statuses' && 
+               p.action === 'view' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
       .map((p: any) => {
         const statusId = p.statusId;
         if (!statusId) return null;
-        return String(statusId).trim();
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
       })
       .filter((id): id is string => id !== null && id !== '');
     return new Set(viewPerms);

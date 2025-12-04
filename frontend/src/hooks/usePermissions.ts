@@ -107,6 +107,52 @@ export function useHasNoteCategoriesPermission(): boolean {
 }
 
 /**
+ * Hook to check if user has permission to view the permissions management page
+ * Returns true only if user has the general 'permissions' view permission (no fieldName or statusId)
+ * @returns boolean indicating if user has permissions management permission
+ */
+export function useHasPermissionsPermission(): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has the general 'permissions' view permission
+  return permissions.some((perm) => {
+    return perm.component === 'permissions' && 
+           perm.action === 'view' && 
+           !perm.fieldName && // Exclude field-level permissions
+           !perm.statusId; // Only general permissions permission
+  });
+}
+
+/**
+ * Hook to check if user has permission to view the notifications (Notifications) management page
+ * Returns true only if user has the general 'notifications' view permission
+ * @returns boolean indicating if user has notifications management permission
+ */
+export function useHasNotificationsPermission(): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has the general 'notifications' view permission
+  return permissions.some((perm) => {
+    return perm.component === 'notifications' && 
+           perm.action === 'view' && 
+           !perm.fieldName && // Exclude field-level permissions
+           !perm.statusId; // Only general notifications permission
+  });
+}
+
+/**
  * Hook to check if user has permission for a specific note category
  * @param categoryId - The category ID
  * @param action - The action to check (e.g., 'view', 'create', 'edit', 'delete')

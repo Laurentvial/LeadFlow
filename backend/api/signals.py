@@ -61,11 +61,17 @@ def create_permissions_for_new_status(sender, instance, created, **kwargs):
     if not roles.exists():
         return  # No matching roles exist, nothing to do
     
-    # Create permissions for all components and actions with this status
+    # Create permissions for components that are allowed to have statusId
+    # Only 'statuses' and 'note_categories' components can have status-specific permissions
+    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories']
     permissions_for_status = []
     for component in PREDEFINED_COMPONENTS:
+        # Only create status-specific permissions for allowed components
+        if component not in STATUS_ALLOWED_COMPONENTS:
+            continue
+            
         for action in ACTIONS:
-            # Get or create permission for this status
+            # Get or create permission for this status (only for allowed components)
             permission, _ = Permission.objects.get_or_create(
                 component=component,
                 field_name=None,
@@ -97,17 +103,20 @@ def create_permissions_for_new_role(sender, instance, created, **kwargs):
         return  # Only process new roles
     
     # First, ensure permissions without status exist for all components and actions
+    # Use get_or_create to prevent duplicates
     permissions_to_link = []
     for component in PREDEFINED_COMPONENTS:
         for action in ACTIONS:
-            # Get or create permission without status
-            permission, _ = Permission.objects.get_or_create(
+            # Get or create permission without status (prevents duplicates)
+            # The unique_together constraint ensures no duplicates can be created
+            permission, created = Permission.objects.get_or_create(
                 component=component,
                 field_name=None,
                 action=action,
                 status=None,
                 defaults={'id': generate_unique_id(Permission)}
             )
+            # Only add if it was created or already exists (get_or_create returns the object either way)
             permissions_to_link.append(permission)
     
     # Also get all existing permissions with statuses

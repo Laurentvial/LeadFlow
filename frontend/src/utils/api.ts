@@ -238,7 +238,29 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'API request failed' }));
-      const errorMessage = error.detail || error.error || error.message || 'API request failed';
+      
+      // Extract error message from various Django REST Framework error formats
+      let errorMessage = error.detail || error.error || error.message;
+      
+      // Handle non_field_errors format: {"non_field_errors": ["message"]}
+      if (!errorMessage && error.non_field_errors && Array.isArray(error.non_field_errors) && error.non_field_errors.length > 0) {
+        errorMessage = error.non_field_errors[0];
+      }
+      
+      // Handle field-specific errors: {"name": ["message"]} or {"name": "message"}
+      if (!errorMessage) {
+        const fieldErrors = Object.keys(error).filter(key => key !== 'detail' && key !== 'error' && key !== 'message' && key !== 'non_field_errors');
+        if (fieldErrors.length > 0) {
+          const firstFieldError = error[fieldErrors[0]];
+          if (Array.isArray(firstFieldError) && firstFieldError.length > 0) {
+            errorMessage = firstFieldError[0];
+          } else if (typeof firstFieldError === 'string') {
+            errorMessage = firstFieldError;
+          }
+        }
+      }
+      
+      errorMessage = errorMessage || 'API request failed';
       const errorObj = new Error(errorMessage);
       (errorObj as any).response = error;
       (errorObj as any).status = response.status;

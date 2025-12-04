@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUser } from '../contexts/UserContext';
-import { useHasPermission, useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
+import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission } from '../hooks/usePermissions';
 import { getAccessibleRoute } from '../utils/getAccessibleRoute';
 
 interface SettingsPermissionWrapperProps {
@@ -11,16 +11,17 @@ interface SettingsPermissionWrapperProps {
 /**
  * Wrapper for Settings page that allows access if user has permission for
  * PermissionsTab (permissions component), StatusesTab (statuses component), ContactFormTab (note-categories component),
- * or NotificationPreferencesTab (always visible for authenticated users)
+ * or NotificationPreferencesTab (notifications component)
  */
 export function SettingsPermissionWrapper({ children }: SettingsPermissionWrapperProps) {
   const { currentUser, loading } = useUser();
-  const hasPermissionsPermission = useHasPermission('permissions', 'view');
+  const hasPermissionsPermission = useHasPermissionsPermission();
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
+  const hasNotificationsPermission = useHasNotificationsPermission();
   
-  // User has access if they can view permissions, statuses, note categories, or if they're authenticated (for notifications tab)
-  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || !!currentUser;
+  // User has access if they can view permissions, statuses, note categories, or notifications
+  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission;
 
   // Show loading while user data is being fetched
   if (loading) {

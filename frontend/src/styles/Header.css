@@ -112,6 +112,10 @@
   justify-content: center;
 }
 
+.header-button-user {
+  border-radius: 0;
+}
+
 .header-user-name {
   display: none;
   color: var(--foreground);

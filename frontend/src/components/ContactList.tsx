@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Textarea } from './ui/textarea';
 import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import {
   Popover,
@@ -73,6 +74,19 @@ export function ContactList({
   // Get current user for default permission functions
   const { currentUser } = useUser();
   
+  // Check if user has permission requiring note for status change
+  const requiresNoteForStatusChange = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'other' && 
+             perm.action === 'edit' && 
+             perm.fieldName === 'status_change_note_required' &&
+             !perm.statusId;
+    });
+  }, [currentUser?.permissions]);
+  
   // Use provided permission functions or create defaults
   const canCreate = canCreateProp ?? useHasPermission('contacts', 'create');
   const canEditGeneral = canEditGeneralProp ?? useHasPermission('contacts', 'edit');
@@ -84,8 +98,23 @@ export function ContactList({
       return new Set<string>();
     }
     const editPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
-      .map((p: any) => String(p.statusId).trim());
+      .filter((p: any) => {
+        // Check for status-specific edit permissions
+        // These have component='statuses', action='edit', and a statusId
+        return p.component === 'statuses' && 
+               p.action === 'edit' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
     return new Set(editPerms);
   }, [currentUser?.permissions]);
   
@@ -93,14 +122,46 @@ export function ContactList({
     if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
       return new Set<string>();
     }
+    
+    // Debug: Log all permissions to see what we're getting
+    console.log('[DEBUG] All user permissions:', currentUser.permissions);
+    
     const viewPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
+      .filter((p: any) => {
+        // Check for status-specific view permissions
+        // These have component='statuses', action='view', and a statusId
+        const matches = p.component === 'statuses' && 
+               p.action === 'view' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+        
+        // Debug: Log permissions that match the filter
+        if (p.component === 'statuses' && p.action === 'view') {
+          console.log('[DEBUG] Found statuses view permission:', {
+            id: p.id,
+            component: p.component,
+            action: p.action,
+            statusId: p.statusId,
+            statusIdType: typeof p.statusId,
+            matches: matches
+          });
+        }
+        
+        return matches;
+      })
       .map((p: any) => {
         const statusId = p.statusId;
         if (!statusId) return null;
-        return String(statusId).trim();
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        console.log('[DEBUG] Normalized statusId:', { original: statusId, normalized: normalizedId });
+        return normalizedId !== '' ? normalizedId : null;
       })
       .filter((id): id is string => id !== null && id !== '');
+    
+    console.log('[DEBUG] Final statusViewPermissions Set:', Array.from(viewPerms));
+    
     return new Set(viewPerms);
   }, [currentUser?.permissions]);
   
@@ -190,25 +251,32 @@ export function ContactList({
   
   // Modals state
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
-  const [isTeleoperatorModalOpen, setIsTeleoperatorModalOpen] = useState(false);
-  const [isConfirmateurModalOpen, setIsConfirmateurModalOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedStatusId, setSelectedStatusId] = useState('');
-  const [selectedTeleoperatorId, setSelectedTeleoperatorId] = useState('');
-  const [selectedConfirmateurId, setSelectedConfirmateurId] = useState('');
+  const [statusChangeNote, setStatusChangeNote] = useState('');
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [notesPopoverOpen, setNotesPopoverOpen] = useState<string | null>(null);
+  const [notesData, setNotesData] = useState<Record<string, any[]>>({});
+  const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
+  const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
+  const hoverTimeoutRef = useRef<Record<string, NodeJS.Timeout>>({});
   
   // Define all available columns
   const allColumns = [
-    { id: 'id', label: 'Id', defaultVisible: true },
+    { id: 'createdAt', label: 'Créé le', defaultVisible: true },
     { id: 'fullName', label: 'Nom entier', defaultVisible: true },
-    { id: 'firstName', label: 'Prénom', defaultVisible: false },
-    { id: 'lastName', label: 'Nom', defaultVisible: false },
-    { id: 'civility', label: 'Civilité', defaultVisible: false },
+    { id: 'source', label: 'Source', defaultVisible: true },
     { id: 'phone', label: 'Téléphone', defaultVisible: true },
     { id: 'mobile', label: 'Portable', defaultVisible: false },
     { id: 'email', label: 'E-Mail', defaultVisible: true },
+    { id: 'status', label: 'Statut', defaultVisible: true },
+    { id: 'updatedAt', label: 'Modifié le', defaultVisible: false },
+    { id: 'notes', label: 'Notes', defaultVisible: true },
+    { id: 'id', label: 'Id', defaultVisible: true },
+    { id: 'firstName', label: 'Prénom', defaultVisible: false },
+    { id: 'lastName', label: 'Nom', defaultVisible: false },
+    { id: 'civility', label: 'Civilité', defaultVisible: false },
     { id: 'birthDate', label: 'Date de naissance', defaultVisible: false },
     { id: 'birthPlace', label: 'Lieu de naissance', defaultVisible: false },
     { id: 'address', label: 'Adresse', defaultVisible: false },
@@ -217,11 +285,7 @@ export function ContactList({
     { id: 'city', label: 'Ville', defaultVisible: false },
     { id: 'nationality', label: 'Nationalité', defaultVisible: false },
     { id: 'campaign', label: 'Campagne', defaultVisible: false },
-    { id: 'createdAt', label: 'Créé le', defaultVisible: true },
-    { id: 'updatedAt', label: 'Modifié le', defaultVisible: false },
     { id: 'teleoperator', label: 'Téléopérateur', defaultVisible: true },
-    { id: 'source', label: 'Source', defaultVisible: true },
-    { id: 'status', label: 'Statut', defaultVisible: true },
     { id: 'confirmateur', label: 'Confirmateur', defaultVisible: true },
     { id: 'creator', label: 'Créateur', defaultVisible: false },
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
@@ -279,10 +343,14 @@ export function ContactList({
   };
   
   const handleResetColumns = () => {
-    const defaultColumns = allColumns.filter(col => col.defaultVisible).map(col => col.id);
-    saveVisibleColumns(defaultColumns);
-    // Reset order to default
-    const defaultOrder = allColumns.map(col => col.id);
+    // Reset to the specified default columns only
+    const defaultOrderColumns = ['createdAt', 'fullName', 'source', 'phone', 'mobile', 'email', 'status', 'updatedAt', 'notes'];
+    // Set visibility to only the default columns
+    saveVisibleColumns(defaultOrderColumns);
+    // Reset order: default columns first, then all other columns
+    const allColumnIds = allColumns.map(col => col.id);
+    const otherColumns = allColumnIds.filter(id => !defaultOrderColumns.includes(id));
+    const defaultOrder = [...defaultOrderColumns, ...otherColumns];
     saveColumnOrder(defaultOrder);
   };
 
@@ -406,8 +474,10 @@ export function ContactList({
       }
       
       // Load data in parallel for better performance
+      // Add cache-busting timestamp to ensure fresh data
+      const cacheBuster = `&_t=${Date.now()}`;
       const [contactsData, teamsData, statusesData] = await Promise.all([
-        apiCall(`${apiEndpoint}?${queryParams.toString()}`),
+        apiCall(`${apiEndpoint}?${queryParams.toString()}${cacheBuster}`),
         apiCall('/api/teams/'),
         apiCall('/api/statuses/')
       ]);
@@ -417,6 +487,15 @@ export function ContactList({
       const totalFromAPI = contactsData.total || contactsData.count || contactsList.length;
       console.log(`[DEBUG] Received from API - contacts: ${contactsList.length}, total: ${totalFromAPI}`);
       console.log(`[DEBUG] Applied filters:`, appliedColumnFilters);
+      // Debug: Log first contact's confirmateur data if available
+      if (contactsList.length > 0) {
+        const firstContact = contactsList[0];
+        console.log(`[DEBUG] First contact confirmateur data:`, {
+          id: firstContact.id,
+          confirmateurId: firstContact.confirmateurId,
+          confirmateurName: firstContact.confirmateurName
+        });
+      }
       setContacts(contactsList);
       // Use total from paginated response
       setTotalContacts(totalFromAPI);
@@ -434,6 +513,45 @@ export function ContactList({
   useEffect(() => {
     loadData();
   }, [loadData]); // Reload when loadData changes (which depends on filters and itemsPerPage)
+
+  // Load note categories
+  useEffect(() => {
+    async function loadNoteCategories() {
+      try {
+        const data = await apiCall('/api/note-categories/');
+        const sortedCategories = (data.categories || []).sort((a: any, b: any) => 
+          a.orderIndex - b.orderIndex
+        );
+        setNoteCategories(sortedCategories);
+      } catch (error: any) {
+        console.error('Error loading note categories:', error);
+      }
+    }
+    loadNoteCategories();
+  }, []);
+
+  // Listen for contact updates from opened contact detail windows
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Verify message origin for security
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      if (event.data && event.data.type === 'CONTACT_UPDATED') {
+        const { contactId, contact } = event.data;
+        console.log('Contact updated in detail window, refreshing list:', contactId);
+        
+        // Refresh the contact list to show updated data
+        loadData();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [loadData]);
   
   // Apply filters - called when user clicks "Filtrer" button
   function handleApplyFilters() {
@@ -678,11 +796,9 @@ export function ContactList({
   };
 
   // Helper function to get status display text for a contact
-  // If user is teleoperator or confirmateur but doesn't have status permission, show "Indisponible - [TYPE]"
-  // Otherwise show the actual status name
+  // The ONLY condition to see the status name is to have "view" permission for that status
+  // If user doesn't have status view permission, show "Indisponible - [TYPE]"
   const getStatusDisplayText = getStatusDisplayTextProp ?? React.useCallback((contact: any): string => {
-    const isTeleoperator = isTeleoperatorForContact(contact);
-    const isConfirmateur = isConfirmateurForContact(contact);
     const contactStatusId = contact?.statusId;
     
     // Normalize statusId
@@ -694,12 +810,39 @@ export function ContactList({
       }
     }
     
-    // If user is teleoperator or confirmateur and contact has a status
-    if ((isTeleoperator || isConfirmateur) && normalizedStatusId) {
-      // Check if user has permission to view this status
-      const hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
+    // If contact has a status, check if user has permission to view it
+    if (normalizedStatusId) {
+      // Debug: Log the check
+      console.log('[DEBUG] Checking status permission:', {
+        contactStatusId: contactStatusId,
+        normalizedStatusId: normalizedStatusId,
+        normalizedStatusIdLength: normalizedStatusId.length,
+        statusViewPermissions: Array.from(statusViewPermissions),
+        statusViewPermissionsLengths: Array.from(statusViewPermissions).map(id => ({ id, length: id.length })),
+        hasPermission: statusViewPermissions.has(normalizedStatusId),
+        // Also check with different normalizations
+        hasPermissionLowercase: statusViewPermissions.has(normalizedStatusId.toLowerCase()),
+        hasPermissionUppercase: statusViewPermissions.has(normalizedStatusId.toUpperCase()),
+        // Check if any permission matches (case-insensitive)
+        matchesAny: Array.from(statusViewPermissions).some(permId => 
+          permId.toLowerCase() === normalizedStatusId.toLowerCase() || 
+          permId === normalizedStatusId
+        )
+      });
       
+      // Check permission (case-sensitive first, then case-insensitive fallback)
+      let hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
       if (!hasStatusPermission) {
+        // Try case-insensitive match as fallback
+        hasStatusPermission = Array.from(statusViewPermissions).some(permId => 
+          String(permId).toLowerCase() === normalizedStatusId.toLowerCase()
+        );
+      }
+      
+      if (hasStatusPermission) {
+        // User has permission, show actual status name
+        return contact.statusName || '-';
+      } else {
         // User doesn't have permission, show masked message
         const statusType = getContactStatusType(contact);
         if (statusType === 'client') {
@@ -713,9 +856,9 @@ export function ContactList({
       }
     }
     
-    // Show actual status name
+    // Contact has no status, show status name (which should be empty/null)
     return contact.statusName || '-';
-  }, [isTeleoperatorForContact, isConfirmateurForContact, statusViewPermissions, getContactStatusType]);
+  }, [statusViewPermissions, getContactStatusType]);
 
   // Filter contacts based on status view permissions
   // Backend handles filtering, but we also filter by status view permissions on client side
@@ -792,17 +935,86 @@ export function ContactList({
     if (!text || text.length <= maxLength) return text;
     return text.substring(0, maxLength) + '...';
   };
+
+  // Helper function to open contact detail
+  const openContactDetail = useCallback((contactId: string) => {
+    setLastOpenedContactId(contactId);
+    window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+  }, []);
+
+  // Load notes for a contact
+  const loadNotes = useCallback(async (contactId: string) => {
+    if (notesData[contactId] || notesLoading[contactId]) {
+      return; // Already loaded or loading
+    }
+
+    setNotesLoading(prev => ({ ...prev, [contactId]: true }));
+    try {
+      const data = await apiCall(`/api/notes/?contactId=${contactId}`);
+      const notesArray = Array.isArray(data) ? data : (data.notes || []);
+      setNotesData(prev => ({ ...prev, [contactId]: notesArray }));
+    } catch (error) {
+      console.error('Error loading notes:', error);
+      setNotesData(prev => ({ ...prev, [contactId]: [] }));
+    } finally {
+      setNotesLoading(prev => ({ ...prev, [contactId]: false }));
+    }
+  }, [notesData, notesLoading]);
+
+  // Handle hover on notes cell
+  const handleNotesHover = useCallback((contactId: string, isEntering: boolean) => {
+    if (isEntering) {
+      // Clear any existing timeout
+      if (hoverTimeoutRef.current[contactId]) {
+        clearTimeout(hoverTimeoutRef.current[contactId]);
+        delete hoverTimeoutRef.current[contactId];
+      }
+      // Set timeout to open popover after a short delay
+      hoverTimeoutRef.current[contactId] = setTimeout(() => {
+        setNotesPopoverOpen(contactId);
+        loadNotes(contactId);
+      }, 300); // 300ms delay
+    } else {
+      // Clear timeout if mouse leaves before delay
+      if (hoverTimeoutRef.current[contactId]) {
+        clearTimeout(hoverTimeoutRef.current[contactId]);
+        delete hoverTimeoutRef.current[contactId];
+      }
+    }
+  }, [loadNotes]);
+
+  // Handle mouse leave from popover content
+  const handlePopoverLeave = useCallback((contactId: string) => {
+    // Close popover after a short delay (to allow moving back to trigger)
+    setTimeout(() => {
+      setNotesPopoverOpen(prev => prev === contactId ? null : prev);
+    }, 200);
+  }, []);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(hoverTimeoutRef.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout);
+      });
+    };
+  }, []);
   
   // Helper function to render cell content based on column id
   const renderCell = (contact: any, columnId: string) => {
+    // Helper to stop propagation for interactive elements
+    const stopPropagation = (e: React.MouseEvent) => {
+      e.stopPropagation();
+    };
+
     switch (columnId) {
       case 'id':
         return (
-          <td key={columnId} className="contacts-table-id">
+          <td key={columnId} className="contacts-table-id" onClick={stopPropagation}>
             <button
-              onClick={() => {
-                setLastOpenedContactId(contact.id);
-                window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+              onClick={(e) => {
+                e.stopPropagation();
+                openContactDetail(contact.id);
               }}
               className="contacts-name-link"
               title={contact.id}
@@ -813,12 +1025,12 @@ export function ContactList({
         );
       case 'fullName':
         return (
-          <td key={columnId}>
+          <td key={columnId} onClick={stopPropagation}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <button
-                onClick={() => {
-                  setLastOpenedContactId(contact.id);
-                  window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openContactDetail(contact.id);
                 }}
                 className="contacts-name-link"
                 title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
@@ -855,16 +1067,16 @@ export function ContactList({
         return <td key={columnId} title={formatPhoneNumber(contact.mobile) || ''}>{truncateText(formatPhoneNumber(contact.mobile) || '-')}</td>;
       case 'email':
         return (
-          <td key={columnId} className="contacts-table-email">
+          <td key={columnId} className="contacts-table-email" onClick={stopPropagation}>
             <button
-              onClick={() => {
-                setLastOpenedContactId(contact.id);
-                window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+              onClick={(e) => {
+                e.stopPropagation();
+                openContactDetail(contact.id);
               }}
               className="contacts-name-link"
               title={contact.email || ''}
             >
-              {truncateText(contact.email || '-')}
+              {contact.email || '-'}
             </button>
           </td>
         );
@@ -893,12 +1105,12 @@ export function ContactList({
         return <td key={columnId} title={contact.campaign || ''}>{truncateText(contact.campaign || '-')}</td>;
       case 'createdAt':
         return (
-          <td key={columnId}>
+          <td key={columnId} onClick={stopPropagation}>
             {contact.createdAt ? (
               <button
-                onClick={() => {
-                  setLastOpenedContactId(contact.id);
-                  window.open(`/contacts/${contact.id}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openContactDetail(contact.id);
                 }}
                 className="contacts-name-link"
                 title={new Date(contact.createdAt).toLocaleString('fr-FR', {
@@ -930,51 +1142,10 @@ export function ContactList({
         );
       case 'teleoperator':
         return (
-          <td key={columnId}>
-            {canEditContact(contact) ? (
-              <Select
-                value={contact.teleoperatorId || contact.managerId || 'none'}
-                onValueChange={async (value) => {
-                  const newTeleoperatorId = value === 'none' ? '' : value;
-                  // Check if user has permission to edit this contact
-                  if (!canEditContact(contact)) {
-                    toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                    return;
-                  }
-                  
-                  try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ teleoperatorId: newTeleoperatorId })
-                    });
-                    toast.success('Téléopérateur mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du téléopérateur');
-                  }
-                }}
-              >
-                <SelectTrigger className="border-none bg-transparent p-0 h-auto w-full text-left shadow-none hover:bg-transparent focus:ring-0 cursor-pointer">
-                  <SelectValue className="cursor-pointer">
-                {truncateText(contact.managerName || contact.teleoperatorName || '-')}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                  {teleoperateurs.map((user) => {
-                    const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                    return (
-                      <SelectItem key={user.id} value={user.id}>
-                        {displayName}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span title={contact.managerName || contact.teleoperatorName || ''}>{truncateText(contact.managerName || contact.teleoperatorName || '-')}</span>
-            )}
+          <td key={columnId} onClick={stopPropagation}>
+            <span title={contact.managerName || contact.teleoperatorName || ''}>
+              {truncateText(contact.managerName || contact.teleoperatorName || '-')}
+            </span>
           </td>
         );
       case 'source':
@@ -999,94 +1170,40 @@ export function ContactList({
         const statusTextColor = statusDisplayText === 'CLIENT EN COURS' ? '#ffffff' : (isMaskedStatus ? '#374151' : (contact.statusColor ? '#000000' : '#374151'));
         
         return (
-          <td key={columnId}>
+          <td key={columnId} onClick={stopPropagation}>
             {canEditStatus ? (
-              <Select
-                value={contact.statusId || 'none'}
-                onValueChange={async (value) => {
-                  const newStatusId = value === 'none' ? '' : value;
-                  
-                  // If status is being changed, check permissions
-                  if (newStatusId !== contact.statusId) {
-                    // Check if user has EDIT permission for CURRENT status (to allow changing it)
-                    if (contact.statusId && !canEditContact(contact)) {
-                      toast.error('Vous n\'avez pas la permission de modifier le statut de ce contact');
-                      return;
-                    }
-                    
-                    // Check if user has VIEW permission for NEW status (to allow assigning it)
-                    if (newStatusId) {
-                      const normalizedNewStatusId = String(newStatusId).trim();
-                      if (!statusViewPermissions.has(normalizedNewStatusId)) {
-                        toast.error('Vous n\'avez pas la permission d\'assigner ce statut');
-                        return;
-                      }
-                    }
-                  } else {
-                    // Status not changing, just check if user can edit this contact
-                    if (!canEditContact(contact)) {
-                      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                      return;
-                    }
-                  }
-                  
+              <span 
+                className="contacts-status-badge cursor-pointer"
+                onClick={async () => {
+                  // Fetch fresh contact data from API to ensure we have the latest status
                   try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ statusId: newStatusId })
-                    });
-                    toast.success('Statut mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du statut');
+                    const contactData = await apiCall(`/api/contacts/${contact.id}/`);
+                    const freshContact = contactData.contact || contact;
+                    setSelectedContact(freshContact);
+                    setSelectedStatusId(freshContact.statusId || '');
+                    setStatusChangeNote('');
+                    setIsStatusModalOpen(true);
+                  } catch (error) {
+                    // Fallback to contact from list if API call fails
+                    console.error('Error fetching fresh contact:', error);
+                    setSelectedContact(contact);
+                    setSelectedStatusId(contact.statusId || '');
+                    setStatusChangeNote('');
+                    setIsStatusModalOpen(true);
                   }
                 }}
+                style={{
+                  backgroundColor: statusBgColor,
+                  color: statusTextColor,
+                  padding: '4px 12px',
+                  borderRadius: '5px',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  display: 'inline-block'
+                }}
               >
-                <SelectTrigger className="border-none bg-transparent p-0 h-auto w-auto min-w-0 shadow-none hover:bg-transparent focus:ring-0">
-                  <SelectValue asChild>
-                <span 
-                      className="contacts-status-badge cursor-pointer"
-                  style={{
-                        backgroundColor: statusBgColor,
-                        color: statusTextColor,
-                    padding: '4px 12px',
-                    borderRadius: '5px',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'inline-block'
-                  }}
-                >
-                      {truncateText(statusDisplayText)}
-                </span>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">
-                    <span className="inline-block px-2 py-1 rounded text-sm">Aucun statut</span>
-                  </SelectItem>
-                  {statuses
-                    .filter((status) => {
-                      if (!status.id || status.id.trim() === '') return false;
-                      // Filter by view permissions
-                      const normalizedStatusId = String(status.id).trim();
-                      return statusViewPermissions.has(normalizedStatusId);
-                    })
-                    .map((status) => (
-                      <SelectItem key={status.id} value={status.id.toString()}>
-                        <span 
-                          className="inline-block px-2 py-1 rounded text-sm"
-                          style={{
-                            backgroundColor: status.color || '#e5e7eb',
-                            color: status.color ? '#000000' : '#374151'
-                          }}
-                        >
-                          {status.name}
-                        </span>
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                {truncateText(statusDisplayText)}
+              </span>
             ) : (
               <span 
                 className="contacts-status-badge"
@@ -1107,57 +1224,130 @@ export function ContactList({
         );
       case 'confirmateur':
         return (
-          <td key={columnId}>
-            {canEditContact(contact) ? (
-              <Select
-                value={contact.confirmateurId || 'none'}
-                onValueChange={async (value) => {
-                  const newConfirmateurId = value === 'none' ? '' : value;
-                  // Check if user has permission to edit this contact
-                  if (!canEditContact(contact)) {
-                    toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-                    return;
-                  }
-                  
-                  try {
-                    await apiCall(`/api/contacts/${contact.id}/`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ confirmateurId: newConfirmateurId })
-                    });
-                    toast.success('Confirmateur mis à jour avec succès');
-                    loadData();
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erreur lors de la mise à jour du confirmateur');
-                  }
-                }}
-              >
-                <SelectTrigger className="border-none bg-transparent p-0 h-auto w-full text-left shadow-none hover:bg-transparent focus:ring-0 cursor-pointer">
-                  <SelectValue className="cursor-pointer">
-                {truncateText(contact.confirmateurName || '-')}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Aucun confirmateur</SelectItem>
-                  {confirmateurs.map((user) => {
-                    const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                    return (
-                      <SelectItem key={user.id} value={user.id}>
-                        {displayName}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span title={contact.confirmateurName || ''}>{truncateText(contact.confirmateurName || '-')}</span>
-            )}
+          <td key={columnId} onClick={stopPropagation}>
+            <span title={contact.confirmateurName || ''}>
+              {truncateText(contact.confirmateurName || '-')}
+            </span>
           </td>
         );
       case 'creator':
         return <td key={columnId} title={contact.creatorName || ''}>{truncateText(contact.creatorName || '-')}</td>;
       case 'managerTeam':
         return <td key={columnId} title={contact.managerTeamName || ''}>{truncateText(contact.managerTeamName || '-')}</td>;
+      case 'notes':
+        const notesCount = contact.notesCount || 0;
+        const notesText = contact.notesLatestText || '';
+        const contactNotes = notesData[contact.id] || [];
+        const isLoadingNotes = notesLoading[contact.id];
+        const isPopoverOpen = notesPopoverOpen === contact.id;
+        
+        return (
+          <td 
+            key={columnId} 
+            title={notesText || (notesCount > 0 ? `${notesCount} note(s)` : 'Aucune note')}
+            onMouseEnter={(e) => {
+              e.stopPropagation();
+              notesCount > 0 && handleNotesHover(contact.id, true);
+            }}
+            onMouseLeave={(e) => {
+              e.stopPropagation();
+              handleNotesHover(contact.id, false);
+            }}
+            onClick={stopPropagation}
+            style={{ position: 'relative' }}
+          >
+            <Popover open={isPopoverOpen} onOpenChange={(open) => {
+              if (!open) {
+                setNotesPopoverOpen(null);
+              } else {
+                setNotesPopoverOpen(contact.id);
+                loadNotes(contact.id);
+              }
+            }}>
+              <PopoverTrigger asChild>
+                <div style={{ cursor: notesCount > 0 ? 'pointer' : 'default' }}>
+                  {notesCount > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontWeight: '500' }}>{notesCount} note{notesCount > 1 ? 's' : ''}</span>
+                      {notesText && (
+                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
+                          {truncateText(notesText, 50)}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span style={{ color: '#9ca3af' }}>-</span>
+                  )}
+                </div>
+              </PopoverTrigger>
+              <PopoverContent 
+                className="w-96 h-96 p-4 flex flex-col" 
+                align="start"
+                onMouseEnter={() => {
+                  // Keep popover open when hovering over content
+                  if (hoverTimeoutRef.current[contact.id]) {
+                    clearTimeout(hoverTimeoutRef.current[contact.id]);
+                    delete hoverTimeoutRef.current[contact.id];
+                  }
+                  setNotesPopoverOpen(contact.id);
+                }}
+                onMouseLeave={() => handlePopoverLeave(contact.id)}
+                style={{ zIndex: 10002 }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Notes ({notesCount})</h3>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                  {isLoadingNotes ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                      Chargement...
+                    </div>
+                  ) : contactNotes.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', minWidth: 0 }}>
+                      {contactNotes.map((note: any) => (
+                        <div key={note.id} style={{ fontSize: '0.875rem', color: '#374151', lineHeight: '1.6', width: '100%', minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+                            {note.categoryName && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: '600', 
+                                color: '#3b82f6',
+                                backgroundColor: '#dbeafe',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {note.categoryName}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                              {note.createdBy && `Par ${note.createdBy}`}
+                              {note.createdAt && (
+                                <span style={{ marginLeft: '4px' }}>
+                                  {new Date(note.createdAt).toLocaleString('fr-FR', {
+                                    dateStyle: 'short',
+                                    timeStyle: 'short'
+                                  })}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div style={{ marginTop: '4px' }}>
+                            {note.text && note.text.length > 30 ? `${note.text.substring(0, 30)}...` : note.text}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>
+                      Aucune note
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </td>
+        );
       default:
         return <td key={columnId}>-</td>;
     }
@@ -1178,9 +1368,11 @@ export function ContactList({
       );
       await Promise.all(promises);
       toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
-      loadData();
       handleClearSelection();
       setBulkTeleoperatorId('');
+      // Small delay to ensure backend transaction is committed, then reload data
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadData();
     } catch (error) {
       console.error('Error assigning teleoperator:', error);
       toast.error('Erreur lors de l\'attribution du téléopérateur');
@@ -1193,17 +1385,25 @@ export function ContactList({
     try {
       const confirmateurIdValue = confirmateurId !== 'none' ? confirmateurId : '';
       
-      const promises = Array.from(selectedContacts).map(contactId =>
-        apiCall(`/api/contacts/${contactId}/`, {
+      const promises = Array.from(selectedContacts).map(async (contactId) => {
+        const response = await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: JSON.stringify({ confirmateurId: confirmateurIdValue })
-        })
-      );
+        });
+        // Debug: Log the response to verify confirmateurName is included
+        console.log(`[DEBUG] Updated contact ${contactId}:`, {
+          confirmateurId: response?.contact?.confirmateurId,
+          confirmateurName: response?.contact?.confirmateurName
+        });
+        return response;
+      });
       await Promise.all(promises);
       toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
-      loadData();
       handleClearSelection();
       setBulkConfirmateurId('');
+      // Small delay to ensure backend transaction is committed, then reload data
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await loadData();
     } catch (error) {
       console.error('Error assigning confirmateur:', error);
       toast.error('Erreur lors de l\'attribution du confirmateur');
@@ -1235,6 +1435,12 @@ export function ContactList({
   async function handleUpdateStatus() {
     if (!selectedContact) return;
     
+    // Validate note is provided only if permission requires it
+    if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
+      toast.error('Veuillez saisir une note pour changer le statut');
+      return;
+    }
+    
     // If status is being changed, check permissions
     if (selectedStatusId !== selectedContact.statusId) {
       // Check if user has EDIT permission for CURRENT status (to allow changing it)
@@ -1260,71 +1466,88 @@ export function ContactList({
     }
     
     try {
+      // Update status
       await apiCall(`/api/contacts/${selectedContact.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ statusId: selectedStatusId || '' })
       });
+      
+      // Create note with teleoperateur category only if note was provided
+      if (statusChangeNote.trim()) {
+        const teleoperateurCategory = noteCategories.find(
+          cat => cat.name.toLowerCase() === 'téléopérateur' || cat.name.toLowerCase() === 'teleoperateur'
+        );
+        
+        const notePayload: any = {
+          text: statusChangeNote.trim(),
+          contactId: selectedContact.id
+        };
+        
+        if (teleoperateurCategory) {
+          notePayload.categId = teleoperateurCategory.id;
+        }
+        
+        await apiCall('/api/notes/create/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(notePayload)
+        });
+      }
+      
       toast.success('Statut mis à jour avec succès');
       setIsStatusModalOpen(false);
       setSelectedContact(null);
-      loadData();
+      setSelectedStatusId('');
+      setStatusChangeNote('');
+      // Wait for loadData to complete to ensure fresh data for next modal open
+      await loadData();
     } catch (error: any) {
       toast.error(error.message || 'Erreur lors de la mise à jour du statut');
     }
   }
 
-  async function handleUpdateTeleoperator() {
-    if (!selectedContact) return;
-    
-    // Check if user has permission to edit this contact
-    if (!canEditContact(selectedContact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
-    
-    try {
-      await apiCall(`/api/contacts/${selectedContact.id}/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teleoperatorId: selectedTeleoperatorId || '' })
-      });
-      toast.success('Téléopérateur mis à jour avec succès');
-      setIsTeleoperatorModalOpen(false);
-      setSelectedContact(null);
-      loadData();
-    } catch (error: any) {
-      toast.error(error.message || 'Erreur lors de la mise à jour du téléopérateur');
-    }
-  }
-
-  async function handleUpdateConfirmateur() {
-    if (!selectedContact) return;
-    
-    // Check if user has permission to edit this contact
-    if (!canEditContact(selectedContact)) {
-      toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
-      return;
-    }
-    
-    try {
-      await apiCall(`/api/contacts/${selectedContact.id}/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmateurId: selectedConfirmateurId || '' })
-      });
-      toast.success('Confirmateur mis à jour avec succès');
-      setIsConfirmateurModalOpen(false);
-      setSelectedContact(null);
-      loadData();
-    } catch (error: any) {
-      toast.error(error.message || 'Erreur lors de la mise à jour du confirmateur');
-    }
-  }
 
   // Filter users for teleoperator and confirmateur
   const teleoperateurs = users.filter(user => user.isTeleoperateur === true);
-  const confirmateurs = users.filter(user => user.isConfirmateur === true);
+  
+  // Debug: Log all users to check isConfirmateur values
+  console.log('[DEBUG] All users:', users.map(u => ({
+    id: u.id,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    isConfirmateur: u.isConfirmateur,
+    isConfirmateurType: typeof u.isConfirmateur,
+    roleName: u.roleName
+  })));
+  
+  const confirmateurs = users.filter(user => {
+    // Check both boolean true and string 'true' for safety
+    const isConfirmateur = user.isConfirmateur === true || user.isConfirmateur === 'true';
+    
+    // Debug: Log Claude Martin specifically
+    if ((user.firstName?.toLowerCase().includes('claude') || user.lastName?.toLowerCase().includes('martin')) ||
+        (user.firstName?.toLowerCase().includes('admin') && user.lastName?.toLowerCase().includes('admin'))) {
+      console.log('[DEBUG] User found:', {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        isConfirmateur: user.isConfirmateur,
+        isConfirmateurType: typeof user.isConfirmateur,
+        roleName: user.roleName,
+        willInclude: isConfirmateur
+      });
+    }
+    
+    return isConfirmateur;
+  });
+  
+  // Debug: Log filtered confirmateurs
+  console.log('[DEBUG] Filtered confirmateurs:', confirmateurs.map(u => ({
+    id: u.id,
+    name: `${u.firstName} ${u.lastName}`,
+    isConfirmateur: u.isConfirmateur
+  })));
 
   // Helper function to render table content (reused in normal and fullscreen views)
   const renderTableContent = (fullscreen: boolean = false) => (
@@ -1754,16 +1977,39 @@ export function ContactList({
                   {displayedContacts.map((contact) => (
                     <tr 
                       key={contact.id}
+                      onClick={(e) => {
+                        // Only open if clicking on the row itself, not on interactive elements
+                        const target = e.target as HTMLElement;
+                        // Check if click is on an interactive element
+                        if (
+                          target.tagName === 'INPUT' ||
+                          target.tagName === 'BUTTON' ||
+                          target.tagName === 'SELECT' ||
+                          target.closest('button') ||
+                          target.closest('select') ||
+                          target.closest('input') ||
+                          target.closest('[role="button"]') ||
+                          target.closest('[data-radix-popper-content-wrapper]') ||
+                          target.closest('.contacts-checkbox')
+                        ) {
+                          return; // Don't open contact detail
+                        }
+                        openContactDetail(contact.id);
+                      }}
                       style={{
                         backgroundColor: lastOpenedContactId === contact.id ? '#eff6ff' : 'transparent',
-                        borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none'
+                        borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none',
+                        cursor: 'pointer'
                       }}
                     >
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedContacts.has(contact.id)}
-                          onChange={() => handleSelectContact(contact.id)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleSelectContact(contact.id);
+                          }}
                           className="contacts-checkbox"
                         />
                       </td>
@@ -1945,7 +2191,7 @@ export function ContactList({
       {/* Barre d'actions multiples */}
       {showBulkActions && (
         <Card className="contacts-bulk-actions">
-          <CardContent className="pt-4">
+          <CardContent className="contacts-bulk-actions-content-wrapper">
             <div className="contacts-bulk-actions-content">
               <div className="contacts-bulk-actions-info">
                 <span>{selectedContacts.size} contact(s) sélectionné(s)</span>
@@ -1968,8 +2214,10 @@ export function ContactList({
                           <SelectItem value="none">Aucun téléopérateur</SelectItem>
                           {usersLoading ? (
                             <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                          ) : usersError ? (
-                            <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
+                          ) : usersError && teleoperateurs.length === 0 ? (
+                            <SelectItem value="error" disabled>
+                              <span className="text-red-600">Erreur de chargement</span>
+                            </SelectItem>
                           ) : teleoperateurs.length === 0 ? (
                             <SelectItem value="empty" disabled>Aucun téléopérateur disponible</SelectItem>
                           ) : (
@@ -1997,8 +2245,10 @@ export function ContactList({
                           <SelectItem value="none">Aucun confirmateur</SelectItem>
                           {usersLoading ? (
                             <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                          ) : usersError ? (
-                            <SelectItem value="error" disabled>Erreur de chargement</SelectItem>
+                          ) : usersError && confirmateurs.length === 0 ? (
+                            <SelectItem value="error" disabled>
+                              <span className="text-red-600">Erreur de chargement</span>
+                            </SelectItem>
                           ) : confirmateurs.length === 0 ? (
                             <SelectItem value="empty" disabled>Aucun confirmateur disponible</SelectItem>
                           ) : (
@@ -2156,9 +2406,14 @@ export function ContactList({
         </CardContent>
       </Card>
 
-      {/* Status Modal */}
+      {/* Status Change Modal */}
       {isStatusModalOpen && selectedContact && (
-        <div className="modal-overlay" onClick={() => setIsStatusModalOpen(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setIsStatusModalOpen(false);
+          setSelectedContact(null);
+          setSelectedStatusId('');
+          setStatusChangeNote('');
+        }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier le statut</h2>
@@ -2167,7 +2422,12 @@ export function ContactList({
                 variant="ghost"
                 size="icon"
                 className="modal-close"
-                onClick={() => setIsStatusModalOpen(false)}
+                onClick={() => {
+                  setIsStatusModalOpen(false);
+                  setSelectedContact(null);
+                  setSelectedStatusId('');
+                  setStatusChangeNote('');
+                }}
               >
                 <X className="planning-icon-md" />
               </Button>
@@ -2177,13 +2437,36 @@ export function ContactList({
                 <Label htmlFor="statusSelect">Statut</Label>
                 <Select
                   value={selectedStatusId ? selectedStatusId.toString() : undefined}
-                  onValueChange={(value) => setSelectedStatusId(value === 'none' ? '' : value)}
+                  onValueChange={(value) => setSelectedStatusId(value)}
                 >
                   <SelectTrigger id="statusSelect">
-                    <SelectValue placeholder="Sélectionner un statut" />
+                    {selectedStatusId ? (() => {
+                      const filteredStatuses = statuses.filter((status) => {
+                        if (!status.id || status.id.trim() === '') return false;
+                        const normalizedStatusId = String(status.id).trim();
+                        return statusViewPermissions.has(normalizedStatusId);
+                      });
+                      const selectedStatus = filteredStatuses.find((s: any) => s.id === selectedStatusId);
+                      return selectedStatus ? (
+                        <SelectValue asChild>
+                          <span 
+                            className="inline-block px-2 py-1 rounded text-sm"
+                            style={{
+                              backgroundColor: selectedStatus.color || '#e5e7eb',
+                              color: selectedStatus.color ? '#000000' : '#374151'
+                            }}
+                          >
+                            {selectedStatus.name}
+                          </span>
+                        </SelectValue>
+                      ) : (
+                        <SelectValue placeholder="Sélectionner un statut" />
+                      );
+                    })() : (
+                      <SelectValue placeholder="Sélectionner un statut" />
+                    )}
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Aucun statut</SelectItem>
                     {statuses
                       .filter((status) => {
                         if (!status.id || status.id.trim() === '') return false;
@@ -2193,18 +2476,68 @@ export function ContactList({
                       })
                       .map((status) => (
                         <SelectItem key={status.id} value={status.id.toString()}>
-                          {status.name}
+                          <span 
+                            className="inline-block px-2 py-1 rounded text-sm"
+                            style={{
+                              backgroundColor: status.color || '#e5e7eb',
+                              color: status.color ? '#000000' : '#374151'
+                            }}
+                          >
+                            {status.name}
+                          </span>
                         </SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
               </div>
+              {requiresNoteForStatusChange && (
+                <div className="modal-form-field">
+                  <Label htmlFor="statusNote">Note <span style={{ color: '#ef4444' }}>*</span></Label>
+                  <Textarea
+                    id="statusNote"
+                    placeholder="Saisissez une note expliquant le changement de statut..."
+                    value={statusChangeNote}
+                    onChange={(e) => setStatusChangeNote(e.target.value)}
+                    rows={4}
+                    className="resize-none"
+                  />
+                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                    Une note est obligatoire pour changer le statut.
+                  </p>
+                </div>
+              )}
+              {!requiresNoteForStatusChange && (
+                <div className="modal-form-field">
+                  <Label htmlFor="statusNote">Note (optionnel)</Label>
+                  <Textarea
+                    id="statusNote"
+                    placeholder="Saisissez une note expliquant le changement de statut (optionnel)..."
+                    value={statusChangeNote}
+                    onChange={(e) => setStatusChangeNote(e.target.value)}
+                    rows={4}
+                    className="resize-none"
+                  />
+                </div>
+              )}
               <div className="modal-form-actions">
-                <Button type="button" variant="outline" onClick={() => setIsStatusModalOpen(false)}>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsStatusModalOpen(false);
+                    setSelectedContact(null);
+                    setSelectedStatusId('');
+                    setStatusChangeNote('');
+                  }}
+                >
                   Annuler
                 </Button>
-                {selectedContact && canEditContact(selectedContact) && (
-                  <Button type="button" onClick={handleUpdateStatus}>
+                {canEditContact(selectedContact) && (
+                  <Button 
+                    type="button" 
+                    onClick={handleUpdateStatus}
+                    disabled={requiresNoteForStatusChange && !statusChangeNote.trim()}
+                  >
                     Enregistrer
                   </Button>
                 )}
@@ -2336,117 +2669,6 @@ export function ContactList({
         </div>
       )}
 
-      {/* Teleoperator Modal */}
-      {isTeleoperatorModalOpen && selectedContact && (
-        <div className="modal-overlay" onClick={() => setIsTeleoperatorModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Modifier le téléopérateur</h2>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="modal-close"
-                onClick={() => setIsTeleoperatorModalOpen(false)}
-              >
-                <X className="planning-icon-md" />
-              </Button>
-            </div>
-            <div className="modal-form">
-              <div className="modal-form-field">
-                <Label htmlFor="teleoperatorSelect">Téléopérateur</Label>
-                <Select
-                  value={selectedTeleoperatorId ? selectedTeleoperatorId.toString() : undefined}
-                  onValueChange={(value) => setSelectedTeleoperatorId(value === 'none' ? '' : value)}
-                >
-                  <SelectTrigger id="teleoperatorSelect">
-                    <SelectValue placeholder="Sélectionner un téléopérateur" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                    {teleoperateurs
-                      .filter((user) => user.id && user.id.trim() !== '')
-                      .map((user) => {
-                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                        return (
-                          <SelectItem key={user.id} value={user.id.toString()}>
-                            {displayName}
-                          </SelectItem>
-                        );
-                      })}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="modal-form-actions">
-                <Button type="button" variant="outline" onClick={() => setIsTeleoperatorModalOpen(false)}>
-                  Annuler
-                </Button>
-                {selectedContact && canEditContact(selectedContact) && (
-                  <Button type="button" onClick={handleUpdateTeleoperator}>
-                    Enregistrer
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Confirmateur Modal */}
-      {isConfirmateurModalOpen && selectedContact && (
-        <div className="modal-overlay" onClick={() => setIsConfirmateurModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Modifier le confirmateur</h2>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="modal-close"
-                onClick={() => setIsConfirmateurModalOpen(false)}
-              >
-                <X className="planning-icon-md" />
-              </Button>
-            </div>
-            <div className="modal-form">
-              <div className="modal-form-field">
-                <Label htmlFor="confirmateurSelect">Confirmateur</Label>
-                <Select
-                  value={selectedConfirmateurId ? selectedConfirmateurId.toString() : undefined}
-                  onValueChange={(value) => setSelectedConfirmateurId(value === 'none' ? '' : value)}
-                >
-                  <SelectTrigger id="confirmateurSelect">
-                    <SelectValue placeholder="Sélectionner un confirmateur" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Aucun confirmateur</SelectItem>
-                    {confirmateurs
-                      .filter((user) => user.id && user.id.trim() !== '')
-                      .map((user) => {
-                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                        return (
-                          <SelectItem key={user.id} value={user.id.toString()}>
-                            {displayName}
-                          </SelectItem>
-                        );
-                      })}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="modal-form-actions">
-                <Button type="button" variant="outline" onClick={() => setIsConfirmateurModalOpen(false)}>
-                  Annuler
-                </Button>
-                {selectedContact && canEditContact(selectedContact) && (
-                  <Button type="button" onClick={handleUpdateConfirmateur}>
-                    Enregistrer
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

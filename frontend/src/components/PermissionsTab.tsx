@@ -29,7 +29,9 @@ const componentNameMap: Record<string, string> = {
   permissions: 'Permissions (Paramètres)',
   statuses: 'Statuts (Paramètres)',
   'note_categories': 'Fiche contact (Paramètres)',
+  notifications: 'Notifications (Paramètres)',
   mails: 'Mails',
+  other: 'Autres permissions',
 };
 
 const componentLabelToDbName = Object.fromEntries(
@@ -112,6 +114,7 @@ export function PermissionsTab() {
     pages: false,
     statuses: false,
     noteCategories: false,
+    otherPermissions: false,
   });
 
   // Check current user permissions (same logic as useHasStatusesPermission)
@@ -358,7 +361,9 @@ export function PermissionsTab() {
     'permissions',
     'statuses',
     'note_categories',
+    'notifications',
     'mails',
+    'other',
   ];
 
   /**
@@ -378,8 +383,8 @@ export function PermissionsTab() {
 
   // Get unique db component names from permissions and predefined list
   // Order: predefined components first (in their defined order), then any additional components from DB (alphabetically)
-  // Exclude: events, note, notes, settings
-  const excludedComponents = ['events', 'note', 'notes', 'settings'];
+  // Exclude: events, note, notes, settings, other (other is not a page, it's for miscellaneous permissions)
+  const excludedComponents = ['events', 'note', 'notes', 'settings', 'other'];
   
   function getUniqueDbComponents(): string[] {
     const predefinedSet = new Set(predefinedComponents);
@@ -494,25 +499,49 @@ export function PermissionsTab() {
     
     // Get current state (checking both pending changes and actual state)
     let currentState: boolean;
-    if (!permissionId) {
-      // For new permissions, they don't exist, so current state is false
+    
+    // Check pending changes first (for both new and existing permissions)
+    const pendingChange = pendingPermissionChanges.get(changeKey);
+    if (pendingChange !== undefined) {
+      // If there's already a pending change, toggle from that value
+      currentState = pendingChange;
+    } else if (!permissionId) {
+      // For new permissions that aren't in pending changes, they don't exist, so current state is false
       currentState = false;
     } else {
-      // Check pending changes first, then actual state
-      const pendingChange = pendingPermissionChanges.get(changeKey);
-      if (pendingChange !== undefined) {
-        currentState = pendingChange;
-      } else {
-        currentState = permissionRoles.some(
-          pr => pr.roleId === roleId && pr.permissionId === permissionId
-        );
-      }
+      // Existing permission, check actual state
+      currentState = permissionRoles.some(
+        pr => pr.roleId === roleId && pr.permissionId === permissionId
+      );
     }
     
     setPendingPermissionChanges(prev => {
       const newMap = new Map(prev);
       // Toggle: if currently true, set to false (remove), if false, set to true (add)
-      newMap.set(changeKey, !currentState);
+      const newValue = !currentState;
+      
+      // If the new value matches the actual state (reverting a pending change), remove it from pending changes
+      if (permissionId) {
+        const actualState = permissionRoles.some(
+          pr => pr.roleId === roleId && pr.permissionId === permissionId
+        );
+        if (newValue === actualState && pendingChange !== undefined) {
+          // Reverting a pending change back to actual state - remove from pending changes
+          newMap.delete(changeKey);
+        } else {
+          // Set the new pending change
+          newMap.set(changeKey, newValue);
+        }
+      } else {
+        // For new permissions (permissionId is null)
+        if (!newValue) {
+          // Setting to false for a non-existent permission - remove from pending (no-op)
+          newMap.delete(changeKey);
+        } else {
+          // Setting to true for a new permission - add to pending
+          newMap.set(changeKey, newValue);
+        }
+      }
       return newMap;
     });
   }
@@ -874,6 +903,12 @@ export function PermissionsTab() {
       const createdPermissionIds: Map<string, string> = new Map();
       for (const { component, action, statusId, categoryId } of permissionsToCreate) {
         try {
+          // Validate component name is a valid database component name
+          if (!component || component.includes(' ')) {
+            errors.push(`Nom de composant invalide: "${component}". Action: ${action}`);
+            continue;
+          }
+          
           const payload: any = {
             component,
             action,
@@ -898,7 +933,8 @@ export function PermissionsTab() {
           // Add to local permissions list
           setPermissions(prev => [...prev, newPermission]);
         } catch (error: any) {
-          errors.push(`Erreur lors de la création de la permission ${component}-${action}`);
+          const errorMsg = error.message || error.toString();
+          errors.push(`Erreur lors de la création de la permission ${component}-${action}${statusId ? ` (statut: ${statusId})` : ''}${categoryId ? ` (catégorie: ${categoryId})` : ''}: ${errorMsg}`);
         }
       }
       
@@ -1029,20 +1065,24 @@ export function PermissionsTab() {
         }
       }
       
+      // Reload data to sync with server
+      await loadData();
+      
+      // Clear pending changes after reloading to ensure checkbox state reflects server state
+      setPendingPermissionChanges(new Map());
+      
       if (errors.length > 0) {
         toast.error(`Erreurs lors de l'enregistrement: ${errors.join(', ')}`);
       } else {
         toast.success('Permissions enregistrées avec succès');
-        setPendingPermissionChanges(new Map());
       }
-      
-      // Reload data to sync with server
-      await loadData();
     } catch (error: any) {
       toast.error('Erreur lors de l\'enregistrement des permissions');
       console.error('Error saving permissions:', error);
       // Reload on error to restore correct state
       await loadData();
+      // Clear pending changes even on error to prevent stale state
+      setPendingPermissionChanges(new Map());
     } finally {
       setIsSavingPermissions(false);
     }
@@ -1666,9 +1706,9 @@ export function PermissionsTab() {
                                 <input
                                   type="checkbox"
                                   checked={hasView}
-                                  onChange={() =>
-                                    togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'view')
-                                  }
+                                  onChange={() => {
+                                    togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'view');
+                                  }}
                                   disabled={!canEditPermissions}
                                   className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                   title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1679,9 +1719,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasCreate}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'create')
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'create');
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1693,9 +1733,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasEdit}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'edit')
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'edit');
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1707,9 +1747,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasDelete}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'delete')
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, displayLabel, 'delete');
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1830,9 +1870,9 @@ export function PermissionsTab() {
                                     type="checkbox"
                                     checked={hasView}
                                     disabled={!hasContactView || !canEditPermissions}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'view', status.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts (Paramètres)', 'view', status.id);
+                                    }}
                                     className={`w-4 h-4 ${(!hasContactView || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactView ? 'Le rôle doit d\'abord avoir la permission "Voir" pour les contacts' : ''}
                                   />
@@ -1842,9 +1882,9 @@ export function PermissionsTab() {
                                     type="checkbox"
                                     checked={hasCreate}
                                     disabled={!hasContactCreate || !canEditPermissions}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'create', status.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts (Paramètres)', 'create', status.id);
+                                    }}
                                     className={`w-4 h-4 ${(!hasContactCreate || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactCreate ? 'Le rôle doit d\'abord avoir la permission "Créer" pour les contacts' : ''}
                                   />
@@ -1854,9 +1894,9 @@ export function PermissionsTab() {
                                     type="checkbox"
                                     checked={hasEdit}
                                     disabled={!hasContactEdit || !canEditPermissions}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'edit', status.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts (Paramètres)', 'edit', status.id);
+                                    }}
                                     className={`w-4 h-4 ${(!hasContactEdit || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactEdit ? 'Le rôle doit d\'abord avoir la permission "Modifier" pour les contacts' : ''}
                                   />
@@ -1866,9 +1906,9 @@ export function PermissionsTab() {
                                     type="checkbox"
                                     checked={hasDelete}
                                     disabled={!hasContactDelete || !canEditPermissions}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts', 'delete', status.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Statuts (Paramètres)', 'delete', status.id);
+                                    }}
                                     className={`w-4 h-4 ${(!hasContactDelete || !canEditPermissions) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : !hasContactDelete ? 'Le rôle doit d\'abord avoir la permission "Supprimer" pour les contacts' : ''}
                                   />
@@ -1969,9 +2009,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasView}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'view', null, category.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'view', null, category.id);
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1981,9 +2021,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasCreate}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'create', null, category.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'create', null, category.id);
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -1993,9 +2033,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasEdit}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'edit', null, category.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'edit', null, category.id);
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -2005,9 +2045,9 @@ export function PermissionsTab() {
                                   <input
                                     type="checkbox"
                                     checked={hasDelete}
-                                    onChange={() =>
-                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'delete', null, category.id)
-                                    }
+                                    onChange={() => {
+                                      togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact (Paramètres)', 'delete', null, category.id);
+                                    }}
                                     disabled={!canEditPermissions}
                                     className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                                     title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
@@ -2021,6 +2061,65 @@ export function PermissionsTab() {
                     </div>
                   )}
                   </>
+                  )}
+                </div>
+
+                {/* Other Permissions Table */}
+                <div>
+                  <div 
+                    className="flex items-center justify-between cursor-pointer mb-4 p-2 hover:bg-slate-50 rounded transition-colors"
+                    onClick={() => setExpandedSections(prev => ({ ...prev, otherPermissions: !prev.otherPermissions }))}
+                  >
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      Autres permissions
+                      {expandedSections.otherPermissions ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </h3>
+                  </div>
+                  {expandedSections.otherPermissions && (
+                    <div className="border overflow-hidden">
+                      <table className="w-full">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="text-left p-3 font-semibold">Permission</th>
+                            <th 
+                              className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
+                              onClick={canEditPermissions ? () => {
+                                togglePendingPermission(selectedRoleForPermissions.id, 'Autres permissions', 'edit', null, 'status_change_note_required');
+                              } : undefined}
+                              title={canEditPermissions ? "Cliquer pour cocher/décocher toutes les cases de cette colonne" : "Vous n'avez pas la permission de modifier les permissions"}
+                            >
+                              Activer
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b hover:bg-slate-50">
+                            <td className="p-3 font-medium">
+                              Note requise au changement de statut
+                            </td>
+                            <td className="p-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={(() => {
+                                  const permissionId = getPermissionId('other', 'edit', null, 'status_change_note_required');
+                                  return hasPermission(selectedRoleForPermissions.id, permissionId, 'other', 'edit', null, 'status_change_note_required');
+                                })()}
+                                onChange={() => {
+                                  togglePendingPermission(selectedRoleForPermissions.id, 'Autres permissions', 'edit', null, 'status_change_note_required');
+                                }}
+                                disabled={!canEditPermissions}
+                                className={`w-4 h-4 ${canEditPermissions ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                title={!canEditPermissions ? "Vous n'avez pas la permission de modifier les permissions" : ""}
+                              />
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
 

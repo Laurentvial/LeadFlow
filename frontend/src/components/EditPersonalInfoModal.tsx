@@ -179,6 +179,20 @@ export function EditPersonalInfoModal({
 
       if (response?.contact) {
         onUpdate(response.contact);
+        
+        // Notify parent window (contact list) about the update
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage({
+              type: 'CONTACT_UPDATED',
+              contactId: contactId,
+              contact: response.contact
+            }, window.location.origin);
+          } catch (error) {
+            console.warn('Could not send message to parent window:', error);
+          }
+        }
+        
         onClose();
         toast.success('Informations personnelles mises à jour avec succès');
       }

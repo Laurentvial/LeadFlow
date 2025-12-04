@@ -138,9 +138,11 @@ function App() {
                     } />
                     <Route path="/mails" element={
                         <ProtectedRoute>
-                            <Layout>
-                                <Mails />
-                            </Layout>
+                            <PermissionProtectedRoute component="mails" action="view">
+                                <Layout>
+                                    <Mails />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="/chat" element={

@@ -81,7 +81,7 @@ export function getAccessibleRoute(currentUser: any): string {
   for (const route of routeChecks) {
     let hasPermission = false;
     
-    // Special case for settings: check if user has permission for either permissions or statuses
+    // Special case for settings: check if user has permission for permissions, statuses, note categories, or notifications
     // For statuses, check for general statuses management permission only (statusId must be null)
     if (route.component === 'settings') {
       const hasPermissionsPermission = permissions.some(
@@ -90,7 +90,13 @@ export function getAccessibleRoute(currentUser: any): string {
       const hasStatusesPermission = permissions.some(
         (perm: any) => perm.component === 'statuses' && perm.action === 'view' && !perm.fieldName && !perm.statusId
       );
-      hasPermission = hasPermissionsPermission || hasStatusesPermission;
+      const hasNoteCategoriesPermission = permissions.some(
+        (perm: any) => perm.component === 'note_categories' && perm.action === 'view' && !perm.fieldName && !perm.statusId
+      );
+      const hasNotificationsPermission = permissions.some(
+        (perm: any) => perm.component === 'notifications' && perm.action === 'view' && !perm.fieldName && !perm.statusId
+      );
+      hasPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission;
     } else {
       // Check if user has view permission for this component
       hasPermission = permissions.some(

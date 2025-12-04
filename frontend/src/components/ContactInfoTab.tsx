@@ -219,7 +219,7 @@ export function ContactInfoTab({
     );
   }, [currentUser?.permissions]);
   
-  // Lazy load users only when modals are opened
+  // Load users for teleoperator and confirmateur selects
   const [users, setUsers] = React.useState<any[]>([]);
   const [usersLoaded, setUsersLoaded] = React.useState(false);
   
@@ -234,6 +234,11 @@ export function ContactInfoTab({
       console.error('Error loading users:', error);
     }
   }, [usersLoaded]);
+
+  // Load users when component mounts (needed for teleoperator/confirmateur selects)
+  React.useEffect(() => {
+    loadUsersIfNeeded();
+  }, [loadUsersIfNeeded]);
   
   // Get status permissions
   const statusEditPermissions = React.useMemo(() => {
@@ -241,8 +246,23 @@ export function ContactInfoTab({
       return new Set<string>();
     }
     const editPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'edit' && p.statusId)
-      .map((p: any) => String(p.statusId).trim());
+      .filter((p: any) => {
+        // Check for status-specific edit permissions
+        // These have component='statuses', action='edit', and a statusId
+        return p.component === 'statuses' && 
+               p.action === 'edit' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
     return new Set(editPerms);
   }, [currentUser?.permissions]);
   
@@ -251,10 +271,35 @@ export function ContactInfoTab({
       return new Set<string>();
     }
     const viewPerms = currentUser.permissions
-      .filter((p: any) => p.component === 'statuses' && p.action === 'view' && p.statusId)
-      .map((p: any) => String(p.statusId).trim());
+      .filter((p: any) => {
+        // Check for status-specific view permissions
+        // These have component='statuses', action='view', and a statusId
+        return p.component === 'statuses' && 
+               p.action === 'view' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
     return new Set(viewPerms);
   }, [currentUser?.permissions]);
+
+  // Helper function to check if user is confirmateur for a contact
+  const isConfirmateurForContact = React.useCallback((contactData: any): boolean => {
+    if (!currentUser?.id || !contactData?.confirmateurId) {
+      return false;
+    }
+    const userId = String(currentUser.id).trim();
+    const confirmateurId = String(contactData.confirmateurId).trim();
+    return userId === confirmateurId;
+  }, [currentUser?.id]);
 
   // Helper function to check if current user is the teleoperator for a contact
   const isTeleoperatorForContact = React.useCallback((contactData: any): boolean => {
@@ -310,10 +355,9 @@ export function ContactInfoTab({
   const [sources, setSources] = useState<Source[]>([]);
 
   // Helper function to get status display text for a contact
-  // If user is teleoperator but doesn't have status permission, show "Indisponible - [TYPE]"
-  // Otherwise show the actual status name
+  // The ONLY condition to see the status name is to have "view" permission for that status
+  // If user doesn't have status view permission, show "Indisponible - [TYPE]"
   const getStatusDisplayText = React.useCallback((contactData: any): string => {
-    const isTeleoperator = isTeleoperatorForContact(contactData);
     const contactStatusId = contactData?.statusId;
     
     // Normalize statusId
@@ -325,12 +369,14 @@ export function ContactInfoTab({
       }
     }
     
-    // If user is teleoperator and contact has a status
-    if (isTeleoperator && normalizedStatusId) {
-      // Check if user has permission to view this status
+    // If contact has a status, check if user has permission to view it
+    if (normalizedStatusId) {
       const hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
       
-      if (!hasStatusPermission) {
+      if (hasStatusPermission) {
+        // User has permission, show actual status name
+        return contactData.statusName || '-';
+      } else {
         // User doesn't have permission, show masked message
         const status = statuses.find(s => s.id === normalizedStatusId);
         const statusType = status?.type;
@@ -345,9 +391,9 @@ export function ContactInfoTab({
       }
     }
     
-    // Show actual status name
+    // Contact has no status, show status name (which should be empty/null)
     return contactData.statusName || '-';
-  }, [isTeleoperatorForContact, statusViewPermissions, statuses]);
+  }, [statusViewPermissions, statuses]);
   
   // Editing states
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -644,6 +690,20 @@ export function ContactInfoTab({
         if (onRefresh) {
           onRefresh();
         }
+        
+        // Notify parent window (contact list) about the update
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage({
+              type: 'CONTACT_UPDATED',
+              contactId: contactId,
+              contact: response.contact
+            }, window.location.origin);
+          } catch (error) {
+            console.warn('Could not send message to parent window:', error);
+          }
+        }
+        
         setEditingField(null);
         toast.success('Champ mis à jour avec succès');
       }
@@ -1188,7 +1248,16 @@ export function ContactInfoTab({
                         ))}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" onClick={() => saveField('statusId')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('statusId')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1252,7 +1321,16 @@ export function ContactInfoTab({
                       <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button size="sm" onClick={() => saveField('civility')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('civility')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1274,7 +1352,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('firstName')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('firstName')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1296,7 +1383,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('lastName')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('lastName')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1319,7 +1415,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('email')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('email')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1345,7 +1450,16 @@ export function ContactInfoTab({
                     className="flex-1 h-10"
                     type="number"
                   />
-                  <Button size="sm" onClick={() => saveField('mobile')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('mobile')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1371,7 +1485,16 @@ export function ContactInfoTab({
                     className="flex-1 h-10"
                     type="number"
                   />
-                  <Button size="sm" onClick={() => saveField('phone')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('phone')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1393,7 +1516,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('birthDate')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('birthDate')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1424,7 +1556,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('nationality')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('nationality')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1457,7 +1598,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('address')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('address')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1479,7 +1629,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('addressComplement')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('addressComplement')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1501,7 +1660,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('postalCode')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('postalCode')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1523,7 +1691,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('city')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('city')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1569,7 +1746,16 @@ export function ContactInfoTab({
                         ))}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" onClick={() => saveField('sourceId')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('sourceId')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1591,7 +1777,16 @@ export function ContactInfoTab({
                     disabled={isSaving}
                     className="flex-1 h-10"
                   />
-                  <Button size="sm" onClick={() => saveField('campaign')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('campaign')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
@@ -1616,23 +1811,39 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Sélectionner un téléopérateur" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Aucun</SelectItem>
+                      <SelectItem value="none">Aucun téléopérateur</SelectItem>
                       {users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
-                        .map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {user.firstName} {user.lastName}
-                          </SelectItem>
-                        ))}
+                        .map((user) => {
+                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                          return (
+                            <SelectItem key={user.id} value={user.id}>
+                              {displayName}
+                            </SelectItem>
+                          );
+                        })}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" onClick={() => saveField('teleoperatorId')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('teleoperatorId')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
                 <div 
                   className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('teleoperatorId', contact.teleoperatorId)}
+                  onClick={() => {
+                    if (canEdit && canEditContact(contact)) {
+                      startEditing('teleoperatorId', contact.teleoperatorId || contact.managerId);
+                    }
+                  }}
                 >
                   {contact.teleoperatorName || contact.managerName || '-'}
                 </div>
@@ -1651,23 +1862,39 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Sélectionner un confirmateur" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Aucun</SelectItem>
+                      <SelectItem value="none">Aucun confirmateur</SelectItem>
                       {users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
-                        .map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {user.firstName} {user.lastName}
-                          </SelectItem>
-                        ))}
+                        .map((user) => {
+                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                          return (
+                            <SelectItem key={user.id} value={user.id}>
+                              {displayName}
+                            </SelectItem>
+                          );
+                        })}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" onClick={() => saveField('confirmateurId')} disabled={isSaving}>✓</Button>
+                  <Button 
+                    size="sm" 
+                    onClick={() => saveField('confirmateurId')} 
+                    disabled={isSaving}
+                    style={{ backgroundColor: '#22c55e', color: 'white' }}
+                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                  >
+                    Enregistrer
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
                 </div>
               ) : (
                 <div 
                   className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('confirmateurId', contact.confirmateurId)}
+                  onClick={() => {
+                    if (canEdit && canEditContact(contact)) {
+                      startEditing('confirmateurId', contact.confirmateurId);
+                    }
+                  }}
                 >
                   {contact.confirmateurName || '-'}
                 </div>

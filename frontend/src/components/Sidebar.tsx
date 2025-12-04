@@ -53,17 +53,23 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   };
   
   // Check permissions directly from user permissions (same logic as useHasStatusesPermission)
-  // This ensures permissions are checked correctly
+  // This ensures permissions are checked correctly - only matches page-level permissions
+  // Page-level permissions have null/undefined/empty fieldName and statusId
   const checkUserPermission = (component: string, action: string = 'view'): boolean => {
     if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
       return false;
     }
     
     return currentUser.permissions.some((perm: any) => {
+      // Only match general page-level permissions (no fieldName or statusId)
+      // Check that fieldName and statusId are null, undefined, or empty string
+      const isPageLevelPermission = 
+        (perm.fieldName === null || perm.fieldName === undefined || perm.fieldName === '') &&
+        (perm.statusId === null || perm.statusId === undefined || perm.statusId === '');
+      
       return perm.component === component && 
              perm.action === action &&
-             !perm.fieldName && // Exclude field-level permissions
-             !perm.statusId; // Only general permissions
+             isPageLevelPermission;
     });
   };
   
@@ -102,8 +108,21 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     });
   })();
   
-  // Settings page is accessible if user has access to permissions, statuses, or note categories
-  const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission;
+  // Check notifications permission (same logic as useHasNotificationsPermission)
+  const hasNotificationsPermission = (() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'notifications' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  })();
+  
+  // Settings page is accessible if user has access to permissions, statuses, note categories, or notifications
+  const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission;
   // Chat doesn't require permission check - available to all authenticated users
 
   const menuItems = [

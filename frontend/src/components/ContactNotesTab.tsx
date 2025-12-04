@@ -266,6 +266,18 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
       
       toast.success('Note créée avec succès');
       
+      // Notify parent window (contact list) about the note update
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage({
+            type: 'CONTACT_UPDATED',
+            contactId: contactId
+          }, window.location.origin);
+        } catch (error) {
+          console.warn('Could not send message to parent window:', error);
+        }
+      }
+      
       // Refresh in background to get full data
       onRefresh();
     } catch (error: any) {
@@ -292,6 +304,19 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
       ));
       
       toast.success('Note modifiée avec succès');
+      
+      // Notify parent window (contact list) about the note update
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage({
+            type: 'CONTACT_UPDATED',
+            contactId: contactId
+          }, window.location.origin);
+        } catch (error) {
+          console.warn('Could not send message to parent window:', error);
+        }
+      }
+      
       // Refresh in background to sync
       onRefresh();
     } catch (error: any) {
@@ -311,6 +336,19 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
     try {
       await apiCall(`/api/notes/delete/${noteId}/`, { method: 'DELETE' });
       toast.success('Note supprimée avec succès');
+      
+      // Notify parent window (contact list) about the note update
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage({
+            type: 'CONTACT_UPDATED',
+            contactId: contactId
+          }, window.location.origin);
+        } catch (error) {
+          console.warn('Could not send message to parent window:', error);
+        }
+      }
+      
       // Refresh in background to sync
       onRefresh();
     } catch (error) {

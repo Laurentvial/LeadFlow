@@ -2,6 +2,7 @@ from django.shortcuts import render
 from django.contrib.auth.models import User as DjangoUser
 from django.shortcuts import get_object_or_404
 from django.db import models
+from django.db import IntegrityError
 from rest_framework import generics, status
 from .models import Contact
 from .models import Note, NoteCategory
@@ -607,6 +608,10 @@ class ContactView(generics.ListAPIView):
             Prefetch(
                 'teleoperator__user_details__team_memberships',
                 queryset=TeamMember.objects.select_related('team')
+            ),
+            Prefetch(
+                'contact_notes',
+                queryset=Note.objects.order_by('-created_at')
             )
         )
         
@@ -1125,6 +1130,10 @@ class FosseContactView(generics.ListAPIView):
             Prefetch(
                 'teleoperator__user_details__team_memberships',
                 queryset=TeamMember.objects.select_related('team')
+            ),
+            Prefetch(
+                'contact_notes',
+                queryset=Note.objects.order_by('-created_at')
             )
         )
         
@@ -2179,10 +2188,16 @@ def contact_detail(request, contact_id):
                         teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
                         if teleoperator_user:
                             contact.teleoperator = teleoperator_user
+                            # Clear any cached relationship
+                            if hasattr(contact, '_teleoperator_cache'):
+                                delattr(contact, '_teleoperator_cache')
                     except Exception:
                         pass
                 else:
                     contact.teleoperator = None
+                    # Clear any cached relationship
+                    if hasattr(contact, '_teleoperator_cache'):
+                        delattr(contact, '_teleoperator_cache')
             
             # Update confirmateur if provided
             if 'confirmateurId' in request.data:
@@ -2192,10 +2207,22 @@ def contact_detail(request, contact_id):
                         confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
                         if confirmateur_user:
                             contact.confirmateur = confirmateur_user
-                    except Exception:
-                        pass
+                            # Clear any cached relationship
+                            if hasattr(contact, '_confirmateur_cache'):
+                                delattr(contact, '_confirmateur_cache')
+                            print(f"[DEBUG] Set confirmateur to user ID: {confirmateur_id}, Name: {confirmateur_user.first_name} {confirmateur_user.last_name}")
+                        else:
+                            print(f"[DEBUG] Confirmateur user not found for ID: {confirmateur_id}")
+                    except Exception as e:
+                        print(f"[DEBUG] Error setting confirmateur: {e}")
+                        import traceback
+                        traceback.print_exc()
                 else:
                     contact.confirmateur = None
+                    # Clear any cached relationship
+                    if hasattr(contact, '_confirmateur_cache'):
+                        delattr(contact, '_confirmateur_cache')
+                    print(f"[DEBUG] Cleared confirmateur (set to None)")
             
             # Update campaign if provided
             if 'campaign' in request.data:
@@ -2249,6 +2276,7 @@ def contact_detail(request, contact_id):
             # Save the contact with all modifications
             try:
                 contact.save()
+                # Django automatically handles transaction commits - no manual commit needed
             except ValueError as e:
                 # Handle ValueError specifically (e.g., invalid phone/mobile format)
                 import traceback
@@ -2274,6 +2302,46 @@ def contact_detail(request, contact_id):
                     {'error': f'Erreur inattendue: {str(e)}', 'details': error_details},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+            
+            # Reload contact from database with all relationships to ensure confirmateur/teleoperator are properly loaded
+            # This ensures we get the latest committed data with all relationships
+            contact_id = contact.id
+            # Use a fresh query to get the updated contact with all relationships
+            contact = Contact.objects.select_related(
+                'status',
+                'source',
+                'teleoperator',
+                'confirmateur',
+                'creator'
+            ).prefetch_related(
+                Prefetch(
+                    'teleoperator__user_details__team_memberships',
+                    queryset=TeamMember.objects.select_related('team')
+                ),
+                Prefetch(
+                    'confirmateur__user_details__team_memberships',
+                    queryset=TeamMember.objects.select_related('team')
+                ),
+                Prefetch(
+                    'creator__user_details__team_memberships',
+                    queryset=TeamMember.objects.select_related('team')
+                )
+            ).get(id=contact_id)
+            
+            # Force Django to load the confirmateur relationship
+            # Access the confirmateur to ensure it's loaded from DB
+            if hasattr(contact, 'confirmateur_id') and contact.confirmateur_id:
+                confirmateur_obj = contact.confirmateur  # This forces Django to load the relationship
+                if confirmateur_obj:
+                    # Verify the confirmateur has the expected data
+                    first_name = getattr(confirmateur_obj, 'first_name', '') or ''
+                    last_name = getattr(confirmateur_obj, 'last_name', '') or ''
+                    confirmateur_name = f"{first_name} {last_name}".strip()
+                    print(f"[DEBUG] Reloaded contact - confirmateur_id: {contact.confirmateur_id}, confirmateur_name: {confirmateur_name}")
+                else:
+                    print(f"[DEBUG] Reloaded contact - confirmateur_id exists ({contact.confirmateur_id}) but confirmateur object is None")
+            else:
+                print(f"[DEBUG] Reloaded contact - no confirmateur_id (confirmateur is None)")
             
             # Get new value after saving
             serializer = ContactSerializer(contact, context={'request': request})
@@ -3122,20 +3190,35 @@ def status_create(request):
     
     serializer = StatusSerializer(data=data)
     if serializer.is_valid():
-        # Generate status ID
-        status_id = uuid.uuid4().hex[:12]
-        while Status.objects.filter(id=status_id).exists():
+        try:
+            # Generate status ID
             status_id = uuid.uuid4().hex[:12]
-        
-        # Auto-assign orderIndex: get the max orderIndex for the same type and add 1
-        status_type = serializer.validated_data.get('type', 'lead')
-        max_order = Status.objects.filter(type=status_type).aggregate(
-            max_order=models.Max('order_index')
-        )['max_order'] or -1
-        order_index = max_order + 1
-        
-        status_obj = serializer.save(id=status_id, order_index=order_index, created_by=request.user if request.user.is_authenticated else None)
-        return Response(StatusSerializer(status_obj).data, status=status.HTTP_201_CREATED)
+            while Status.objects.filter(id=status_id).exists():
+                status_id = uuid.uuid4().hex[:12]
+            
+            # Auto-assign orderIndex: get the max orderIndex for the same type and add 1
+            status_type = serializer.validated_data.get('type', 'lead')
+            max_order = Status.objects.filter(type=status_type).aggregate(
+                max_order=models.Max('order_index')
+            )['max_order'] or -1
+            order_index = max_order + 1
+            
+            status_obj = serializer.save(id=status_id, order_index=order_index, created_by=request.user if request.user.is_authenticated else None)
+            return Response(StatusSerializer(status_obj).data, status=status.HTTP_201_CREATED)
+        except IntegrityError as e:
+            # Catch database-level unique constraint violations
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Status creation database integrity error: {str(e)}, data: {request.data}")
+            
+            # Extract name and type from the data
+            name = data.get('name', '').strip()
+            status_type = data.get('type', 'lead')
+            
+            # Return a user-friendly error message
+            return Response({
+                'non_field_errors': [f"A status with name '{name}' and type '{status_type}' already exists."]
+            }, status=status.HTTP_400_BAD_REQUEST)
     
     # Log validation errors for debugging
     import logging

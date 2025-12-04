@@ -258,11 +258,26 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['addressComplement'] = instance.address_complement or ''
         ret['campaign'] = instance.campaign or ''
         ret['teleoperatorId'] = instance.teleoperator_id if hasattr(instance, 'teleoperator_id') else (instance.teleoperator.id if instance.teleoperator else None)
-        ret['teleoperatorName'] = f"{instance.teleoperator.first_name} {instance.teleoperator.last_name}".strip() if instance.teleoperator else ''
+        if instance.teleoperator:
+            first_name = getattr(instance.teleoperator, 'first_name', '') or ''
+            last_name = getattr(instance.teleoperator, 'last_name', '') or ''
+            ret['teleoperatorName'] = f"{first_name} {last_name}".strip()
+        else:
+            ret['teleoperatorName'] = ''
         ret['confirmateurId'] = instance.confirmateur_id if hasattr(instance, 'confirmateur_id') else (instance.confirmateur.id if instance.confirmateur else None)
-        ret['confirmateurName'] = f"{instance.confirmateur.first_name} {instance.confirmateur.last_name}".strip() if instance.confirmateur else ''
+        if instance.confirmateur:
+            first_name = getattr(instance.confirmateur, 'first_name', '') or ''
+            last_name = getattr(instance.confirmateur, 'last_name', '') or ''
+            ret['confirmateurName'] = f"{first_name} {last_name}".strip()
+        else:
+            ret['confirmateurName'] = ''
         ret['creatorId'] = instance.creator_id if hasattr(instance, 'creator_id') else (instance.creator.id if instance.creator else None)
-        ret['creatorName'] = f"{instance.creator.first_name} {instance.creator.last_name}".strip() if instance.creator else ''
+        if instance.creator:
+            first_name = getattr(instance.creator, 'first_name', '') or ''
+            last_name = getattr(instance.creator, 'last_name', '') or ''
+            ret['creatorName'] = f"{first_name} {last_name}".strip()
+        else:
+            ret['creatorName'] = ''
         # Phone and mobile are handled by SerializerMethodField - use the methods
         ret['phone'] = self.get_phone(instance)
         ret['mobile'] = self.get_mobile(instance)
@@ -335,6 +350,14 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['postalCode'] = ret.get('postal_code', '') or ''
         ret['city'] = ret.get('city', '') or ''
         ret['nationality'] = ret.get('nationality', '') or ''
+        
+        # Add notes information
+        notes = instance.contact_notes.all()
+        notes_count = notes.count()
+        latest_note = notes.first()
+        ret['notesCount'] = notes_count
+        ret['notesLatestText'] = latest_note.text[:100] if latest_note else ''  # First 100 chars
+        ret['hasNotes'] = notes_count > 0
         
         return ret
 
@@ -714,7 +737,11 @@ class StatusSerializer(serializers.ModelSerializer):
         if not name:
             raise serializers.ValidationError({"name": "Name is required"})
         
-        # Check for duplicate name + type combination
+        # Normalize the name in the data
+        data['name'] = name
+        data['type'] = status_type
+        
+        # Check for duplicate name + type combination (case-insensitive)
         # Exclude current instance if updating
         queryset = Status.objects.filter(name__iexact=name, type=status_type)
         if self.instance:
@@ -762,14 +789,69 @@ class PermissionSerializer(serializers.ModelSerializer):
     action = serializers.CharField(required=False)
     statusId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     
+    # Only these components are allowed to have statusId
+    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories']
+    
     class Meta:
         model = Permission
         fields = ['id', 'component', 'fieldName', 'action', 'statusId', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
+    def validate(self, data):
+        """Validate that only statuses and note_categories can have statusId and check for duplicates"""
+        component = data.get('component') or (self.instance.component if self.instance else None)
+        status_id = data.get('statusId')
+        field_name = data.get('fieldName') or data.get('field_name') or (self.instance.field_name if self.instance else None)
+        action = data.get('action') or (self.instance.action if self.instance else None)
+        
+        if not component or not action:
+            return data  # Let other validations handle missing required fields
+        
+        # Only 'statuses' and 'note_categories' components are allowed to have statusId
+        if status_id and component not in self.STATUS_ALLOWED_COMPONENTS:
+            raise serializers.ValidationError(
+                f"Component '{component}' cannot have statusId. "
+                f"Only components '{', '.join(self.STATUS_ALLOWED_COMPONENTS)}' are allowed to have status-specific permissions."
+            )
+        
+        # Check for duplicate permissions (same component, field_name, action, status)
+        # Convert status_id to Status object if provided
+        status_obj = None
+        if status_id:
+            try:
+                status_obj = Status.objects.get(id=status_id)
+            except Status.DoesNotExist:
+                pass
+        
+        # Check if a permission with the same combination already exists (excluding current instance if updating)
+        existing_permission = Permission.objects.filter(
+            component=component,
+            field_name=field_name or None,
+            action=action,
+            status=status_obj if status_obj else None
+        ).exclude(id=self.instance.id if self.instance else None).first()
+        
+        if existing_permission:
+            raise serializers.ValidationError(
+                f"A permission with component='{component}', action='{action}', "
+                f"fieldName={field_name or 'null'}, statusId={status_id or 'null'} already exists (ID: {existing_permission.id}). "
+                "Permissions must be unique by component, field_name, action, and status."
+            )
+        
+        return data
+    
     def create(self, validated_data):
         # Remove statusId from validated_data as it's not a model field
         status_id = validated_data.pop('statusId', None)
+        component = validated_data.get('component')
+        
+        # Double-check validation (in case validate wasn't called)
+        if status_id and component not in self.STATUS_ALLOWED_COMPONENTS:
+            raise serializers.ValidationError(
+                f"Component '{component}' cannot have statusId. "
+                f"Only components '{', '.join(self.STATUS_ALLOWED_COMPONENTS)}' are allowed to have status-specific permissions."
+            )
+        
         status = None
         if status_id:
             try:
@@ -777,9 +859,39 @@ class PermissionSerializer(serializers.ModelSerializer):
             except Status.DoesNotExist:
                 pass
         
+        # Extra safety check: verify no duplicate exists before creating
+        # (validate() should have caught this, but this is a final safeguard)
+        field_name = validated_data.get('field_name')
+        action = validated_data.get('action')
+        
+        existing_permission = Permission.objects.filter(
+            component=component,
+            field_name=field_name or None,
+            action=action,
+            status=status
+        ).first()
+        
+        if existing_permission:
+            raise serializers.ValidationError(
+                f"A permission with component='{component}', action='{action}', "
+                f"fieldName={field_name or 'null'}, statusId={status_id or 'null'} already exists (ID: {existing_permission.id}). "
+                "Permissions must be unique by component, field_name, action, and status."
+            )
+        
         # Create the permission with status
         # Extra kwargs from serializer.save() (like id, action) are already in validated_data
-        permission = Permission.objects.create(**validated_data, status=status)
+        try:
+            permission = Permission.objects.create(**validated_data, status=status)
+        except Exception as e:
+            # Catch database integrity errors (unique constraint violations)
+            # This provides a fallback if validation somehow didn't catch duplicates
+            if 'UNIQUE constraint' in str(e) or 'unique constraint' in str(e).lower() or 'duplicate' in str(e).lower():
+                raise serializers.ValidationError(
+                    f"A permission with component='{component}', action='{action}', "
+                    f"fieldName={field_name or 'null'}, statusId={status_id or 'null'} already exists. "
+                    "Permissions must be unique by component, field_name, action, and status."
+                )
+            raise  # Re-raise other exceptions
         return permission
     
     def update(self, instance, validated_data):

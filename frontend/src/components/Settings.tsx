@@ -6,41 +6,29 @@ import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
 import { ContactFormTab } from './ContactFormTab';
 import { NotificationPreferencesTab } from './NotificationPreferencesTab';
-import { useHasStatusesPermission, useHasNoteCategoriesPermission } from '../hooks/usePermissions';
-import { useUser } from '../contexts/UserContext';
+import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission } from '../hooks/usePermissions';
 
 export function Settings() {
-  const { currentUser } = useUser();
-  
-  // Check permissions permission using same logic as useHasStatusesPermission
-  const hasPermissionsPermission = (() => {
-    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
-      return false;
-    }
-    return currentUser.permissions.some((perm: any) => {
-      return perm.component === 'permissions' && 
-             perm.action === 'view' && 
-             !perm.fieldName &&
-             !perm.statusId;
-    });
-  })();
-  
+  const hasPermissionsPermission = useHasPermissionsPermission();
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
+  const hasNotificationsPermission = useHasNotificationsPermission();
   
   // Determine default tab based on available permissions
+  // Only return a tab that the user actually has permission to see
   const getDefaultTab = () => {
+    if (hasNotificationsPermission) return 'notifications';
     if (hasPermissionsPermission) return 'permissions';
     if (hasStatusesPermission) return 'statuses';
     if (hasNoteCategoriesPermission) return 'contact-form';
-    return 'notifications'; // Fallback to notifications if no other permissions
+    return 'notifications'; // Fallback (shouldn't happen due to wrapper check)
   };
 
-  const [defaultTab] = useState(getDefaultTab());
+  const [activeTab, setActiveTab] = useState(getDefaultTab());
 
   // Include tabs based on permissions
-  // Notification preferences is always visible for authenticated users
-  const visibleTabs: string[] = ['notifications'];
+  const visibleTabs: string[] = [];
+  if (hasNotificationsPermission) visibleTabs.push('notifications');
   if (hasPermissionsPermission) visibleTabs.push('permissions');
   if (hasStatusesPermission) visibleTabs.push('statuses');
   if (hasNoteCategoriesPermission) visibleTabs.push('contact-form');
@@ -53,17 +41,19 @@ export function Settings() {
       </div>
 
       {visibleTabs.length > 0 ? (
-        <Tabs defaultValue={defaultTab} className="users-teams-tabs">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="users-teams-tabs">
           <TabsList>
-            <TabsTrigger value="notifications">Notifications</TabsTrigger>
+            {hasNotificationsPermission && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
             {hasPermissionsPermission && <TabsTrigger value="permissions">Permissions</TabsTrigger>}
             {hasStatusesPermission && <TabsTrigger value="statuses">Statuts</TabsTrigger>}
             {hasNoteCategoriesPermission && <TabsTrigger value="contact-form">Fiche contact</TabsTrigger>}
           </TabsList>
 
-          <TabsContent value="notifications" className="users-teams-tab-content">
-            <NotificationPreferencesTab />
-          </TabsContent>
+          {hasNotificationsPermission && (
+            <TabsContent value="notifications" className="users-teams-tab-content">
+              <NotificationPreferencesTab />
+            </TabsContent>
+          )}
 
           {hasPermissionsPermission && (
             <TabsContent value="permissions" className="users-teams-tab-content">

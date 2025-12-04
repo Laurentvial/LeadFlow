@@ -26,7 +26,18 @@ export function PermissionProtectedRoute({
   fallbackPath,
 }: PermissionProtectedRouteProps) {
   const { currentUser, loading } = useUser();
-  const hasPermission = useHasPermission(component, action, fieldName, statusId);
+  
+  // For page-level permissions (when fieldName/statusId are not provided),
+  // we want to match only general permissions (where fieldName and statusId are null)
+  // If fieldName/statusId are explicitly provided (even if null), use them as-is
+  let hasPermission: boolean;
+  if (fieldName === undefined && statusId === undefined) {
+    // Page-level permission check: only match permissions without fieldName or statusId
+    hasPermission = useHasPermission(component, action, null, null);
+  } else {
+    // Field-level or status-level permission check: use provided values
+    hasPermission = useHasPermission(component, action, fieldName, statusId);
+  }
 
   // Show loading while user data is being fetched
   if (loading) {

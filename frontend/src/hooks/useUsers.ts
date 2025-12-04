@@ -23,12 +23,13 @@ export function useUsers() {
     const now = Date.now();
     if (!forceRefresh && usersCache.length > 0 && (now - usersCacheTime) < CACHE_DURATION) {
       setUsers(usersCache);
+      setError(null); // Clear any previous error when using cache
       return;
     }
 
     isLoadingUsers = true;
     setLoading(true);
-    setError(null);
+    // Don't clear error immediately - we'll handle it after trying to load
     try {
       // Utiliser apiCall (fetch) au lieu de axios pour être cohérent avec les clients
       const response = await apiCall('/api/users/');
@@ -54,10 +55,19 @@ export function useUsers() {
       usersCache = sortedUsers;
       usersCacheTime = now;
       setUsers(sortedUsers);
+      setError(null); // Clear error on success
     } catch (err: any) {
-      const errorMessage = err?.message || err?.response?.detail || 'Erreur lors du chargement des utilisateurs';
-      const error = new Error(errorMessage);
-      setError(error);
+      // If we have cached data, use it even if there's an error
+      if (usersCache.length > 0) {
+        console.warn('Error loading users, using cached data:', err);
+        setUsers(usersCache);
+        setError(null); // Don't show error if we have cached data
+      } else {
+        // Only set error if we don't have cached data
+        const errorMessage = err?.message || err?.response?.detail || 'Erreur lors du chargement des utilisateurs';
+        const error = new Error(errorMessage);
+        setError(error);
+      }
     } finally {
       setLoading(false);
       isLoadingUsers = false;
