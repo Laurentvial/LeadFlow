@@ -602,6 +602,12 @@ export function ContactList({
     setColumnFilters(newFilters); // Keep for display
     setCurrentPage(1); // Reset to first page
     setOpenFilterColumn(null); // Close the popover
+    // Clear the search bar in the filter modal
+    setColumnFilterSearchTerms(prev => {
+      const newTerms = { ...prev };
+      delete newTerms[columnId];
+      return newTerms;
+    });
     // loadData will be called by useEffect when applied filters change
   }
   
@@ -629,6 +635,12 @@ export function ContactList({
     });
     
     setCurrentPage(1); // Reset to first page
+    // Clear the search bar in the filter modal
+    setColumnFilterSearchTerms(prev => {
+      const newTerms = { ...prev };
+      delete newTerms[columnId];
+      return newTerms;
+    });
   }
 
   // Reset filters
@@ -1558,7 +1570,7 @@ export function ContactList({
                 Chargement...
               </p>
             </div>
-          ) : displayedContacts.length > 0 ? (
+          ) : (
         <div className={`contacts-table-wrapper ${fullscreen ? 'contacts-table-wrapper-fullscreen' : ''}`}>
               <table className="contacts-table">
                 <thead>
@@ -1572,6 +1584,7 @@ export function ContactList({
                         }}
                         onChange={handleSelectAll}
                         className="contacts-checkbox"
+                        disabled={displayedContacts.length === 0}
                       />
                     </th>
                     {getOrderedVisibleColumns().map((columnId) => (
@@ -1974,53 +1987,59 @@ export function ContactList({
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedContacts.map((contact) => (
-                    <tr 
-                      key={contact.id}
-                      onClick={(e) => {
-                        // Only open if clicking on the row itself, not on interactive elements
-                        const target = e.target as HTMLElement;
-                        // Check if click is on an interactive element
-                        if (
-                          target.tagName === 'INPUT' ||
-                          target.tagName === 'BUTTON' ||
-                          target.tagName === 'SELECT' ||
-                          target.closest('button') ||
-                          target.closest('select') ||
-                          target.closest('input') ||
-                          target.closest('[role="button"]') ||
-                          target.closest('[data-radix-popper-content-wrapper]') ||
-                          target.closest('.contacts-checkbox')
-                        ) {
-                          return; // Don't open contact detail
-                        }
-                        openContactDetail(contact.id);
-                      }}
-                      style={{
-                        backgroundColor: lastOpenedContactId === contact.id ? '#eff6ff' : 'transparent',
-                        borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedContacts.has(contact.id)}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleSelectContact(contact.id);
-                          }}
-                          className="contacts-checkbox"
-                        />
+                  {displayedContacts.length > 0 ? (
+                    displayedContacts.map((contact) => (
+                      <tr 
+                        key={contact.id}
+                        onClick={(e) => {
+                          // Only open if clicking on the row itself, not on interactive elements
+                          const target = e.target as HTMLElement;
+                          // Check if click is on an interactive element
+                          if (
+                            target.tagName === 'INPUT' ||
+                            target.tagName === 'BUTTON' ||
+                            target.tagName === 'SELECT' ||
+                            target.closest('button') ||
+                            target.closest('select') ||
+                            target.closest('input') ||
+                            target.closest('[role="button"]') ||
+                            target.closest('[data-radix-popper-content-wrapper]') ||
+                            target.closest('.contacts-checkbox')
+                          ) {
+                            return; // Don't open contact detail
+                          }
+                          openContactDetail(contact.id);
+                        }}
+                        style={{
+                          backgroundColor: lastOpenedContactId === contact.id ? '#eff6ff' : 'transparent',
+                          borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedContacts.has(contact.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleSelectContact(contact.id);
+                            }}
+                            className="contacts-checkbox"
+                          />
+                        </td>
+                        {getOrderedVisibleColumns().map((columnId) => renderCell(contact, columnId))}
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={getOrderedVisibleColumns().length + 1} style={{ textAlign: 'center', padding: '40px' }}>
+                        <p className="contacts-empty">Aucun contact trouvé</p>
                       </td>
-                      {getOrderedVisibleColumns().map((columnId) => renderCell(contact, columnId))}
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
-          ) : (
-            <p className="contacts-empty">Aucun contact trouvé</p>
           )}
           
           {/* Pagination Controls */}
