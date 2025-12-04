@@ -603,7 +603,18 @@ class ContactView(generics.ListAPIView):
         
         # Prefetch related team_memberships for teleoperator's user_details
         # This optimizes the serializer's access to managerTeamId and managerTeamName
-        from django.db.models import Prefetch
+        from django.db.models import Prefetch, Subquery, OuterRef
+        from .models import Log
+        
+        # Annotate with most recent log date to avoid N+1 queries
+        latest_log = Log.objects.filter(
+            contact_id=OuterRef('pk')
+        ).order_by('-created_at').values('created_at')[:1]
+        
+        queryset = queryset.annotate(
+            last_log_date=Subquery(latest_log)
+        )
+        
         queryset = queryset.prefetch_related(
             Prefetch(
                 'teleoperator__user_details__team_memberships',
@@ -1986,68 +1997,136 @@ def contact_detail(request, contact_id):
     
     user = request.user
     
+    # Check if contact is a fosse contact (unassigned: teleoperator is null AND confirmateur is null)
+    is_fosse_contact = contact.teleoperator is None and contact.confirmateur is None
+    
     # Check data access restrictions
     try:
         user_details = UserDetails.objects.get(django_user=user)
+        
+        # Special case: If contact is in fosse, check if user has fosse view permission
+        has_fosse_permission = False
+        if is_fosse_contact and user_details.role:
+            from api.models import Permission, PermissionRole
+            has_fosse_permission = PermissionRole.objects.filter(
+                role=user_details.role,
+                permission__component='fosse',
+                permission__action='view'
+            ).exists()
+            
+            if has_fosse_permission and request.method == 'GET':
+                # User has fosse view permission, allow access for GET requests
+                serializer = ContactSerializer(contact, context={'request': request})
+                return Response({'contact': serializer.data})
+        
         if user_details.role:
             data_access = user_details.role.data_access
             
-            if data_access == 'own_only':
-                # Check if user is teleoperateur or confirmateur
-                is_teleoperateur = user_details.role.is_teleoperateur
-                is_confirmateur = user_details.role.is_confirmateur
+            # Skip data_access restrictions if user has fosse permission for fosse contacts
+            if has_fosse_permission and is_fosse_contact:
+                # User has fosse permission, skip data_access checks
+                pass
+            else:
+                # Special case for PATCH: Allow if user is setting themselves as teleoperator/confirmateur
+                allow_patch_for_self_assignment = False
+                if request.method == 'PATCH':
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    # Check if user is trying to assign themselves as teleoperator
+                    if is_teleoperateur and 'teleoperatorId' in request.data:
+                        teleoperator_id = request.data.get('teleoperatorId')
+                        if teleoperator_id and str(teleoperator_id) == str(user.id):
+                            allow_patch_for_self_assignment = True
+                    
+                    # Check if user is trying to assign themselves as confirmateur
+                    if is_confirmateur and 'confirmateurId' in request.data:
+                        confirmateur_id = request.data.get('confirmateurId')
+                        if confirmateur_id and str(confirmateur_id) == str(user.id):
+                            allow_patch_for_self_assignment = True
                 
-                if is_teleoperateur and is_confirmateur:
-                    # User is both: allow if user is teleoperator OR confirmateur
-                    if contact.teleoperator != user and contact.confirmateur != user:
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                elif is_teleoperateur:
-                    # Teleoperateur with own_only: only allow if user is teleoperator
-                    if contact.teleoperator != user:
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                elif is_confirmateur:
-                    # Confirmateur with own_only: only allow if user is confirmateur
-                    if contact.confirmateur != user:
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                else:
-                    # Default behavior: only allow if user is teleoperator, confirmateur, or creator
-                    if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-            elif data_access == 'team_only':
-                # Check if user has access (either assigned to them or from their team)
-                team_member = user_details.team_memberships.first()
-                if team_member:
-                    team = team_member.team
-                    team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
-                    # Allow if user is assigned OR if contact's assignees are in the same team
-                    if (contact.teleoperator != user and contact.confirmateur != user and contact.creator != user and
-                        (not contact.teleoperator or contact.teleoperator.id not in team_user_ids) and
-                        (not contact.confirmateur or contact.confirmateur.id not in team_user_ids) and
-                        (not contact.creator or contact.creator.id not in team_user_ids)):
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                else:
-                    # User has no team, fall back to own_only behavior
-                    if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
-                        return Response(
-                            {'error': 'Vous n\'avez pas accès à ce contact'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-            # If data_access is 'all', allow access (no check needed)
+                if data_access == 'own_only' and not allow_patch_for_self_assignment:
+                    # Check if user is teleoperateur or confirmateur
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    # For GET requests, also check if user has field-level permissions that might allow access
+                    # This handles cases where user is viewing a contact they might assign themselves to
+                    has_field_permission = False
+                    if request.method == 'GET' and user_details.role:
+                        # Check if user's role has fiche_contact edit permission for teleoperatorId or confirmateurId
+                        from api.models import Permission, PermissionRole
+                        if is_teleoperateur:
+                            has_field_permission = PermissionRole.objects.filter(
+                                role=user_details.role,
+                                permission__component='fiche_contact',
+                                permission__action='edit',
+                                permission__field_name='teleoperatorId'
+                            ).exists()
+                            print(f"[DEBUG] GET request - is_teleoperateur: {is_teleoperateur}, has_field_permission (teleoperatorId): {has_field_permission}")
+                        if is_confirmateur and not has_field_permission:
+                            has_field_permission = PermissionRole.objects.filter(
+                                role=user_details.role,
+                                permission__component='fiche_contact',
+                                permission__action='edit',
+                                permission__field_name='confirmateurId'
+                            ).exists()
+                            print(f"[DEBUG] GET request - is_confirmateur: {is_confirmateur}, has_field_permission (confirmateurId): {has_field_permission}")
+                    
+                    if is_teleoperateur and is_confirmateur:
+                        # User is both: allow if user is teleoperator OR confirmateur OR has field permission
+                        if contact.teleoperator != user and contact.confirmateur != user and not has_field_permission:
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                    elif is_teleoperateur:
+                        # Teleoperateur with own_only: allow if user is teleoperator OR has field permission
+                        print(f"[DEBUG] Teleoperateur check - contact.teleoperator: {contact.teleoperator}, user: {user}, has_field_permission: {has_field_permission}")
+                        if contact.teleoperator != user and not has_field_permission:
+                            print(f"[DEBUG] Denying access - user is not teleoperator and no field permission")
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                        print(f"[DEBUG] Allowing access - user is teleoperator or has field permission")
+                    elif is_confirmateur:
+                        # Confirmateur with own_only: allow if user is confirmateur OR has field permission
+                        if contact.confirmateur != user and not has_field_permission:
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                    else:
+                        # Default behavior: only allow if user is teleoperator, confirmateur, or creator
+                        if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                elif data_access == 'team_only':
+                    # Check if user has access (either assigned to them or from their team)
+                    team_member = user_details.team_memberships.first()
+                    if team_member:
+                        team = team_member.team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Allow if user is assigned OR if contact's assignees are in the same team
+                        if (contact.teleoperator != user and contact.confirmateur != user and contact.creator != user and
+                            (not contact.teleoperator or contact.teleoperator.id not in team_user_ids) and
+                            (not contact.confirmateur or contact.confirmateur.id not in team_user_ids) and
+                            (not contact.creator or contact.creator.id not in team_user_ids)):
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        if contact.teleoperator != user and contact.confirmateur != user and contact.creator != user:
+                            return Response(
+                                {'error': 'Vous n\'avez pas accès à ce contact'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                # If data_access is 'all', allow access (no check needed)
     except UserDetails.DoesNotExist:
         # If user has no UserDetails, deny access (safety default)
         return Response(

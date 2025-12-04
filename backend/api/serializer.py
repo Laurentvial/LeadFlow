@@ -359,6 +359,14 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['notesLatestText'] = latest_note.text[:100] if latest_note else ''  # First 100 chars
         ret['hasNotes'] = notes_count > 0
         
+        # Add most recent log date (from annotated field if available, otherwise query)
+        if hasattr(instance, 'last_log_date'):
+            ret['lastLogDate'] = instance.last_log_date
+        else:
+            from .models import Log
+            latest_log = Log.objects.filter(contact_id=instance).order_by('-created_at').first()
+            ret['lastLogDate'] = latest_log.created_at if latest_log else None
+        
         return ret
 
 class TeamSerializer(serializers.ModelSerializer):

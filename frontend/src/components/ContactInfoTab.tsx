@@ -349,6 +349,151 @@ export function ContactInfoTab({
   const canEdit = React.useMemo(() => {
     return canEditContact(contact);
   }, [contact, canEditContact]);
+
+  // Map frontend field names to backend field names for fiche_contact permissions
+  const fieldNameMap: { [key: string]: string } = {
+    'civility': 'civility',
+    'firstName': 'fname',
+    'lastName': 'lname',
+    'phone': 'phone',
+    'mobile': 'mobile',
+    'email': 'email',
+    'birthDate': 'birth_date',
+    'birthPlace': 'birth_place',
+    'address': 'address',
+    'addressComplement': 'address_complement',
+    'postalCode': 'postal_code',
+    'city': 'city',
+    'nationality': 'nationality',
+    'campaign': 'campaign',
+    'statusId': 'status',
+    'sourceId': 'source',
+    'teleoperatorId': 'teleoperator',
+    'confirmateurId': 'confirmateur',
+  };
+
+  // Helper function to check if user has view permission for a specific field
+  const canViewField = React.useCallback((fieldName: string): boolean => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    
+    const backendFieldName = fieldNameMap[fieldName];
+    if (!backendFieldName) return true; // Unknown field, default to visible
+    
+    // Get all fiche_contact view permissions for this user
+    const ficheContactViewPermissions = currentUser.permissions.filter((p: any) => 
+      p.component === 'fiche_contact' && 
+      p.action === 'view' &&
+      !p.statusId
+    );
+    
+    // If no fiche_contact view permissions exist at all, fallback to general contacts view permission
+    if (ficheContactViewPermissions.length === 0) {
+      const hasContactsView = currentUser.permissions.some((p: any) => 
+        p.component === 'contacts' && 
+        p.action === 'view' && 
+        !p.fieldName &&
+        !p.statusId
+      );
+      return hasContactsView;
+    }
+    
+    // Check for field-level view permission for this specific field
+    const hasFieldPermission = ficheContactViewPermissions.some((p: any) => 
+      p.fieldName === backendFieldName
+    );
+    
+    // If user has field-level permission, use it
+    if (hasFieldPermission) return true;
+    
+    // Check if there's a general fiche_contact view permission (no fieldName)
+    const hasGeneralFicheContactPermission = ficheContactViewPermissions.some((p: any) => 
+      !p.fieldName
+    );
+    
+    // If general fiche_contact permission exists, allow viewing all fields
+    if (hasGeneralFicheContactPermission) return true;
+    
+    // If field-specific view permissions exist (with fieldName set) but NOT for this field,
+    // this means the field is explicitly restricted - hide it
+    const hasFieldSpecificPermissions = ficheContactViewPermissions.some((p: any) => 
+      p.fieldName !== null && p.fieldName !== undefined && p.fieldName !== ''
+    );
+    
+    if (hasFieldSpecificPermissions && !hasFieldPermission) {
+      // Field-specific view permissions are configured, but this field doesn't have permission
+      return false;
+    }
+    
+    // Fallback: if we have fiche_contact permissions but unclear state, check general contacts view
+    const hasContactsView = currentUser.permissions.some((p: any) => 
+      p.component === 'contacts' && 
+      p.action === 'view' && 
+      !p.fieldName &&
+      !p.statusId
+    );
+    return hasContactsView;
+  }, [currentUser?.permissions]);
+
+  // Helper function to check if user has edit permission for a specific field
+  const canEditField = React.useCallback((fieldName: string): boolean => {
+    console.log(`[canEditField ${fieldName}] Starting check`);
+    
+    if (!currentUser?.permissions) {
+      console.log(`[canEditField ${fieldName}] No permissions, returning false`);
+      return false;
+    }
+    
+    const backendFieldName = fieldNameMap[fieldName];
+    console.log(`[canEditField ${fieldName}] Field mapping: ${fieldName} -> ${backendFieldName}`);
+    if (!backendFieldName) {
+      console.log(`[canEditField ${fieldName}] Unknown field, returning false`);
+      return false; // Unknown field, default to no edit
+    }
+    
+    // Get all fiche_contact edit permissions for this user
+    const ficheContactEditPermissions = currentUser.permissions.filter((p: any) => 
+      p.component === 'fiche_contact' && 
+      p.action === 'edit' &&
+      !p.statusId
+    );
+    
+    console.log(`[canEditField ${fieldName}] Found ${ficheContactEditPermissions.length} fiche_contact edit permissions:`, 
+      ficheContactEditPermissions.map((p: any) => ({ 
+        id: p.id, 
+        component: p.component, 
+        fieldName: p.fieldName, 
+        action: p.action,
+        fieldNameType: typeof p.fieldName
+      }))
+    );
+    
+    // FIRST: Check if user has field-specific edit permission for this field
+    // If they do, allow editing regardless of general contact edit permission
+    const hasFieldPermission = ficheContactEditPermissions.some((p: any) => {
+      const pFieldName = p.fieldName ? String(p.fieldName).trim() : null;
+      const expectedFieldName = String(backendFieldName).trim();
+      const matches = pFieldName === expectedFieldName;
+      console.log(`[canEditField ${fieldName}] Comparing: "${pFieldName}" === "${expectedFieldName}" = ${matches}`);
+      return matches;
+    });
+    
+    if (hasFieldPermission) {
+      console.log(`[canEditField ${fieldName}] Has field-specific permission, allowing edit`);
+      return true;
+    }
+    
+    // SECOND: If no field-specific permission exists, check general contact edit permission
+    // If no fiche_contact edit permissions exist at all, fallback to general contact edit permission
+    if (ficheContactEditPermissions.length === 0) {
+      const canEdit = canEditContact(contact);
+      console.log(`[canEditField ${fieldName}] No fiche_contact permissions, checking general contact edit: ${canEdit}`);
+      return canEdit;
+    }
+    
+    // If fiche_contact permissions exist but this field doesn't have permission, block it
+    console.log(`[canEditField ${fieldName}] Field-specific permissions exist but not for this field, blocking`);
+    return false;
+  }, [currentUser?.permissions, contact, canEditContact]);
   
   // Statuses and sources
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -399,6 +544,14 @@ export function ContactInfoTab({
   const [editingField, setEditingField] = useState<string | null>(null);
   const [fieldValue, setFieldValue] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+
+  // Auto-fill teleoperateur field when entering edit mode if field is empty and user is teleoperateur
+  React.useEffect(() => {
+    if (editingField === 'teleoperatorId' && (!fieldValue || fieldValue === '' || fieldValue === 'none') && currentUser?.isTeleoperateur && currentUser?.id) {
+      setFieldValue(currentUser.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingField, currentUser?.isTeleoperateur, currentUser?.id]);
   
   // Appointments state
   const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
@@ -602,7 +755,15 @@ export function ContactInfoTab({
   }, [isAppointmentModalOpen, currentUser]);
 
   async function handleFieldUpdate(fieldName: string, value: any) {
-    if (!canEdit || !contactId) return;
+    console.log('[handleFieldUpdate] Called with fieldName:', fieldName, 'value:', value, 'canEdit:', canEdit, 'contactId:', contactId);
+    if (!contactId) {
+      console.log('[handleFieldUpdate] Early return - contactId missing');
+      return;
+    }
+    
+    // Check if user has field-level edit permission (this takes precedence)
+    const hasFieldPermission = canEditField(fieldName);
+    console.log('[handleFieldUpdate] hasFieldPermission:', hasFieldPermission);
     
     // If updating status, check permissions differently
     if (fieldName === 'statusId') {
@@ -632,11 +793,16 @@ export function ContactInfoTab({
         }
       }
     } else {
-      // For other fields, check if user has permission to edit this contact with CURRENT status
-      if (!canEditContact(contact)) {
-        toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      // For other fields, check field-level permission first (takes precedence)
+      if (!hasFieldPermission) {
+        console.log('[handleFieldUpdate] Permission denied: no field-level permission');
+        toast.error(`Vous n'avez pas la permission de modifier ce champ`);
         return;
       }
+      
+      // If field-level permission exists, allow save even if general canEdit is false
+      // (field-level permissions override general permissions)
+      console.log('[handleFieldUpdate] Field-level permission granted, proceeding with save');
     }
     
     setIsSaving(true);
@@ -665,6 +831,7 @@ export function ContactInfoTab({
       };
       
       const apiFieldName = fieldMap[fieldName];
+      console.log('[handleFieldUpdate] apiFieldName:', apiFieldName, 'value:', value);
       if (apiFieldName) {
         // Remove spaces from phone numbers before sending to backend
         if (fieldName === 'phone' || fieldName === 'mobile') {
@@ -676,11 +843,14 @@ export function ContactInfoTab({
         }
       }
       
+      console.log('[handleFieldUpdate] Payload to send:', payload);
+      console.log('[handleFieldUpdate] Making API call to:', `/api/contacts/${contactId}/`);
       const response = await apiCall(`/api/contacts/${contactId}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      console.log('[handleFieldUpdate] API response:', response);
       
       if (response?.contact) {
         // Update local contact state if onContactUpdated is provided
@@ -719,7 +889,15 @@ export function ContactInfoTab({
   }
 
   function startEditing(fieldName: string, currentValue: any) {
-    if (!canEdit) return;
+    // Check field-level edit permission
+    if (!canEditField(fieldName)) {
+      if (!canEditContact(contact)) {
+        toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+      } else {
+        toast.error(`Vous n'avez pas la permission de modifier ce champ`);
+      }
+      return;
+    }
     setEditingField(fieldName);
     // For phone numbers, show the raw value without spaces when editing
     // (spaces are only for display, not for editing)
@@ -735,8 +913,29 @@ export function ContactInfoTab({
     setFieldValue('');
   }
 
-  function saveField(fieldName: string) {
-    handleFieldUpdate(fieldName, fieldValue);
+  async function saveField(fieldName: string) {
+    console.log('[saveField] Saving field:', fieldName, 'value:', fieldValue);
+    console.log('[saveField] canEdit:', canEdit, 'contactId:', contactId);
+    // Ensure we have a valid value for teleoperatorId
+    if (fieldName === 'teleoperatorId') {
+      const valueToSave = fieldValue && fieldValue !== 'none' && fieldValue !== '' ? fieldValue : null;
+      console.log('[saveField] teleoperatorId valueToSave:', valueToSave);
+      console.log('[saveField] Calling handleFieldUpdate...');
+      try {
+        await handleFieldUpdate(fieldName, valueToSave);
+        console.log('[saveField] handleFieldUpdate completed successfully');
+      } catch (error) {
+        console.error('[saveField] Error in handleFieldUpdate:', error);
+      }
+    } else {
+      console.log('[saveField] Calling handleFieldUpdate...');
+      try {
+        await handleFieldUpdate(fieldName, fieldValue);
+        console.log('[saveField] handleFieldUpdate completed successfully');
+      } catch (error) {
+        console.error('[saveField] Error in handleFieldUpdate:', error);
+      }
+    }
   }
   
   const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
@@ -1210,8 +1409,9 @@ export function ContactInfoTab({
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-slate-600">Statut</Label>
+            {canViewField('statusId') && (
+              <div>
+                <Label className="text-slate-600">Statut</Label>
               {editingField === 'statusId' ? (
                 <div className="contact-field-input-wrapper">
                   <Select
@@ -1262,24 +1462,11 @@ export function ContactInfoTab({
                 </div>
               ) : (
                 <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => {
-                    // Only allow editing if user has permission or is teleoperator with status permission
-                    const isTeleoperator = isTeleoperatorForContact(contact);
-                    const contactStatusId = contact?.statusId;
-                    let normalizedStatusId: string | null = null;
-                    if (contactStatusId !== null && contactStatusId !== undefined && contactStatusId !== '') {
-                      const str = String(contactStatusId).trim();
-                      if (str !== '') {
-                        normalizedStatusId = str;
-                      }
-                    }
-                    // User can change status if they have EDIT permission for the CURRENT status
-                    // (They can assign any status they can VIEW, but need EDIT permission for current to change it)
-                    if (canEdit && canEditContact(contact)) {
-                      startEditing('statusId', contact.statusId);
-                    }
-                  }}
+                  className={`contact-field-display ${canEditField('statusId') ? 'editable' : ''}`}
+                  onClick={canEditField('statusId') ? () => {
+                    // User can change status if they have EDIT permission for the field
+                    startEditing('statusId', contact.statusId);
+                  } : undefined}
                 >
                   {(() => {
                     const statusText = getStatusDisplayText(contact);
@@ -1301,282 +1488,299 @@ export function ContactInfoTab({
                   })()}
                 </div>
               )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Civilité</Label>
-              {editingField === 'civility' ? (
-                <div className="contact-field-input-wrapper">
-                  <Select
-                    value={fieldValue || 'none'}
-                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
-                    disabled={isSaving}
+              </div>
+            )}
+            {canViewField('civility') && (
+              <div>
+                <Label className="text-slate-600">Civilité</Label>
+                {editingField === 'civility' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucune</SelectItem>
+                        <SelectItem value="Monsieur">Monsieur</SelectItem>
+                        <SelectItem value="Madame">Madame</SelectItem>
+                        <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('civility')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('civility') ? 'editable' : ''}`}
+                    onClick={canEditField('civility') ? () => startEditing('civility', contact.civility) : undefined}
                   >
-                    <SelectTrigger className="flex-1 h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucune</SelectItem>
-                      <SelectItem value="Monsieur">Monsieur</SelectItem>
-                      <SelectItem value="Madame">Madame</SelectItem>
-                      <SelectItem value="Mademoiselle">Mademoiselle</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('civility')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.civility || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('firstName') && (
+              <div>
+                <Label className="text-slate-600">Prénom</Label>
+                {editingField === 'firstName' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('firstName')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('firstName') ? 'editable' : ''}`}
+                    onClick={canEditField('firstName') ? () => startEditing('firstName', contact.firstName) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('civility', contact.civility)}
-                >
-                  {contact.civility || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Prénom</Label>
-              {editingField === 'firstName' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('firstName')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.firstName || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('lastName') && (
+              <div>
+                <Label className="text-slate-600">Nom</Label>
+                {editingField === 'lastName' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('lastName')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('lastName') ? 'editable' : ''}`}
+                    onClick={canEditField('lastName') ? () => startEditing('lastName', contact.lastName) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('firstName', contact.firstName)}
-                >
-                  {contact.firstName || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Nom</Label>
-              {editingField === 'lastName' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('lastName')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.lastName || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('email') && (
+              <div>
+                <Label className="text-slate-600">Email</Label>
+                {editingField === 'email' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      type="email"
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('email')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('email') ? 'editable' : ''}`}
+                    onClick={canEditField('email') ? () => startEditing('email', contact.email) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('lastName', contact.lastName)}
-                >
-                  {contact.lastName || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Email</Label>
-              {editingField === 'email' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    type="email"
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('email')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.email || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('mobile') && (
+              <div>
+                <Label className="text-slate-600">Portable</Label>
+                {editingField === 'mobile' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => {
+                        // Remove spaces as user types - keep it without spaces for editing
+                        setFieldValue(removePhoneSpaces(e.target.value));
+                      }}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                      type="number"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('mobile')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('mobile') ? 'editable' : ''}`}
+                    onClick={canEditField('mobile') ? () => startEditing('mobile', contact.mobile) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('email', contact.email)}
-                >
-                  {contact.email || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Portable</Label>
-              {editingField === 'mobile' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => {
-                      // Remove spaces as user types - keep it without spaces for editing
-                      setFieldValue(removePhoneSpaces(e.target.value));
-                    }}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                    type="number"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('mobile')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {formatPhoneNumber(contact.mobile) || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('phone') && (
+              <div>
+                <Label className="text-slate-600">Téléphone</Label>
+                {editingField === 'phone' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => {
+                        // Remove spaces as user types - keep it without spaces for editing
+                        setFieldValue(removePhoneSpaces(e.target.value));
+                      }}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                      type="number"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('phone')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('phone') ? 'editable' : ''}`}
+                    onClick={canEditField('phone') ? () => startEditing('phone', contact.phone) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('mobile', contact.mobile)}
-                >
-                  {formatPhoneNumber(contact.mobile) || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Téléphone</Label>
-              {editingField === 'phone' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => {
-                      // Remove spaces as user types - keep it without spaces for editing
-                      setFieldValue(removePhoneSpaces(e.target.value));
-                    }}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                    type="number"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('phone')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {formatPhoneNumber(contact.phone) || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('birthDate') && (
+              <div>
+                <Label className="text-slate-600">Date de naissance</Label>
+                {editingField === 'birthDate' ? (
+                  <div className="contact-field-input-wrapper">
+                    <DateInput
+                      value={fieldValue}
+                      onChange={(value) => setFieldValue(value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('birthDate')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('birthDate') ? 'editable' : ''}`}
+                    onClick={canEditField('birthDate') ? () => startEditing('birthDate', contact.birthDate) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('phone', contact.phone)}
-                >
-                  {formatPhoneNumber(contact.phone) || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Date de naissance</Label>
-              {editingField === 'birthDate' ? (
-                <div className="contact-field-input-wrapper">
-                  <DateInput
-                    value={fieldValue}
-                    onChange={(value) => setFieldValue(value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('birthDate')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {(() => {
+                      if (!contact.birthDate) return '-';
+                      const date = new Date(contact.birthDate);
+                      if (isNaN(date.getTime())) return '-';
+                      return date.toLocaleDateString('fr-FR', { 
+                        day: '2-digit', 
+                        month: '2-digit', 
+                        year: 'numeric'
+                      });
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('nationality') && (
+              <div>
+                <Label className="text-slate-600">Nationalité</Label>
+                {editingField === 'nationality' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('nationality')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('nationality') ? 'editable' : ''}`}
+                    onClick={canEditField('nationality') ? () => startEditing('nationality', contact.nationality) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('birthDate', contact.birthDate)}
-                >
-                  {(() => {
-                    if (!contact.birthDate) return '-';
-                    const date = new Date(contact.birthDate);
-                    if (isNaN(date.getTime())) return '-';
-                    return date.toLocaleDateString('fr-FR', { 
-                      day: '2-digit', 
-                      month: '2-digit', 
-                      year: 'numeric'
-                    });
-                  })()}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Nationalité</Label>
-              {editingField === 'nationality' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('nationality')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
-                  >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('nationality', contact.nationality)}
-                >
-                  {contact.nationality || '-'}
-                </div>
-              )}
-            </div>
+                    {contact.nationality || '-'}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1588,130 +1792,138 @@ export function ContactInfoTab({
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-slate-600">Adresse</Label>
-              {editingField === 'address' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('address')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+            {canViewField('address') && (
+              <div>
+                <Label className="text-slate-600">Adresse</Label>
+                {editingField === 'address' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('address')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('address') ? 'editable' : ''}`}
+                    onClick={canEditField('address') ? () => startEditing('address', contact.address) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('address', contact.address)}
-                >
-                  {contact.address || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Complément d'adresse</Label>
-              {editingField === 'addressComplement' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('addressComplement')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.address || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('addressComplement') && (
+              <div>
+                <Label className="text-slate-600">Complément d'adresse</Label>
+                {editingField === 'addressComplement' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('addressComplement')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('addressComplement') ? 'editable' : ''}`}
+                    onClick={canEditField('addressComplement') ? () => startEditing('addressComplement', contact.addressComplement) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('addressComplement', contact.addressComplement)}
-                >
-                  {contact.addressComplement || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Code postal</Label>
-              {editingField === 'postalCode' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('postalCode')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.addressComplement || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('postalCode') && (
+              <div>
+                <Label className="text-slate-600">Code postal</Label>
+                {editingField === 'postalCode' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('postalCode')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('postalCode') ? 'editable' : ''}`}
+                    onClick={canEditField('postalCode') ? () => startEditing('postalCode', contact.postalCode) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('postalCode', contact.postalCode)}
-                >
-                  {contact.postalCode || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Ville</Label>
-              {editingField === 'city' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('city')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.postalCode || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('city') && (
+              <div>
+                <Label className="text-slate-600">Ville</Label>
+                {editingField === 'city' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('city')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('city') ? 'editable' : ''}`}
+                    onClick={canEditField('city') ? () => startEditing('city', contact.city) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('city', contact.city)}
-                >
-                  {contact.city || '-'}
-                </div>
-              )}
-            </div>
+                    {contact.city || '-'}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1723,183 +1935,203 @@ export function ContactInfoTab({
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-slate-600">Source</Label>
-              {editingField === 'sourceId' ? (
-                <div className="contact-field-input-wrapper">
-                  <Select
-                    value={fieldValue || 'none'}
-                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
-                    disabled={isSaving}
-                  >
-                    <SelectTrigger className="flex-1 h-10">
-                      <SelectValue placeholder="Sélectionner une source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucune</SelectItem>
-                      {sources
-                        .filter((source) => source.id && source.id.trim() !== '')
-                        .map((source) => (
-                          <SelectItem key={source.id} value={source.id}>
-                            {source.name}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('sourceId')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
-                  >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('sourceId', contact.sourceId)}
-                >
-                  {contact.source || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Campagne</Label>
-              {editingField === 'campaign' ? (
-                <div className="contact-field-input-wrapper">
-                  <Input
-                    value={fieldValue}
-                    onChange={(e) => setFieldValue(e.target.value)}
-                    disabled={isSaving}
-                    className="flex-1 h-10"
-                  />
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('campaign')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
-                  >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => startEditing('campaign', contact.campaign)}
-                >
-                  {contact.campaign || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Téléopérateur</Label>
-              {editingField === 'teleoperatorId' ? (
-                <div className="contact-field-input-wrapper">
-                  <Select
-                    value={fieldValue || 'none'}
-                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
-                    disabled={isSaving}
-                  >
-                    <SelectTrigger className="flex-1 h-10">
-                      <SelectValue placeholder="Sélectionner un téléopérateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                      {users
-                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
-                        .map((user) => {
-                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                          return (
-                            <SelectItem key={user.id} value={user.id}>
-                              {displayName}
+            {canViewField('sourceId') && (
+              <div>
+                <Label className="text-slate-600">Source</Label>
+                {editingField === 'sourceId' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner une source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucune</SelectItem>
+                        {sources
+                          .filter((source) => source.id && source.id.trim() !== '')
+                          .map((source) => (
+                            <SelectItem key={source.id} value={source.id}>
+                              {source.name}
                             </SelectItem>
-                          );
-                        })}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('teleoperatorId')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('sourceId')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('sourceId') ? 'editable' : ''}`}
+                    onClick={canEditField('sourceId') ? () => startEditing('sourceId', contact.sourceId) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => {
-                    if (canEdit && canEditContact(contact)) {
-                      startEditing('teleoperatorId', contact.teleoperatorId || contact.managerId);
-                    }
-                  }}
-                >
-                  {contact.teleoperatorName || contact.managerName || '-'}
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600">Confirmateur</Label>
-              {editingField === 'confirmateurId' ? (
-                <div className="contact-field-input-wrapper">
-                  <Select
-                    value={fieldValue || 'none'}
-                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
-                    disabled={isSaving}
+                    {contact.source || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('campaign') && (
+              <div>
+                <Label className="text-slate-600">Campagne</Label>
+                {editingField === 'campaign' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('campaign')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('campaign') ? 'editable' : ''}`}
+                    onClick={canEditField('campaign') ? () => startEditing('campaign', contact.campaign) : undefined}
                   >
-                    <SelectTrigger className="flex-1 h-10">
-                      <SelectValue placeholder="Sélectionner un confirmateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Aucun confirmateur</SelectItem>
-                      {users
-                        ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
-                        .map((user) => {
-                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                          return (
-                            <SelectItem key={user.id} value={user.id}>
-                              {displayName}
-                            </SelectItem>
-                          );
-                        })}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('confirmateurId')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    {contact.campaign || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('teleoperatorId') && (
+              <div>
+                <Label className="text-slate-600">Téléopérateur</Label>
+                {editingField === 'teleoperatorId' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                      onOpenChange={(open) => {
+                        // Auto-fill with current user if they are a teleoperateur and field is empty
+                        if (open && (!fieldValue || fieldValue === 'none' || fieldValue === '') && currentUser?.isTeleoperateur && currentUser?.id) {
+                          setFieldValue(currentUser.id);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner un téléopérateur" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                        {users
+                          ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                          .map((user) => {
+                            const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                            return (
+                              <SelectItem key={user.id} value={user.id}>
+                                {displayName}
+                              </SelectItem>
+                            );
+                          })}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      type="button"
+                      size="sm" 
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('[Button] Enregistrer clicked, fieldValue:', fieldValue, 'isSaving:', isSaving);
+                        if (!isSaving) {
+                          try {
+                            await saveField('teleoperatorId');
+                          } catch (error) {
+                            console.error('[Button] Error in saveField:', error);
+                          }
+                        } else {
+                          console.log('[Button] Button is disabled, not saving');
+                        }
+                      }} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('teleoperatorId') ? 'editable' : ''}`}
+                    onClick={canEditField('teleoperatorId') ? () => startEditing('teleoperatorId', contact.teleoperatorId || contact.managerId) : undefined}
                   >
-                    Enregistrer
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
-                </div>
-              ) : (
-                <div 
-                  className={`contact-field-display ${canEdit ? 'editable' : ''}`}
-                  onClick={() => {
-                    if (canEdit && canEditContact(contact)) {
-                      startEditing('confirmateurId', contact.confirmateurId);
-                    }
-                  }}
-                >
-                  {contact.confirmateurName || '-'}
-                </div>
-              )}
-            </div>
+                    {contact.teleoperatorName || contact.managerName || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('confirmateurId') && (
+              <div>
+                <Label className="text-slate-600">Confirmateur</Label>
+                {editingField === 'confirmateurId' ? (
+                  <div className="contact-field-input-wrapper">
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner un confirmateur" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun confirmateur</SelectItem>
+                        {users
+                          ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
+                          .map((user) => {
+                            const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                            return (
+                              <SelectItem key={user.id} value={user.id}>
+                                {displayName}
+                              </SelectItem>
+                            );
+                          })}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('confirmateurId')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSaving}>✕</Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('confirmateurId') ? 'editable' : ''}`}
+                    onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', contact.confirmateurId) : undefined}
+                  >
+                    {contact.confirmateurName || '-'}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

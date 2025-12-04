@@ -475,8 +475,22 @@ export function AddContact() {
                 <Select
                   value={formData.teleoperatorId || 'none'}
                   onValueChange={(value) => setFormData({ ...formData, teleoperatorId: value === 'none' ? '' : value })}
+                  onOpenChange={(open) => {
+                    // Auto-fill with current user if they are a teleoperateur and field is empty
+                    if (open && !formData.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
+                      setFormData({ ...formData, teleoperatorId: currentUser.id });
+                    }
+                  }}
                 >
-                  <SelectTrigger id="teleoperatorId">
+                  <SelectTrigger 
+                    id="teleoperatorId"
+                    onClick={() => {
+                      // Auto-fill with current user if they are a teleoperateur and field is empty
+                      if (!formData.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
+                        setFormData({ ...formData, teleoperatorId: currentUser.id });
+                      }
+                    }}
+                  >
                     <SelectValue placeholder="Sélectionner un téléopérateur" />
                   </SelectTrigger>
                   <SelectContent>

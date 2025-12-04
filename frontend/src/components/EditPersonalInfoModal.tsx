@@ -464,8 +464,22 @@ export function EditPersonalInfoModal({
                 <Select
                   value={editPersonalInfoForm.teleoperatorId || 'none'}
                   onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: value === 'none' ? '' : value })}
+                  onOpenChange={(open) => {
+                    // Auto-fill with current user if they are a teleoperateur and field is empty
+                    if (open && !editPersonalInfoForm.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
+                      setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: currentUser.id });
+                    }
+                  }}
                 >
-                  <SelectTrigger id="editTeleoperatorId">
+                  <SelectTrigger 
+                    id="editTeleoperatorId"
+                    onClick={() => {
+                      // Auto-fill with current user if they are a teleoperateur and field is empty
+                      if (!editPersonalInfoForm.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
+                        setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: currentUser.id });
+                      }
+                    }}
+                  >
                     <SelectValue placeholder="Sélectionner un téléopérateur" />
                   </SelectTrigger>
                   <SelectContent>

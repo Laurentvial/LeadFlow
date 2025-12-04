@@ -243,6 +243,8 @@ export function ContactList({
   const [columnFilters, setColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
   const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
+  const [statusColumnFilterType, setStatusColumnFilterType] = useState<'all' | 'lead' | 'client'>('all');
+  const [statusModalFilterType, setStatusModalFilterType] = useState<'all' | 'lead' | 'client'>('all');
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
@@ -271,7 +273,7 @@ export function ContactList({
     { id: 'mobile', label: 'Portable', defaultVisible: false },
     { id: 'email', label: 'E-Mail', defaultVisible: true },
     { id: 'status', label: 'Statut', defaultVisible: true },
-    { id: 'updatedAt', label: 'Modifié le', defaultVisible: false },
+    { id: 'updatedAt', label: 'Modifié le', defaultVisible: true },
     { id: 'notes', label: 'Notes', defaultVisible: true },
     { id: 'id', label: 'Id', defaultVisible: true },
     { id: 'firstName', label: 'Prénom', defaultVisible: false },
@@ -608,6 +610,10 @@ export function ContactList({
       delete newTerms[columnId];
       return newTerms;
     });
+    // Reset status type filter if this is the status column
+    if (columnId === 'status') {
+      setStatusColumnFilterType('all');
+    }
     // loadData will be called by useEffect when applied filters change
   }
   
@@ -641,6 +647,10 @@ export function ContactList({
       delete newTerms[columnId];
       return newTerms;
     });
+    // Reset status type filter if this is the status column
+    if (columnId === 'status') {
+      setStatusColumnFilterType('all');
+    }
   }
 
   // Reset filters
@@ -673,7 +683,7 @@ export function ContactList({
   };
   
   // Helper function to get filter options for Select columns
-  const getFilterOptions = (columnId: string) => {
+  const getFilterOptions = (columnId: string, statusTypeFilter: 'all' | 'lead' | 'client' = 'all') => {
     const options: Array<{ id: string; label: string }> = [];
     
     // Add empty option first
@@ -687,6 +697,12 @@ export function ContactList({
         const statusOptions = statuses
           .filter((status) => {
             if (!status.id || status.id.trim() === '') return false;
+            
+            // Filter by status type if specified
+            if (statusTypeFilter !== 'all' && status.type !== statusTypeFilter) {
+              return false;
+            }
+            
             if (isFossePage) {
               // Fosse page: show all statuses in filter
               return true;
@@ -1143,8 +1159,8 @@ export function ContactList({
       case 'updatedAt':
         return (
           <td key={columnId}>
-            {contact.updatedAt 
-              ? new Date(contact.updatedAt).toLocaleString('fr-FR', {
+            {contact.lastLogDate 
+              ? new Date(contact.lastLogDate).toLocaleString('fr-FR', {
                   dateStyle: 'short',
                   timeStyle: 'short'
                 })
@@ -1186,7 +1202,8 @@ export function ContactList({
             {canEditStatus ? (
               <span 
                 className="contacts-status-badge cursor-pointer"
-                onClick={async () => {
+                onClick={async (e) => {
+                  e.stopPropagation(); // Prevent row click from opening contact detail
                   // Fetch fresh contact data from API to ensure we have the latest status
                   try {
                     const contactData = await apiCall(`/api/contacts/${contact.id}/`);
@@ -1512,6 +1529,7 @@ export function ContactList({
       setSelectedContact(null);
       setSelectedStatusId('');
       setStatusChangeNote('');
+      setStatusModalFilterType('all');
       // Wait for loadData to complete to ensure fresh data for next modal open
       await loadData();
     } catch (error: any) {
@@ -1593,13 +1611,16 @@ export function ContactList({
                           open={openFilterColumn === columnId}
                           onOpenChange={(open) => {
                             setOpenFilterColumn(open ? columnId : null);
-                            // Clear search term when closing
+                            // Clear search term and status type filter when closing
                             if (!open) {
                               setColumnFilterSearchTerms(prev => {
                                 const newTerms = { ...prev };
                                 delete newTerms[columnId];
                                 return newTerms;
                               });
+                              if (columnId === 'status') {
+                                setStatusColumnFilterType('all');
+                              }
                             }
                             // Initialize pending filter with current applied filter when opening
                             if (open && isDateColumn(columnId)) {
@@ -1659,6 +1680,46 @@ export function ContactList({
                               </div>
                               {shouldUseMultiSelectFilter(columnId) ? (
                                 <>
+                                  {columnId === 'status' && (
+                                    <div className="mb-2 flex gap-2">
+                                      <Button
+                                        type="button"
+                                        variant={statusColumnFilterType === 'all' ? 'default' : 'outline'}
+                                        size="sm"
+                                        className="flex-1 h-8 text-xs"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setStatusColumnFilterType('all');
+                                        }}
+                                      >
+                                        Tous
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant={statusColumnFilterType === 'lead' ? 'default' : 'outline'}
+                                        size="sm"
+                                        className="flex-1 h-8 text-xs"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setStatusColumnFilterType('lead');
+                                        }}
+                                      >
+                                        Lead
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant={statusColumnFilterType === 'client' ? 'default' : 'outline'}
+                                        size="sm"
+                                        className="flex-1 h-8 text-xs"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setStatusColumnFilterType('client');
+                                        }}
+                                      >
+                                        Client
+                                      </Button>
+                                    </div>
+                                  )}
                                   <div className="mb-2 border-b border-border pb-2 space-y-2">
                                     <div className="relative">
                                       <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -1679,7 +1740,8 @@ export function ContactList({
                                     </div>
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const allOptions = getFilterOptions(columnId);
+                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'all';
+                                      const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       const emptyOption = allOptions.find(opt => opt.id === '__empty__');
                                       const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
                                       const filteredOtherOptions = searchTerm
@@ -1743,7 +1805,8 @@ export function ContactList({
                                   >
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const allOptions = getFilterOptions(columnId);
+                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'all';
+                                      const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       
                                       // Always show empty option first, then filter other options
                                       const emptyOption = allOptions.find(opt => opt.id === '__empty__');
@@ -2004,7 +2067,8 @@ export function ContactList({
                             target.closest('input') ||
                             target.closest('[role="button"]') ||
                             target.closest('[data-radix-popper-content-wrapper]') ||
-                            target.closest('.contacts-checkbox')
+                            target.closest('.contacts-checkbox') ||
+                            target.closest('.contacts-status-badge')
                           ) {
                             return; // Don't open contact detail
                           }
@@ -2432,6 +2496,7 @@ export function ContactList({
           setSelectedContact(null);
           setSelectedStatusId('');
           setStatusChangeNote('');
+          setStatusModalFilterType('all');
         }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -2446,6 +2511,7 @@ export function ContactList({
                   setSelectedContact(null);
                   setSelectedStatusId('');
                   setStatusChangeNote('');
+                  setStatusModalFilterType('all');
                 }}
               >
                 <X className="planning-icon-md" />
@@ -2454,6 +2520,44 @@ export function ContactList({
             <div className="modal-form">
               <div className="modal-form-field">
                 <Label htmlFor="statusSelect">Statut</Label>
+                <div className="mb-2 flex gap-2">
+                  <Button
+                    type="button"
+                    variant={statusModalFilterType === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    className="flex-1 h-8 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatusModalFilterType('all');
+                    }}
+                  >
+                    Tous
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={statusModalFilterType === 'lead' ? 'default' : 'outline'}
+                    size="sm"
+                    className="flex-1 h-8 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatusModalFilterType('lead');
+                    }}
+                  >
+                    Lead
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={statusModalFilterType === 'client' ? 'default' : 'outline'}
+                    size="sm"
+                    className="flex-1 h-8 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatusModalFilterType('client');
+                    }}
+                  >
+                    Client
+                  </Button>
+                </div>
                 <Select
                   value={selectedStatusId ? selectedStatusId.toString() : undefined}
                   onValueChange={(value) => setSelectedStatusId(value)}
@@ -2491,7 +2595,12 @@ export function ContactList({
                         if (!status.id || status.id.trim() === '') return false;
                         // Filter by view permissions
                         const normalizedStatusId = String(status.id).trim();
-                        return statusViewPermissions.has(normalizedStatusId);
+                        if (!statusViewPermissions.has(normalizedStatusId)) return false;
+                        // Filter by status type
+                        if (statusModalFilterType !== 'all' && status.type !== statusModalFilterType) {
+                          return false;
+                        }
+                        return true;
                       })
                       .map((status) => (
                         <SelectItem key={status.id} value={status.id.toString()}>
@@ -2547,6 +2656,7 @@ export function ContactList({
                     setSelectedContact(null);
                     setSelectedStatusId('');
                     setStatusChangeNote('');
+                    setStatusModalFilterType('all');
                   }}
                 >
                   Annuler
