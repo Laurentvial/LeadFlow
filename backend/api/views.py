@@ -383,7 +383,12 @@ class NoteListCreateView(generics.ListCreateAPIView):
                 
                 # If we have specific category permissions, return them
                 if category_permission_field_names:
-                    result = list(category_permission_field_names)
+                    # Ensure all category IDs are strings and strip whitespace (NoteCategory.id is CharField)
+                    result = [str(cat_id).strip() for cat_id in category_permission_field_names if cat_id]
+                    # Log for debugging - verify all categories are included
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"User {user.username} has access to {len(result)} note categories: {result}")
                 else:
                     # No permissions found - return empty list
                     result = []
@@ -443,9 +448,15 @@ class NoteListCreateView(generics.ListCreateAPIView):
             try:
                 # User has specific category permissions - filter notes
                 # Include notes with null category (no category assigned) and notes with accessible categories
-                queryset = queryset.filter(
-                    models.Q(categ_id__isnull=True) | models.Q(categ_id__id__in=accessible_category_ids)
-                )
+                # Ensure accessible_category_ids is a list of strings (already normalized with strip() in get_user_accessible_category_ids)
+                accessible_ids = [str(cat_id).strip() for cat_id in accessible_category_ids if cat_id] if accessible_category_ids else []
+                if accessible_ids:
+                    queryset = queryset.filter(
+                        models.Q(categ_id__isnull=True) | models.Q(categ_id__id__in=accessible_ids)
+                    )
+                else:
+                    # No accessible category IDs - only show notes with no category
+                    queryset = queryset.filter(categ_id__isnull=True)
             except Exception as e:
                 # If filtering fails (e.g., categ_id field doesn't exist), just return all notes
                 import logging
@@ -455,6 +466,71 @@ class NoteListCreateView(generics.ListCreateAPIView):
         # If accessible_category_ids is None, user has general permission - show all notes
         
         return queryset
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Override list to return all notes without pagination when contactId is provided.
+        This ensures the popover shows all notes for a contact.
+        Notes are filtered by user's category permissions.
+        """
+        contact_id = request.query_params.get('contactId', None)
+        
+        # If contactId is provided, return all notes without pagination
+        if contact_id:
+            # get_queryset() already applies permission filtering
+            queryset = self.get_queryset()
+            # filter_queryset() applies any additional filter backends (if any)
+            queryset = self.filter_queryset(queryset)
+            
+            # Double-check permissions at the serializer level for extra security
+            # Get accessible category IDs
+            try:
+                accessible_category_ids = self.get_user_accessible_category_ids(request.user)
+                if accessible_category_ids is not None:
+                    # User has specific permissions - ensure we only return notes from allowed categories
+                    notes_list = list(queryset)
+                    filtered_notes = []
+                    normalized_accessible_ids = [str(cid).strip() for cid in accessible_category_ids]
+                    
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Filtering notes: user has access to {len(normalized_accessible_ids)} categories: {normalized_accessible_ids}, total notes before filter: {len(notes_list)}")
+                    
+                    for note in notes_list:
+                        # Include notes with no category
+                        if note.categ_id is None:
+                            filtered_notes.append(note)
+                            logger.debug(f"Including note {note.id} (no category)")
+                        # Include notes with accessible categories - strict comparison
+                        elif note.categ_id:
+                            note_category_id = str(note.categ_id.id).strip()
+                            if note_category_id in normalized_accessible_ids:
+                                filtered_notes.append(note)
+                                logger.debug(f"Including note {note.id} with category {note_category_id}")
+                            else:
+                                logger.debug(f"Filtered out note {note.id} with category {note_category_id} (not in accessible list: {normalized_accessible_ids})")
+                    
+                    logger.debug(f"After filtering: {len(filtered_notes)} notes remain")
+                    
+                    # Create a new queryset with filtered notes
+                    if filtered_notes:
+                        note_ids = [note.id for note in filtered_notes]
+                        queryset = queryset.filter(id__in=note_ids)
+                    else:
+                        # No notes match permissions - return empty queryset
+                        queryset = queryset.none()
+            except Exception as e:
+                # If permission check fails, log error but still return queryset (which should be filtered by get_queryset)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in double-checking note permissions: {e}", exc_info=True)
+                # Continue with queryset - it should already be filtered by get_queryset()
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
+        
+        # Otherwise, use default pagination behavior
+        return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         # serializer is already validated at this point
@@ -622,7 +698,7 @@ class ContactView(generics.ListAPIView):
             ),
             Prefetch(
                 'contact_notes',
-                queryset=Note.objects.order_by('-created_at')
+                queryset=Note.objects.select_related('categ_id').order_by('-created_at')
             )
         )
         
@@ -1144,7 +1220,7 @@ class FosseContactView(generics.ListAPIView):
             ),
             Prefetch(
                 'contact_notes',
-                queryset=Note.objects.order_by('-created_at')
+                queryset=Note.objects.select_related('categ_id').order_by('-created_at')
             )
         )
         

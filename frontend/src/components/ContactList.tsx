@@ -17,7 +17,7 @@ import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
 import { useSources } from '../hooks/useSources';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useHasPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import { formatPhoneNumber } from '../utils/phoneNumber';
@@ -73,6 +73,53 @@ export function ContactList({
   
   // Get current user for default permission functions
   const { currentUser } = useUser();
+  
+  // Get accessible category IDs based on view permissions (same logic as ContactInfoTab)
+  const accessibleCategoryIds = useAccessibleNoteCategoryIds();
+  
+  // Check if user has general view permission (can see all notes regardless of category)
+  const hasGeneralViewPermission = React.useMemo(() => {
+    return currentUser?.permissions?.some((p: any) => 
+      p.component === 'note_categories' && 
+      p.action === 'view' && 
+      !p.fieldName && 
+      !p.statusId
+    ) || false;
+  }, [currentUser?.permissions]);
+  
+  // Helper function to filter notes by permissions (exact same logic as ContactInfoTab)
+  const filterNotesByPermissions = useCallback((notes: any[]) => {
+    if (!notes || notes.length === 0) {
+      return [];
+    }
+    
+    const filtered = notes.filter((note: any) => {
+      // If user has general view permission, show all notes
+      if (hasGeneralViewPermission) {
+        return true;
+      }
+      // If note has no category, show it (null category notes are accessible)
+      if (!note.categId) {
+        return true;
+      }
+      // Only show if user has view permission for this category
+      // Normalize both sides for comparison (handle string/number mismatches)
+      const noteCategoryId = String(note.categId).trim();
+      const normalizedAccessibleIds = accessibleCategoryIds.map(id => String(id).trim());
+      const hasPermission = normalizedAccessibleIds.includes(noteCategoryId);
+      
+      if (!hasPermission) {
+        console.debug(`[Notes Filter] Filtered out note ${note.id} with category "${noteCategoryId}" (type: ${typeof note.categId}). Accessible categories:`, normalizedAccessibleIds);
+      }
+      return hasPermission;
+    });
+    
+    if (notes.length !== filtered.length) {
+      console.debug(`[Notes Filter] Filtered ${notes.length} notes down to ${filtered.length}. Has general permission: ${hasGeneralViewPermission}, Accessible categories:`, accessibleCategoryIds);
+    }
+    
+    return filtered;
+  }, [hasGeneralViewPermission, accessibleCategoryIds]);
   
   // Check if user has permission requiring note for status change
   const requiresNoteForStatusChange = React.useMemo(() => {
@@ -979,7 +1026,9 @@ export function ContactList({
     setNotesLoading(prev => ({ ...prev, [contactId]: true }));
     try {
       const data = await apiCall(`/api/notes/?contactId=${contactId}`);
-      const notesArray = Array.isArray(data) ? data : (data.notes || []);
+      // Handle both paginated response (data.results) and direct array response
+      const notesArray = Array.isArray(data) ? data : (data.results || data.notes || []);
+      // Store raw notes - filtering will happen at display time with current permissions
       setNotesData(prev => ({ ...prev, [contactId]: notesArray }));
     } catch (error) {
       console.error('Error loading notes:', error);
@@ -1266,9 +1315,16 @@ export function ContactList({
       case 'notes':
         const notesCount = contact.notesCount || 0;
         const notesText = contact.notesLatestText || '';
-        const contactNotes = notesData[contact.id] || [];
+        const rawContactNotes = notesData[contact.id] || [];
         const isLoadingNotes = notesLoading[contact.id];
         const isPopoverOpen = notesPopoverOpen === contact.id;
+        
+        // Filter notes by permissions (same logic as ContactInfoTab)
+        const filteredContactNotes = filterNotesByPermissions(rawContactNotes);
+        
+        // Use actual filtered notes count if notes have been loaded, otherwise use the pre-calculated count
+        const hasLoadedNotes = contact.id in notesData;
+        const displayedNotesCount = hasLoadedNotes ? filteredContactNotes.length : notesCount;
         
         return (
           <td 
@@ -1324,16 +1380,23 @@ export function ContactList({
                 style={{ zIndex: 10002 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Notes ({notesCount})</h3>
+                  <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Notes ({displayedNotesCount})</h3>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                   {isLoadingNotes ? (
                     <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
                       Chargement...
                     </div>
-                  ) : contactNotes.length > 0 ? (
+                  ) : filteredContactNotes.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', minWidth: 0 }}>
-                      {contactNotes.map((note: any) => (
+                      {filteredContactNotes
+                        .sort((a: any, b: any) => {
+                          // Sort by date descending (most recent first)
+                          const dateA = new Date(a.createdAt || a.created_at).getTime();
+                          const dateB = new Date(b.createdAt || b.created_at).getTime();
+                          return dateB - dateA;
+                        })
+                        .map((note: any) => (
                         <div key={note.id} style={{ fontSize: '0.875rem', color: '#374151', lineHeight: '1.6', width: '100%', minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
                             {note.categoryName && (
@@ -2801,5 +2864,3 @@ export function ContactList({
     </div>
   );
 }
-
-export default ContactList;

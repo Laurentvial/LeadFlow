@@ -61,7 +61,8 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       // Handle notes result
       if (notesResult.status === 'fulfilled') {
         const notesData = notesResult.value;
-        const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).notes || notesData || []);
+        // Handle both paginated response (data.results) and direct array response
+        const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).results || (notesData as any).notes || notesData || []);
         setNotes(notesArray);
       } else {
         console.error('Error loading notes:', notesResult.reason);

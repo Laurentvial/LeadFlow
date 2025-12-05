@@ -207,6 +207,61 @@ class ContactSerializer(serializers.ModelSerializer):
         # Phone and mobile are handled via SerializerMethodField above
         # The queryset defers these fields to avoid ORM conversion errors
     
+    def get_user_accessible_category_ids(self, user):
+        """Get list of note category IDs the user has view permission for"""
+        from .models import UserDetails, Permission, PermissionRole
+        
+        try:
+            # Optimize query with select_related and prefetch_related
+            user_details = UserDetails.objects.select_related('role_id').prefetch_related(
+                'role_id__permission_roles__permission'
+            ).get(django_user=user)
+            
+            if not user_details.role_id:
+                # No role - return empty list (no access)
+                return []
+            
+            role = user_details.role_id
+            
+            # Get all permission roles for this role - already prefetched, so no additional query
+            permission_roles = role.permission_roles.all()
+            
+            # Build sets of permission IDs for faster lookup
+            category_permission_field_names = set()
+            
+            for perm_role in permission_roles:
+                # Permission is already prefetched, so this won't cause additional queries
+                perm = perm_role.permission
+                if (perm.component == 'note_categories' and 
+                    perm.action == 'view' and 
+                    perm.field_name is None and 
+                    perm.status is None):
+                    # User has general permission - can see all categories
+                    return None
+                elif (perm.component == 'note_categories' and 
+                      perm.action == 'view' and 
+                      perm.field_name is not None):
+                    # Specific category permission
+                    category_permission_field_names.add(perm.field_name)
+            
+            # If we have specific category permissions, return them
+            if category_permission_field_names:
+                # Ensure all category IDs are strings and strip whitespace (NoteCategory.id is CharField)
+                return [str(cat_id).strip() for cat_id in category_permission_field_names if cat_id]
+            else:
+                # No permissions found - return empty list
+                return []
+        except UserDetails.DoesNotExist:
+            # User has no UserDetails - return empty list (no access)
+            return []
+        except Exception as e:
+            # If there's any error (e.g., NoteCategory doesn't exist yet), allow all notes
+            # This prevents errors when the database hasn't been migrated yet
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error checking note category permissions in ContactSerializer: {e}")
+            return None  # Allow all notes if there's an error
+    
     def get_firstName(self, obj):
         return obj.fname
     
@@ -355,13 +410,43 @@ class ContactSerializer(serializers.ModelSerializer):
         # Use prefetched data if available, otherwise query
         if hasattr(instance, '_prefetched_objects_cache') and 'contact_notes' in instance._prefetched_objects_cache:
             notes_list = list(instance._prefetched_objects_cache['contact_notes'])
-            notes_count = len(notes_list)
-            latest_note = notes_list[0] if notes_list else None
         else:
             notes = instance.contact_notes.all()
             notes_list = list(notes)
-            notes_count = len(notes_list)
-            latest_note = notes_list[0] if notes_list else None
+        
+        # Filter notes by user's category permissions
+        request = self.context.get('request') if self.context else None
+        if request and request.user:
+            try:
+                accessible_category_ids = self.get_user_accessible_category_ids(request.user)
+                
+                if accessible_category_ids is not None:
+                    # User has specific category permissions - filter notes
+                    # Include notes with null category (no category assigned) and notes with accessible categories
+                    filtered_notes = []
+                    for note in notes_list:
+                        # Note with no category is always accessible
+                        if note.categ_id is None:
+                            filtered_notes.append(note)
+                        # Check if note's category ID is in accessible list
+                        elif note.categ_id:
+                            # categ_id is a ForeignKey, access the id attribute
+                            # Ensure category_id is a string and strip whitespace for comparison (NoteCategory.id is CharField)
+                            category_id = str(note.categ_id.id).strip() if hasattr(note.categ_id, 'id') else str(note.categ_id).strip()
+                            # Normalize accessible_category_ids for comparison
+                            normalized_accessible_ids = [str(cid).strip() for cid in accessible_category_ids]
+                            if category_id in normalized_accessible_ids:
+                                filtered_notes.append(note)
+                    notes_list = filtered_notes
+                # If accessible_category_ids is None, user has general permission - show all notes (no filtering needed)
+            except Exception as e:
+                # If there's an error checking permissions, show all notes (fail open)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error filtering notes by permissions in ContactSerializer: {e}")
+        
+        notes_count = len(notes_list)
+        latest_note = notes_list[0] if notes_list else None
         
         ret['notesCount'] = notes_count
         ret['notesLatestText'] = latest_note.text[:100] if latest_note else ''  # First 100 chars
