@@ -352,9 +352,17 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['nationality'] = ret.get('nationality', '') or ''
         
         # Add notes information
-        notes = instance.contact_notes.all()
-        notes_count = notes.count()
-        latest_note = notes.first()
+        # Use prefetched data if available, otherwise query
+        if hasattr(instance, '_prefetched_objects_cache') and 'contact_notes' in instance._prefetched_objects_cache:
+            notes_list = list(instance._prefetched_objects_cache['contact_notes'])
+            notes_count = len(notes_list)
+            latest_note = notes_list[0] if notes_list else None
+        else:
+            notes = instance.contact_notes.all()
+            notes_list = list(notes)
+            notes_count = len(notes_list)
+            latest_note = notes_list[0] if notes_list else None
+        
         ret['notesCount'] = notes_count
         ret['notesLatestText'] = latest_note.text[:100] if latest_note else ''  # First 100 chars
         ret['hasNotes'] = notes_count > 0
