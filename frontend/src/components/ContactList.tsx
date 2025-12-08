@@ -5,7 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -21,6 +21,7 @@ import { useHasPermission, useAccessibleNoteCategoryIds } from '../hooks/usePerm
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import { formatPhoneNumber } from '../utils/phoneNumber';
+import { ACCESS_TOKEN } from '../utils/constants';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -72,7 +73,7 @@ export function ContactList({
   const { sources, loading: sourcesLoading } = useSources();
   
   // Get current user for default permission functions
-  const { currentUser } = useUser();
+  const { currentUser, loading: userLoading } = useUser();
   
   // Get accessible category IDs based on view permissions (same logic as ContactInfoTab)
   const accessibleCategoryIds = useAccessibleNoteCategoryIds();
@@ -170,9 +171,6 @@ export function ContactList({
       return new Set<string>();
     }
     
-    // Debug: Log all permissions to see what we're getting
-    console.log('[DEBUG] All user permissions:', currentUser.permissions);
-    
     const viewPerms = currentUser.permissions
       .filter((p: any) => {
         // Check for status-specific view permissions
@@ -183,18 +181,6 @@ export function ContactList({
                p.statusId !== undefined && 
                p.statusId !== '';
         
-        // Debug: Log permissions that match the filter
-        if (p.component === 'statuses' && p.action === 'view') {
-          console.log('[DEBUG] Found statuses view permission:', {
-            id: p.id,
-            component: p.component,
-            action: p.action,
-            statusId: p.statusId,
-            statusIdType: typeof p.statusId,
-            matches: matches
-          });
-        }
-        
         return matches;
       })
       .map((p: any) => {
@@ -202,12 +188,9 @@ export function ContactList({
         if (!statusId) return null;
         // Normalize statusId to string and trim whitespace
         const normalizedId = String(statusId).trim();
-        console.log('[DEBUG] Normalized statusId:', { original: statusId, normalized: normalizedId });
         return normalizedId !== '' ? normalizedId : null;
       })
       .filter((id): id is string => id !== null && id !== '');
-    
-    console.log('[DEBUG] Final statusViewPermissions Set:', Array.from(viewPerms));
     
     return new Set(viewPerms);
   }, [currentUser?.permissions]);
@@ -290,8 +273,8 @@ export function ContactList({
   const [columnFilters, setColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
   const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
-  const [statusColumnFilterType, setStatusColumnFilterType] = useState<'all' | 'lead' | 'client'>('all');
-  const [statusModalFilterType, setStatusModalFilterType] = useState<'all' | 'lead' | 'client'>('all');
+  const [statusColumnFilterType, setStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
+  const [statusModalFilterType, setStatusModalFilterType] = useState<'lead' | 'client'>('lead');
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
@@ -304,12 +287,25 @@ export function ContactList({
   const [selectedStatusId, setSelectedStatusId] = useState('');
   const [statusChangeNote, setStatusChangeNote] = useState('');
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
+  // Event fields for status with is_event=true
+  const [eventDate, setEventDate] = useState('');
+  const [eventHour, setEventHour] = useState('09');
+  const [eventMinute, setEventMinute] = useState('00');
+  const [eventComment, setEventComment] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // Confirmation modal state for status change warning
+  const [isStatusChangeConfirmOpen, setIsStatusChangeConfirmOpen] = useState(false);
+  const [pendingBulkAction, setPendingBulkAction] = useState<{
+    type: 'teleoperator' | 'confirmateur';
+    value: string;
+    affectedCount: number;
+  } | null>(null);
   const [notesPopoverOpen, setNotesPopoverOpen] = useState<string | null>(null);
   const [notesData, setNotesData] = useState<Record<string, any[]>>({});
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
   const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
-  const hoverTimeoutRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const hoverTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   
   // Define all available columns
   const allColumns = [
@@ -340,9 +336,18 @@ export function ContactList({
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
   ];
   
+  // Check if this is the Fosse page (before using it in localStorage keys)
+  const isFossePage = apiEndpoint.includes('/fosse/');
+  
   // Load column visibility and order from localStorage or use defaults
+  // Use separate localStorage keys for Contacts vs Fosse to avoid conflicts
+  const getStorageKey = (suffix: string) => {
+    return isFossePage ? `fosse-table-${suffix}` : `contacts-table-${suffix}`;
+  };
+  
   const getInitialColumnOrder = () => {
-    const saved = localStorage.getItem('contacts-table-column-order');
+    const storageKey = getStorageKey('column-order');
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const savedOrder = JSON.parse(saved);
@@ -358,7 +363,8 @@ export function ContactList({
   };
   
   const getInitialVisibleColumns = () => {
-    const saved = localStorage.getItem('contacts-table-columns');
+    const storageKey = getStorageKey('columns');
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -372,19 +378,336 @@ export function ContactList({
   const [columnOrder, setColumnOrder] = useState<string[]>(getInitialColumnOrder());
   const [visibleColumns, setVisibleColumns] = useState<string[]>(getInitialVisibleColumns());
   
+  // Fosse settings state
+  const [fosseSettings, setFosseSettings] = useState<{
+    forcedColumns: string[];
+    forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[] }>;
+    defaultOrder?: 'default' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+  } | null>(null);
+  const [fosseSettingsLoading, setFosseSettingsLoading] = useState(false);
+  
+  // Ref to track last applied forced filters to prevent infinite loops
+  const lastAppliedForcedFiltersRef = React.useRef<string>('');
+  
+  // Ref to track forced filters that should always be applied (persists across re-renders)
+  const forcedFiltersAppliedRef = React.useRef<Record<string, string | string[] | { from?: string; to?: string }>>({});
+  
+  // Ref to track if loadData is currently running to prevent concurrent calls
+  const isLoadingDataRef = React.useRef<boolean>(false);
+  
+  // Get forced status filter values from Fosse settings (for status modal filtering)
+  const forcedStatusFilterValues = React.useMemo(() => {
+    if (!isFossePage || !fosseSettings) {
+      return null;
+    }
+    const forcedFilters = fosseSettings.forcedFilters || {};
+    const statusFilter = forcedFilters['status'];
+    if (statusFilter && statusFilter.type === 'defined' && statusFilter.values && statusFilter.values.length > 0) {
+      // Normalize status IDs to strings for comparison
+      return new Set(statusFilter.values.map((id: string) => String(id).trim()));
+    }
+    return null;
+  }, [isFossePage, fosseSettings]);
+  
+  // Load Fosse settings for current user's role
+  useEffect(() => {
+    if (isFossePage && currentUser?.role) {
+      const loadFosseSettings = async () => {
+        try {
+          setFosseSettingsLoading(true);
+          const data = await apiCall(`/api/fosse-settings/${currentUser.role}/`);
+          setFosseSettings({
+            forcedColumns: data.forcedColumns || [],
+            forcedFilters: data.forcedFilters || {},
+            defaultOrder: data.defaultOrder || 'default',
+          });
+        } catch (error: any) {
+          console.error('[FOSSE DEBUG] Error loading Fosse settings:', error);
+          // If settings don't exist, use defaults
+          setFosseSettings({
+            forcedColumns: [],
+            forcedFilters: {},
+            defaultOrder: 'default',
+          });
+        } finally {
+          setFosseSettingsLoading(false);
+        }
+      };
+      loadFosseSettings();
+    }
+  }, [isFossePage, currentUser?.role]);
+  
+  // Apply forced columns when Fosse settings are loaded
+  useEffect(() => {
+    if (isFossePage && fosseSettings && !fosseSettingsLoading) {
+      const forcedColumns = fosseSettings.forcedColumns || [];
+      if (forcedColumns.length > 0) {
+        // If forced columns are set, ONLY show the forced columns (restrict visibility)
+        // Filter visible columns to only include those in forcedColumns
+        const restrictedColumns = visibleColumns.filter(col => forcedColumns.includes(col));
+        // Ensure all forced columns are visible (add any missing ones)
+        const finalVisibleColumns = Array.from(new Set([...forcedColumns, ...restrictedColumns]));
+        
+        // Only update if there's a change to avoid infinite loops
+        if (JSON.stringify(finalVisibleColumns.sort()) !== JSON.stringify(visibleColumns.sort())) {
+          setVisibleColumns(finalVisibleColumns);
+          // Also save to localStorage to persist the restriction
+          const storageKey = getStorageKey('columns');
+          localStorage.setItem(storageKey, JSON.stringify(finalVisibleColumns));
+        }
+      }
+    }
+  }, [isFossePage, fosseSettings, fosseSettingsLoading]);
+  
+  // Apply forced filters when Fosse settings are loaded (initial load or refresh)
+  useEffect(() => {
+    // Only apply filters if settings are loaded and not loading
+    // Don't clear filters if settings are loading (preserve existing filters during loading)
+    if (isFossePage && !fosseSettingsLoading) {
+      // If settings are null/undefined, don't do anything (preserve existing filters)
+      if (!fosseSettings) {
+        return;
+      }
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      
+      Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
+        if (config.type === 'defined' && config.values && config.values.length > 0) {
+          forcedDefinedFilters[columnId] = config.values;
+        }
+      });
+      
+      if (Object.keys(forcedDefinedFilters).length > 0) {
+        // Store forced filters in ref to preserve them during re-renders
+        forcedFiltersAppliedRef.current = forcedDefinedFilters;
+        // Apply forced filters - forced filters take precedence, remove conflicting existing filters first
+        setAppliedColumnFilters(prev => {
+          // Check if forced filters are already correctly applied
+          const needsUpdate = Object.keys(forcedDefinedFilters).some(key => {
+            const forcedValue = forcedDefinedFilters[key];
+            const currentValue = prev[key];
+            
+            // If filter is missing, needs update
+            if (!currentValue) {
+              return true;
+            }
+            
+            // Compare arrays (for multi-select filters)
+            if (Array.isArray(forcedValue) && Array.isArray(currentValue)) {
+              const forcedSorted = [...forcedValue].sort().join(',');
+              const currentSorted = [...currentValue].sort().join(',');
+              return forcedSorted !== currentSorted;
+            }
+            
+            // Compare other types
+            return JSON.stringify(forcedValue) !== JSON.stringify(currentValue);
+          });
+          
+          if (!needsUpdate) {
+            return prev;
+          }
+          
+          // Remove any existing filters for columns that have forced filters, then apply forced ones
+          const cleaned = { ...prev };
+          Object.keys(forcedDefinedFilters).forEach(key => {
+            delete cleaned[key];
+          });
+          const merged = { ...cleaned, ...forcedDefinedFilters };
+          return merged;
+        });
+        setColumnFilters(prev => {
+          // Check if forced filters are already correctly applied
+          const needsUpdate = Object.keys(forcedDefinedFilters).some(key => {
+            const forcedValue = forcedDefinedFilters[key];
+            const currentValue = prev[key];
+            
+            if (!currentValue) return true;
+            
+            if (Array.isArray(forcedValue) && Array.isArray(currentValue)) {
+              const forcedSorted = [...forcedValue].sort().join(',');
+              const currentSorted = [...currentValue].sort().join(',');
+              return forcedSorted !== currentSorted;
+            }
+            
+            return JSON.stringify(forcedValue) !== JSON.stringify(currentValue);
+          });
+          
+          if (!needsUpdate) {
+            return prev;
+          }
+          
+          const cleaned = { ...prev };
+          Object.keys(forcedDefinedFilters).forEach(key => {
+            delete cleaned[key];
+          });
+          return { ...cleaned, ...forcedDefinedFilters };
+        });
+        // Reset to first page when forced filters are applied
+        setCurrentPage(1);
+      }
+    }
+  }, [isFossePage, fosseSettings, fosseSettingsLoading]);
+  
+  // Reapply forced 'defined' filters if they're changed (to ensure they're always enforced)
+  // IMPORTANT: This only affects 'defined' type filters. 'open' type filters allow users to filter freely.
+  // This effect only runs when forced filters change, not when user filters change, to avoid interference.
+  useEffect(() => {
+    // Only process if settings are loaded and not loading
+    // Don't clear filters if settings are loading (preserve existing filters during loading)
+    if (isFossePage && !fosseSettingsLoading) {
+      // If settings are null/undefined, don't do anything (preserve existing filters)
+      if (!fosseSettings) {
+        return;
+      }
+      
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      
+      // Only process 'defined' type filters - 'open' type filters are not enforced here
+      Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
+        // Only enforce 'defined' type filters - 'open' allows user filtering
+        if (config.type === 'defined' && config.values && config.values.length > 0) {
+          forcedDefinedFilters[columnId] = config.values;
+        }
+        // 'open' type filters are ignored here - users can filter freely
+      });
+      
+      const forcedFiltersKey = JSON.stringify(forcedDefinedFilters);
+      
+      if (Object.keys(forcedDefinedFilters).length > 0) {
+        // Only reapply if forced 'defined' filters have changed (not when user filters change)
+        if (forcedFiltersKey !== lastAppliedForcedFiltersRef.current) {
+          lastAppliedForcedFiltersRef.current = forcedFiltersKey;
+          // Store forced filters in ref to preserve them during re-renders
+          forcedFiltersAppliedRef.current = forcedDefinedFilters;
+          // Reapply only 'defined' filters - don't touch 'open' filters or user filters
+          setAppliedColumnFilters(prev => {
+            const cleaned = { ...prev };
+            // Only remove filters for columns that have forced 'defined' filters
+            Object.keys(forcedDefinedFilters).forEach(key => {
+              delete cleaned[key];
+            });
+            const merged = { ...cleaned, ...forcedDefinedFilters };
+            return merged;
+          });
+          setColumnFilters(prev => {
+            const cleaned = { ...prev };
+            Object.keys(forcedDefinedFilters).forEach(key => {
+              delete cleaned[key];
+            });
+            return { ...cleaned, ...forcedDefinedFilters };
+          });
+        }
+      } else {
+        // No forced 'defined' filters - clear the refs only if we're sure there are no forced filters
+        // Don't clear if settings are temporarily unavailable
+        lastAppliedForcedFiltersRef.current = '';
+        forcedFiltersAppliedRef.current = {};
+      }
+    }
+  }, [isFossePage, fosseSettings, fosseSettingsLoading]);
+  
+  // Separate effect to enforce 'defined' filters when user tries to change them
+  // This runs when appliedColumnFilters changes, but only checks/enforces 'defined' filters
+  useEffect(() => {
+    if (isFossePage && fosseSettings && !fosseSettingsLoading) {
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      
+      // Extract only 'defined' type forced filters
+      Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
+        if (config.type === 'defined' && config.values && config.values.length > 0) {
+          forcedDefinedFilters[columnId] = config.values;
+        }
+      });
+      
+      // Only enforce if there are forced 'defined' filters
+      if (Object.keys(forcedDefinedFilters).length > 0) {
+        // Check if any forced 'defined' filters were changed by the user
+        const needsReapply = Object.keys(forcedDefinedFilters).some(key => {
+          const forcedValue = forcedDefinedFilters[key];
+          const currentValue = appliedColumnFilters[key];
+          
+          // If filter is missing, it needs to be reapplied
+          if (!currentValue) {
+            return true;
+          }
+          
+          // Compare arrays (for multi-select filters)
+          if (Array.isArray(forcedValue) && Array.isArray(currentValue)) {
+            const forcedSorted = [...forcedValue].sort().join(',');
+            const currentSorted = [...currentValue].sort().join(',');
+            if (forcedSorted !== currentSorted) {
+              return true;
+            }
+          } 
+          // Compare other types (strings, objects)
+          else if (JSON.stringify(forcedValue) !== JSON.stringify(currentValue)) {
+            return true;
+          }
+          
+          return false;
+        });
+        
+        if (needsReapply) {
+          // Reapply only 'defined' filters - preserve all other filters including 'open' type filters
+          setAppliedColumnFilters(prev => {
+            const cleaned = { ...prev };
+            // Only remove filters for columns that have forced 'defined' filters
+            Object.keys(forcedDefinedFilters).forEach(key => {
+              delete cleaned[key];
+            });
+            return { ...cleaned, ...forcedDefinedFilters };
+          });
+          setColumnFilters(prev => {
+            const cleaned = { ...prev };
+            Object.keys(forcedDefinedFilters).forEach(key => {
+              delete cleaned[key];
+            });
+            return { ...cleaned, ...forcedDefinedFilters };
+          });
+        }
+      }
+    }
+  }, [isFossePage, fosseSettings, fosseSettingsLoading, appliedColumnFilters]);
+  
   // Save column order to localStorage
   const saveColumnOrder = (order: string[]) => {
-    localStorage.setItem('contacts-table-column-order', JSON.stringify(order));
+    const storageKey = getStorageKey('column-order');
+    localStorage.setItem(storageKey, JSON.stringify(order));
     setColumnOrder(order);
   };
   
   // Save column visibility to localStorage
   const saveVisibleColumns = (columns: string[]) => {
-    localStorage.setItem('contacts-table-columns', JSON.stringify(columns));
+    const storageKey = getStorageKey('columns');
+    localStorage.setItem(storageKey, JSON.stringify(columns));
     setVisibleColumns(columns);
   };
   
   const handleToggleColumn = (columnId: string) => {
+    // If on Fosse page, check forced columns restrictions
+    if (isFossePage && fosseSettings) {
+      const forcedColumns = fosseSettings.forcedColumns || [];
+      
+      // If forced columns are set, enforce restrictions
+      if (forcedColumns.length > 0) {
+        // If trying to hide a forced column, prevent it
+        if (forcedColumns.includes(columnId) && visibleColumns.includes(columnId)) {
+          toast.error('Cette colonne est forcée et ne peut pas être masquée');
+          return;
+        }
+        // If trying to show a column that's not in forced columns, prevent it
+        if (!forcedColumns.includes(columnId) && !visibleColumns.includes(columnId)) {
+          toast.error('Cette colonne n\'est pas autorisée pour votre rôle');
+          return;
+        }
+      }
+    }
+    
     const newVisible = visibleColumns.includes(columnId)
       ? visibleColumns.filter(id => id !== columnId)
       : [...visibleColumns, columnId];
@@ -464,11 +787,6 @@ export function ContactList({
     if (usersError) {
       console.error('Error loading users:', usersError);
     }
-    if (users.length > 0) {
-      console.log('Users loaded:', users);
-    } else if (!usersLoading) {
-      console.warn('No users found. Users array is empty.');
-    }
   }, [users, usersLoading, usersError]);
 
   // Create a stable string representation of appliedColumnFilters for dependency comparison
@@ -478,6 +796,20 @@ export function ContactList({
 
   // Memoize loadData to prevent unnecessary re-renders
   const loadData = useCallback(async () => {
+    // Prevent concurrent calls
+    if (isLoadingDataRef.current) {
+      return;
+    }
+    
+    // Check if user is authenticated before making API calls
+    const token = localStorage.getItem(ACCESS_TOKEN);
+    if (!token) {
+      setIsLoading(false);
+      isLoadingDataRef.current = false;
+      return;
+    }
+    
+    isLoadingDataRef.current = true;
     setIsLoading(true);
     try {
       // Use server-side pagination for better performance
@@ -493,12 +825,53 @@ export function ContactList({
         queryParams.append('status_type', appliedStatusType);
       }
       
+      // On Fosse page, prioritize forced filters from ref if they exist
+      // This prevents filters from being lost during re-renders (e.g., WebSocket reconnection)
+      let filtersToUse = appliedColumnFilters;
+      if (isFossePage) {
+        const refFilters = forcedFiltersAppliedRef.current;
+        const hasRefFilters = Object.keys(refFilters).length > 0;
+        const hasStateFilters = Object.keys(appliedColumnFilters).length > 0;
+        
+        if (hasRefFilters) {
+          // Always use ref filters if they exist - they take precedence over state
+          // This ensures filters persist even if state is temporarily cleared
+          const stateFilters = appliedColumnFilters;
+          
+          // Check if state filters match ref filters
+          const stateMatchesRef = hasStateFilters && Object.keys(refFilters).every(key => {
+            const refValue = refFilters[key];
+            const stateValue = stateFilters[key];
+            
+            if (!stateValue) return false;
+            
+            if (Array.isArray(refValue) && Array.isArray(stateValue)) {
+              const refSorted = [...refValue].sort().join(',');
+              const stateSorted = [...stateValue].sort().join(',');
+              return refSorted === stateSorted;
+            }
+            return JSON.stringify(refValue) === JSON.stringify(stateValue);
+          }) && Object.keys(stateFilters).length === Object.keys(refFilters).length;
+          
+          // If state doesn't match ref or is empty, use ref filters for API call
+          // Update state synchronously to keep it in sync, but the ref flag prevents concurrent calls
+          if (!stateMatchesRef || !hasStateFilters) {
+            filtersToUse = refFilters;
+            // Update state synchronously to keep it in sync with ref
+            // The isLoadingDataRef flag prevents this from triggering another concurrent loadData call
+            if (!stateMatchesRef) {
+              setAppliedColumnFilters(refFilters);
+              setColumnFilters(refFilters);
+            }
+          }
+        }
+      }
+      
       // Add column filters
-      Object.entries(appliedColumnFilters).forEach(([key, value]) => {
+      Object.entries(filtersToUse).forEach(([key, value]) => {
         if (value) {
           if (Array.isArray(value)) {
             // Multi-select filter - send multiple query params
-            console.log(`[DEBUG] Sending filter for ${key}:`, value);
             value.forEach((val) => {
               queryParams.append(`filter_${key}`, val);
             });
@@ -517,11 +890,6 @@ export function ContactList({
         }
       });
       
-      // Debug: Log final query params
-      if (Object.keys(appliedColumnFilters).length > 0) {
-        console.log('[DEBUG] Final query params:', queryParams.toString());
-      }
-      
       // Load data in parallel for better performance
       // Add cache-busting timestamp to ensure fresh data
       const cacheBuster = `&_t=${Date.now()}`;
@@ -534,34 +902,44 @@ export function ContactList({
       // Contacts are already sorted and filtered by the backend
       const contactsList = contactsData.contacts || [];
       const totalFromAPI = contactsData.total || contactsData.count || contactsList.length;
-      console.log(`[DEBUG] Received from API - contacts: ${contactsList.length}, total: ${totalFromAPI}`);
-      console.log(`[DEBUG] Applied filters:`, appliedColumnFilters);
-      // Debug: Log first contact's confirmateur data if available
-      if (contactsList.length > 0) {
-        const firstContact = contactsList[0];
-        console.log(`[DEBUG] First contact confirmateur data:`, {
-          id: firstContact.id,
-          confirmateurId: firstContact.confirmateurId,
-          confirmateurName: firstContact.confirmateurName
-        });
-      }
       setContacts(contactsList);
       // Use total from paginated response
       setTotalContacts(totalFromAPI);
-      console.log(`[DEBUG] Set totalContacts to: ${totalFromAPI}`);
       setTeams(teamsData.teams || []);
       setStatuses(statusesData.statuses || []);
     } catch (error: any) {
+      // Don't log 401 errors if we're redirecting to login (expected behavior)
+      if (error?.status === 401 && error?.isRedirecting) {
+        setIsLoading(false);
+        isLoadingDataRef.current = false;
+        return;
+      }
       console.error('Error loading contacts:', error);
       toast.error(error?.message || 'Erreur lors du chargement des contacts');
     } finally {
       setIsLoading(false);
+      isLoadingDataRef.current = false;
     }
   }, [currentPage, itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint]);
 
   useEffect(() => {
+    // Wait for user context to finish loading before making API calls
+    if (userLoading) {
+      return;
+    }
+    
+    // On Fosse page, wait for settings to load before calling loadData
+    // This ensures forced filters are applied before the first data load
+    if (isFossePage && currentUser?.role) {
+      // Wait until settings are loaded (not null) or loading is complete
+      // fosseSettings will be set to an object (even if empty) when loading completes
+      // Only wait if we have a role (meaning we should be loading settings)
+      if (fosseSettings === null || fosseSettingsLoading) {
+        return;
+      }
+    }
     loadData();
-  }, [loadData]); // Reload when loadData changes (which depends on filters and itemsPerPage)
+  }, [loadData, isFossePage, fosseSettings, fosseSettingsLoading, currentUser?.role, userLoading]); // Reload when loadData changes (which depends on filters and itemsPerPage)
 
   // Load note categories
   useEffect(() => {
@@ -615,6 +993,19 @@ export function ContactList({
 
   // Apply a single column filter
   function handleApplyColumnFilter(columnId: string) {
+    // If on Fosse page, check if this filter is forced with 'defined' type
+    // 'open' type filters allow users to filter freely - no restriction
+    if (isFossePage && fosseSettings) {
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const filterConfig = forcedFilters[columnId];
+      // Only prevent modification if filter type is 'defined' - 'open' allows changes
+      if (filterConfig && filterConfig.type === 'defined' && filterConfig.values && filterConfig.values.length > 0) {
+        toast.error('Ce filtre est forcé et ne peut pas être modifié');
+        return;
+      }
+      // If filter type is 'open' or doesn't exist, allow normal filtering
+    }
+    
     const newFilters = { ...appliedColumnFilters };
     const pendingValue = pendingColumnFilters[columnId];
     
@@ -646,7 +1037,6 @@ export function ContactList({
       }
     }
     
-    console.log(`[DEBUG] Applying filter for ${columnId}:`, newFilters[columnId]);
     setAppliedColumnFilters(newFilters);
     setColumnFilters(newFilters); // Keep for display
     setCurrentPage(1); // Reset to first page
@@ -659,13 +1049,26 @@ export function ContactList({
     });
     // Reset status type filter if this is the status column
     if (columnId === 'status') {
-      setStatusColumnFilterType('all');
+      setStatusColumnFilterType('lead');
     }
     // loadData will be called by useEffect when applied filters change
   }
   
   // Reset a specific column filter
   function handleResetColumnFilter(columnId: string) {
+    // If on Fosse page, check if this filter is forced with 'defined' type
+    // 'open' type filters allow users to reset freely - no restriction
+    if (isFossePage && fosseSettings) {
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const filterConfig = forcedFilters[columnId];
+      // Only prevent reset if filter type is 'defined' - 'open' allows reset
+      if (filterConfig && filterConfig.type === 'defined' && filterConfig.values && filterConfig.values.length > 0) {
+        toast.error('Ce filtre est forcé et ne peut pas être réinitialisé');
+        return;
+      }
+      // If filter type is 'open' or doesn't exist, allow normal reset
+    }
+    
     // Remove from pending filters
     setPendingColumnFilters(prev => {
       const newFilters = { ...prev };
@@ -696,7 +1099,7 @@ export function ContactList({
     });
     // Reset status type filter if this is the status column
     if (columnId === 'status') {
-      setStatusColumnFilterType('all');
+      setStatusColumnFilterType('lead');
     }
   }
 
@@ -707,8 +1110,29 @@ export function ContactList({
     setPendingColumnFilters({});
     setAppliedSearchTerm('');
     setAppliedStatusType('all');
-    setAppliedColumnFilters({});
-    setColumnFilters({});
+    
+    // If on Fosse page, preserve forced 'defined' filters when resetting
+    if (isFossePage && fosseSettings) {
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      
+      // Extract only 'defined' type forced filters
+      Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
+        if (config.type === 'defined' && config.values && config.values.length > 0) {
+          forcedDefinedFilters[columnId] = config.values;
+        }
+      });
+      
+      // Set filters to only forced 'defined' filters (preserve them)
+      setAppliedColumnFilters(forcedDefinedFilters);
+      setColumnFilters(forcedDefinedFilters);
+    } else {
+      // Not on Fosse page or no settings - clear all filters
+      setAppliedColumnFilters({});
+      setColumnFilters({});
+    }
+    
     setCurrentPage(1);
     // loadData will be called by useEffect when applied filters change
   }
@@ -730,7 +1154,7 @@ export function ContactList({
   };
   
   // Helper function to get filter options for Select columns
-  const getFilterOptions = (columnId: string, statusTypeFilter: 'all' | 'lead' | 'client' = 'all') => {
+  const getFilterOptions = (columnId: string, statusTypeFilter: 'lead' | 'client' = 'lead') => {
     const options: Array<{ id: string; label: string }> = [];
     
     // Add empty option first
@@ -745,8 +1169,8 @@ export function ContactList({
           .filter((status) => {
             if (!status.id || status.id.trim() === '') return false;
             
-            // Filter by status type if specified
-            if (statusTypeFilter !== 'all' && status.type !== statusTypeFilter) {
+            // Filter by status type
+            if (status.type !== statusTypeFilter) {
               return false;
             }
             
@@ -887,24 +1311,6 @@ export function ContactList({
     
     // If contact has a status, check if user has permission to view it
     if (normalizedStatusId) {
-      // Debug: Log the check
-      console.log('[DEBUG] Checking status permission:', {
-        contactStatusId: contactStatusId,
-        normalizedStatusId: normalizedStatusId,
-        normalizedStatusIdLength: normalizedStatusId.length,
-        statusViewPermissions: Array.from(statusViewPermissions),
-        statusViewPermissionsLengths: Array.from(statusViewPermissions).map(id => ({ id, length: id.length })),
-        hasPermission: statusViewPermissions.has(normalizedStatusId),
-        // Also check with different normalizations
-        hasPermissionLowercase: statusViewPermissions.has(normalizedStatusId.toLowerCase()),
-        hasPermissionUppercase: statusViewPermissions.has(normalizedStatusId.toUpperCase()),
-        // Check if any permission matches (case-insensitive)
-        matchesAny: Array.from(statusViewPermissions).some(permId => 
-          permId.toLowerCase() === normalizedStatusId.toLowerCase() || 
-          permId === normalizedStatusId
-        )
-      });
-      
       // Check permission (case-sensitive first, then case-insensitive fallback)
       let hasStatusPermission = statusViewPermissions.has(normalizedStatusId);
       if (!hasStatusPermission) {
@@ -941,13 +1347,6 @@ export function ContactList({
   const displayedContacts = React.useMemo(() => {
     const filtered = contacts.filter(contact => canViewContact(contact));
     
-    // Debug: Log if there's a discrepancy between total and filtered
-    if (contacts.length !== filtered.length) {
-      const hiddenContacts = contacts.filter(contact => !canViewContact(contact));
-      console.log(`[Contacts] Filtered out ${contacts.length - filtered.length} contact(s) due to permissions:`, 
-        hiddenContacts.map(c => ({ id: c.id, statusId: c.statusId, fullName: c.fullName || `${c.firstName} ${c.lastName}`.trim() }))
-      );
-    }
     
     return filtered;
   }, [contacts, canViewContact]);
@@ -1072,7 +1471,7 @@ export function ContactList({
   useEffect(() => {
     return () => {
       Object.values(hoverTimeoutRef.current).forEach(timeout => {
-        if (timeout) clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout as ReturnType<typeof setTimeout>);
       });
     };
   }, []);
@@ -1260,6 +1659,13 @@ export function ContactList({
                     setSelectedContact(freshContact);
                     setSelectedStatusId(freshContact.statusId || '');
                     setStatusChangeNote('');
+                    // Set filter type based on current status
+                    const currentStatus = statuses.find(s => s.id === freshContact.statusId);
+                    if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                      setStatusModalFilterType(currentStatus.type);
+                    } else {
+                      setStatusModalFilterType('lead'); // Default to lead if status not found
+                    }
                     setIsStatusModalOpen(true);
                   } catch (error) {
                     // Fallback to contact from list if API call fails
@@ -1267,6 +1673,13 @@ export function ContactList({
                     setSelectedContact(contact);
                     setSelectedStatusId(contact.statusId || '');
                     setStatusChangeNote('');
+                    // Set filter type based on current status
+                    const currentStatus = statuses.find(s => s.id === contact.statusId);
+                    if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                      setStatusModalFilterType(currentStatus.type);
+                    } else {
+                      setStatusModalFilterType('lead'); // Default to lead if status not found
+                    }
                     setIsStatusModalOpen(true);
                   }
                 }}
@@ -1445,13 +1858,71 @@ export function ContactList({
     }
   };
 
+  // Helper function to count contacts that will have both teleoperator and confirmateur as None after the operation
+  function countContactsThatWillBecomeUnassigned(
+    actionType: 'teleoperator' | 'confirmateur',
+    newValue: string
+  ): number {
+    if (newValue !== 'none' && newValue !== '') {
+      // If we're assigning a value (not clearing), no contacts will become unassigned
+      return 0;
+    }
+    
+    // We're clearing the field, so check which contacts will have both fields as None
+    let count = 0;
+    const selectedContactIds = Array.from(selectedContacts);
+    
+    selectedContactIds.forEach(contactId => {
+      const contact = contacts.find(c => c.id === contactId);
+      if (!contact) return;
+      
+      const teleoperatorId = contact.teleoperatorId || '';
+      const confirmateurId = contact.confirmateurId || '';
+      
+      let willBeUnassigned = false;
+      if (actionType === 'teleoperator') {
+        // Clearing teleoperator - check if confirmateur is already empty
+        willBeUnassigned = !confirmateurId || confirmateurId === '';
+      } else {
+        // Clearing confirmateur - check if teleoperator is already empty
+        willBeUnassigned = !teleoperatorId || teleoperatorId === '';
+      }
+      
+      if (willBeUnassigned) {
+        count++;
+      }
+    });
+    
+    return count;
+  }
+
   // Actions multiples
   async function handleBulkAssignTeleoperator(teleoperatorId: string) {
     if (!teleoperatorId) return;
     
+    const teleoperatorIdValue = teleoperatorId !== 'none' ? teleoperatorId : '';
+    
+    // Check if we're clearing teleoperator and if any contacts will become unassigned
+    if (teleoperatorId === 'none' || teleoperatorId === '') {
+      const affectedCount = countContactsThatWillBecomeUnassigned('teleoperator', teleoperatorId);
+      if (affectedCount > 0) {
+        // Show confirmation modal
+        setPendingBulkAction({
+          type: 'teleoperator',
+          value: teleoperatorIdValue,
+          affectedCount
+        });
+        setIsStatusChangeConfirmOpen(true);
+        return;
+      }
+    }
+    
+    // Proceed with the action
+    await executeBulkAssignTeleoperator(teleoperatorIdValue);
+  }
+
+  async function executeBulkAssignTeleoperator(teleoperatorIdValue: string) {
     try {
-      const teleoperatorIdValue = teleoperatorId !== 'none' ? teleoperatorId : '';
-      
       const promises = Array.from(selectedContacts).map(contactId =>
         apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
@@ -1465,27 +1936,43 @@ export function ContactList({
       // Small delay to ensure backend transaction is committed, then reload data
       await new Promise(resolve => setTimeout(resolve, 100));
       await loadData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error assigning teleoperator:', error);
-      toast.error('Erreur lors de l\'attribution du téléopérateur');
+      const errorMessage = error?.response?.error || error?.message || 'Erreur lors de l\'attribution du téléopérateur';
+      toast.error(errorMessage);
     }
   }
 
   async function handleBulkAssignConfirmateur(confirmateurId: string) {
     if (!confirmateurId) return;
     
+    const confirmateurIdValue = confirmateurId !== 'none' ? confirmateurId : '';
+    
+    // Check if we're clearing confirmateur and if any contacts will become unassigned
+    if (confirmateurId === 'none' || confirmateurId === '') {
+      const affectedCount = countContactsThatWillBecomeUnassigned('confirmateur', confirmateurId);
+      if (affectedCount > 0) {
+        // Show confirmation modal
+        setPendingBulkAction({
+          type: 'confirmateur',
+          value: confirmateurIdValue,
+          affectedCount
+        });
+        setIsStatusChangeConfirmOpen(true);
+        return;
+      }
+    }
+    
+    // Proceed with the action
+    await executeBulkAssignConfirmateur(confirmateurIdValue);
+  }
+
+  async function executeBulkAssignConfirmateur(confirmateurIdValue: string) {
     try {
-      const confirmateurIdValue = confirmateurId !== 'none' ? confirmateurId : '';
-      
       const promises = Array.from(selectedContacts).map(async (contactId) => {
         const response = await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           body: JSON.stringify({ confirmateurId: confirmateurIdValue })
-        });
-        // Debug: Log the response to verify confirmateurName is included
-        console.log(`[DEBUG] Updated contact ${contactId}:`, {
-          confirmateurId: response?.contact?.confirmateurId,
-          confirmateurName: response?.contact?.confirmateurName
         });
         return response;
       });
@@ -1496,9 +1983,10 @@ export function ContactList({
       // Small delay to ensure backend transaction is committed, then reload data
       await new Promise(resolve => setTimeout(resolve, 200));
       await loadData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error assigning confirmateur:', error);
-      toast.error('Erreur lors de l\'attribution du confirmateur');
+      const errorMessage = error?.response?.error || error?.message || 'Erreur lors de l\'attribution du confirmateur';
+      toast.error(errorMessage);
     }
   }
 
@@ -1524,6 +2012,68 @@ export function ContactList({
   }
 
 
+  // Check if user can create planning events
+  const canCreatePlanning = useHasPermission('planning', 'create');
+  
+  // Initialize event fields when event status is selected
+  React.useEffect(() => {
+    if (isStatusModalOpen && selectedStatusId) {
+      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+      const isEventStatus = selectedStatus && selectedStatus.isEvent;
+      if (isEventStatus && canCreatePlanning && !eventDate) {
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        setEventDate(dateStr);
+        setEventHour(today.getHours().toString().padStart(2, '0'));
+      } else if (!isEventStatus) {
+        // Reset event fields if status is not an event status
+        setEventDate('');
+        setEventHour('09');
+        setEventMinute('00');
+        setEventComment('');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStatusId, isStatusModalOpen]);
+  
+  // Auto-set filter based on contact's current status or user permissions
+  React.useEffect(() => {
+    if (isStatusModalOpen && statuses.length > 0 && selectedContact) {
+      // First, check the contact's current status type
+      const currentStatus = selectedContact.statusId ? statuses.find((s: any) => s.id === selectedContact.statusId) : null;
+      
+      if (currentStatus && (currentStatus.type === 'client' || currentStatus.type === 'lead')) {
+        // Set filter to match contact's current status type
+        if (statusModalFilterType !== currentStatus.type) {
+          setStatusModalFilterType(currentStatus.type);
+        }
+        return; // Don't override if contact has a status
+      }
+      
+      // If contact has no status or status type is unknown, check user permissions
+      const clientStatuses = statuses.filter((s: any) => s.type === 'client');
+      const clientDefaultStatus = clientStatuses.find((s: any) => s.clientDefault === true);
+      const clientStatusesWithPermission = clientStatuses.filter((status: any) => {
+        if (!status.id || status.id.trim() === '') return false;
+        const normalizedStatusId = String(status.id).trim();
+        return statusViewPermissions.has(normalizedStatusId);
+      });
+      
+      // If user has no permission on any client status, set filter to lead
+      if (clientStatusesWithPermission.length === 0 && statusModalFilterType !== 'lead') {
+        setStatusModalFilterType('lead');
+      }
+      // If user only has permission on client_default status, set filter to client
+      else if (clientDefaultStatus && 
+          clientStatusesWithPermission.length === 1 && 
+          clientStatusesWithPermission[0].id === clientDefaultStatus.id &&
+          statusModalFilterType !== 'client') {
+        setStatusModalFilterType('client');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStatusModalOpen, statuses, statusViewPermissions, selectedContact]);
+  
   async function handleUpdateStatus() {
     if (!selectedContact) return;
     
@@ -1531,6 +2081,18 @@ export function ContactList({
     if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
       toast.error('Veuillez saisir une note pour changer le statut');
       return;
+    }
+    
+    // Check if selected status has isEvent=true
+    const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+    const isEventStatus = selectedStatus && selectedStatus.isEvent;
+    
+    // If status is an event status, validate event fields
+    if (isEventStatus && canCreatePlanning) {
+      if (!eventDate) {
+        toast.error('Veuillez sélectionner une date pour l\'événement');
+        return;
+      }
     }
     
     // If status is being changed, check permissions
@@ -1565,6 +2127,20 @@ export function ContactList({
         body: JSON.stringify({ statusId: selectedStatusId || '' })
       });
       
+      // Create event if status has isEvent=true
+      if (isEventStatus && canCreatePlanning && eventDate) {
+        const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
+        await apiCall('/api/events/create/', {
+          method: 'POST',
+          body: JSON.stringify({
+            datetime: `${eventDate}T${timeString}`,
+            contactId: selectedContact.id,
+            userId: currentUser?.id || null,
+            comment: eventComment || ''
+          }),
+        });
+      }
+      
       // Create note with teleoperateur category only if note was provided
       if (statusChangeNote.trim()) {
         const teleoperateurCategory = noteCategories.find(
@@ -1587,12 +2163,17 @@ export function ContactList({
         });
       }
       
-      toast.success('Statut mis à jour avec succès');
+      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : 'Statut mis à jour avec succès');
       setIsStatusModalOpen(false);
       setSelectedContact(null);
       setSelectedStatusId('');
       setStatusChangeNote('');
-      setStatusModalFilterType('all');
+      setStatusModalFilterType('lead');
+      // Reset event fields
+      setEventDate('');
+      setEventHour('09');
+      setEventMinute('00');
+      setEventComment('');
       // Wait for loadData to complete to ensure fresh data for next modal open
       await loadData();
     } catch (error: any) {
@@ -1604,43 +2185,11 @@ export function ContactList({
   // Filter users for teleoperator and confirmateur
   const teleoperateurs = users.filter(user => user.isTeleoperateur === true);
   
-  // Debug: Log all users to check isConfirmateur values
-  console.log('[DEBUG] All users:', users.map(u => ({
-    id: u.id,
-    firstName: u.firstName,
-    lastName: u.lastName,
-    isConfirmateur: u.isConfirmateur,
-    isConfirmateurType: typeof u.isConfirmateur,
-    roleName: u.roleName
-  })));
-  
   const confirmateurs = users.filter(user => {
     // Check both boolean true and string 'true' for safety
     const isConfirmateur = user.isConfirmateur === true || user.isConfirmateur === 'true';
-    
-    // Debug: Log Claude Martin specifically
-    if ((user.firstName?.toLowerCase().includes('claude') || user.lastName?.toLowerCase().includes('martin')) ||
-        (user.firstName?.toLowerCase().includes('admin') && user.lastName?.toLowerCase().includes('admin'))) {
-      console.log('[DEBUG] User found:', {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        isConfirmateur: user.isConfirmateur,
-        isConfirmateurType: typeof user.isConfirmateur,
-        roleName: user.roleName,
-        willInclude: isConfirmateur
-      });
-    }
-    
     return isConfirmateur;
   });
-  
-  // Debug: Log filtered confirmateurs
-  console.log('[DEBUG] Filtered confirmateurs:', confirmateurs.map(u => ({
-    id: u.id,
-    name: `${u.firstName} ${u.lastName}`,
-    isConfirmateur: u.isConfirmateur
-  })));
 
   // Helper function to render table content (reused in normal and fullscreen views)
   const renderTableContent = (fullscreen: boolean = false) => (
@@ -1682,7 +2231,7 @@ export function ContactList({
                                 return newTerms;
                               });
                               if (columnId === 'status') {
-                                setStatusColumnFilterType('all');
+                                setStatusColumnFilterType('lead');
                               }
                             }
                             // Initialize pending filter with current applied filter when opening
@@ -1747,18 +2296,6 @@ export function ContactList({
                                     <div className="mb-2 flex gap-2">
                                       <Button
                                         type="button"
-                                        variant={statusColumnFilterType === 'all' ? 'default' : 'outline'}
-                                        size="sm"
-                                        className="flex-1 h-8 text-xs"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setStatusColumnFilterType('all');
-                                        }}
-                                      >
-                                        Tous
-                                      </Button>
-                                      <Button
-                                        type="button"
                                         variant={statusColumnFilterType === 'lead' ? 'default' : 'outline'}
                                         size="sm"
                                         className="flex-1 h-8 text-xs"
@@ -1803,7 +2340,7 @@ export function ContactList({
                                     </div>
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'all';
+                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
                                       const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       const emptyOption = allOptions.find(opt => opt.id === '__empty__');
                                       const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
@@ -1868,7 +2405,7 @@ export function ContactList({
                                   >
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'all';
+                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
                                       const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       
                                       // Always show empty option first, then filter other options
@@ -2324,9 +2861,6 @@ export function ContactList({
                   <SelectItem value="100">100</SelectItem>
                   <SelectItem value="200">200</SelectItem>
                   <SelectItem value="500">500</SelectItem>
-                  <SelectItem value="1000">1000</SelectItem>
-                  <SelectItem value="5000">5000</SelectItem>
-                  <SelectItem value="10000">10000</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2559,7 +3093,7 @@ export function ContactList({
           setSelectedContact(null);
           setSelectedStatusId('');
           setStatusChangeNote('');
-          setStatusModalFilterType('all');
+          setStatusModalFilterType('lead');
         }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -2574,7 +3108,7 @@ export function ContactList({
                   setSelectedContact(null);
                   setSelectedStatusId('');
                   setStatusChangeNote('');
-                  setStatusModalFilterType('all');
+                  setStatusModalFilterType('lead');
                 }}
               >
                 <X className="planning-icon-md" />
@@ -2583,71 +3117,85 @@ export function ContactList({
             <div className="modal-form">
               <div className="modal-form-field">
                 <Label htmlFor="statusSelect">Statut</Label>
-                <div className="mb-2 flex gap-2">
-                  <Button
-                    type="button"
-                    variant={statusModalFilterType === 'all' ? 'default' : 'outline'}
-                    size="sm"
-                    className="flex-1 h-8 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setStatusModalFilterType('all');
-                    }}
-                  >
-                    Tous
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={statusModalFilterType === 'lead' ? 'default' : 'outline'}
-                    size="sm"
-                    className="flex-1 h-8 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setStatusModalFilterType('lead');
-                    }}
-                  >
-                    Lead
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={statusModalFilterType === 'client' ? 'default' : 'outline'}
-                    size="sm"
-                    className="flex-1 h-8 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setStatusModalFilterType('client');
-                    }}
-                  >
-                    Client
-                  </Button>
-                </div>
+                {(() => {
+                  // Check if user has any view permission on client statuses
+                  const clientStatuses = statuses.filter((s: any) => s.type === 'client');
+                  const clientStatusesWithPermission = clientStatuses.filter((status: any) => {
+                    if (!status.id || status.id.trim() === '') return false;
+                    const normalizedStatusId = String(status.id).trim();
+                    return statusViewPermissions.has(normalizedStatusId);
+                  });
+                  
+                  // Hide tabs if:
+                  // 1. User has no permission on any client status, OR
+                  // 2. User only has permission on client_default status
+                  const clientDefaultStatus = clientStatuses.find((s: any) => s.clientDefault === true);
+                  const shouldHideTabs = clientStatusesWithPermission.length === 0 || 
+                                         (clientDefaultStatus && 
+                                          clientStatusesWithPermission.length === 1 && 
+                                          clientStatusesWithPermission[0].id === clientDefaultStatus.id);
+                  
+                  if (shouldHideTabs) {
+                    return null;
+                  }
+                  
+                  return (
+                    <div className="mb-2 flex gap-2">
+                      <Button
+                        type="button"
+                        variant={statusModalFilterType === 'lead' ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 h-8 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusModalFilterType('lead');
+                        }}
+                      >
+                        Lead
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={statusModalFilterType === 'client' ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 h-8 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusModalFilterType('client');
+                        }}
+                      >
+                        Client
+                      </Button>
+                    </div>
+                  );
+                })()}
                 <Select
                   value={selectedStatusId ? selectedStatusId.toString() : undefined}
                   onValueChange={(value) => setSelectedStatusId(value)}
                 >
                   <SelectTrigger id="statusSelect">
                     {selectedStatusId ? (() => {
-                      const filteredStatuses = statuses.filter((status) => {
-                        if (!status.id || status.id.trim() === '') return false;
-                        const normalizedStatusId = String(status.id).trim();
-                        return statusViewPermissions.has(normalizedStatusId);
-                      });
-                      const selectedStatus = filteredStatuses.find((s: any) => s.id === selectedStatusId);
-                      return selectedStatus ? (
-                        <SelectValue asChild>
-                          <span 
-                            className="inline-block px-2 py-1 rounded text-sm"
-                            style={{
-                              backgroundColor: selectedStatus.color || '#e5e7eb',
-                              color: selectedStatus.color ? '#000000' : '#374151'
-                            }}
-                          >
-                            {selectedStatus.name}
-                          </span>
-                        </SelectValue>
-                      ) : (
-                        <SelectValue placeholder="Sélectionner un statut" />
-                      );
+                      // Find the selected status (can be from any type for display purposes)
+                      const selectedStatus = statuses.find((s: any) => s.id === selectedStatusId);
+                      if (selectedStatus) {
+                        // Check if user has view permission on this status
+                        const normalizedStatusId = String(selectedStatus.id).trim();
+                        if (statusViewPermissions.has(normalizedStatusId)) {
+                          return (
+                            <SelectValue asChild>
+                              <span 
+                                className="inline-block px-2 py-1 rounded text-sm"
+                                style={{
+                                  backgroundColor: selectedStatus.color || '#e5e7eb',
+                                  color: selectedStatus.color ? '#000000' : '#374151'
+                                }}
+                              >
+                                {selectedStatus.name}
+                              </span>
+                            </SelectValue>
+                          );
+                        }
+                      }
+                      return <SelectValue placeholder="Sélectionner un statut" />;
                     })() : (
                       <SelectValue placeholder="Sélectionner un statut" />
                     )}
@@ -2659,8 +3207,12 @@ export function ContactList({
                         // Filter by view permissions
                         const normalizedStatusId = String(status.id).trim();
                         if (!statusViewPermissions.has(normalizedStatusId)) return false;
-                        // Filter by status type
-                        if (statusModalFilterType !== 'all' && status.type !== statusModalFilterType) {
+                        // Apply forced status filter if on Fosse page
+                        if (forcedStatusFilterValues && !forcedStatusFilterValues.has(normalizedStatusId)) {
+                          return false;
+                        }
+                        // Filter by status type - only show statuses matching the current filter type
+                        if (status.type !== statusModalFilterType) {
                           return false;
                         }
                         return true;
@@ -2680,6 +3232,43 @@ export function ContactList({
                       ))}
                   </SelectContent>
                 </Select>
+                {(() => {
+                  // Check if current contact status is already type='client'
+                  const currentStatus = selectedContact?.statusId ? statuses.find((s: any) => s.id === selectedContact.statusId) : null;
+                  if (currentStatus && currentStatus.type === 'client') {
+                    return null; // Don't show button if already a client status
+                  }
+                  
+                  // Find the client_default status
+                  const clientDefaultStatus = statuses.find((s: any) => s.clientDefault === true && s.type === 'client');
+                  if (clientDefaultStatus && clientDefaultStatus.id) {
+                    const normalizedStatusId = String(clientDefaultStatus.id).trim();
+                    // Check if user has view permission on this status
+                    if (statusViewPermissions.has(normalizedStatusId)) {
+                      return (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedStatusId(clientDefaultStatus.id.toString());
+                            // Switch to client filter if not already
+                            if (statusModalFilterType !== 'client') {
+                              setStatusModalFilterType('client');
+                            }
+                          }}
+                          className="mt-2"
+                          title={`Définir comme statut par défaut client: ${clientDefaultStatus.name}`}
+                          style={{ backgroundColor: '#22c55e', color: 'white' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#16a34a')}
+                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#22c55e')}
+                        >
+                          Nouveau client
+                        </Button>
+                      );
+                    }
+                  }
+                  return null;
+                })()}
               </div>
               {requiresNoteForStatusChange && (
                 <div className="modal-form-field">
@@ -2710,6 +3299,81 @@ export function ContactList({
                   />
                 </div>
               )}
+              {/* Event fields - show when selected status has isEvent=true */}
+              {(() => {
+                const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+                const isEventStatus = selectedStatus && selectedStatus.isEvent;
+                if (!isEventStatus || !canCreatePlanning) return null;
+                
+                const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+                const minutes = ['00', '15', '30', '45'];
+                
+                return (
+                  <>
+                    <div className="modal-form-field">
+                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                        <p className="font-medium">Événement requis</p>
+                        <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
+                      </div>
+                    </div>
+                    <div className="modal-form-field">
+                      <Label htmlFor="eventDate">Date de l'événement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <DateInput
+                        id="eventDate"
+                        value={eventDate}
+                        onChange={(value) => setEventDate(value)}
+                        required
+                      />
+                    </div>
+                    <div className="modal-form-field">
+                      <Label>Heure <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <div className="flex gap-2 items-center">
+                        <Select
+                          value={eventHour}
+                          onValueChange={(value) => setEventHour(value)}
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {hours.map((hour) => (
+                              <SelectItem key={hour} value={hour}>
+                                {hour}h
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={eventMinute}
+                          onValueChange={(value) => setEventMinute(value)}
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {minutes.map((minute) => (
+                              <SelectItem key={minute} value={minute}>
+                                {minute}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="modal-form-field">
+                      <Label htmlFor="eventComment">Commentaire (optionnel)</Label>
+                      <Textarea
+                        id="eventComment"
+                        value={eventComment}
+                        onChange={(e) => setEventComment(e.target.value)}
+                        placeholder="Ajoutez un commentaire..."
+                        rows={3}
+                        className="resize-none"
+                      />
+                    </div>
+                  </>
+                );
+              })()}
               <div className="modal-form-actions">
                 <Button 
                   type="button" 
@@ -2719,7 +3383,12 @@ export function ContactList({
                     setSelectedContact(null);
                     setSelectedStatusId('');
                     setStatusChangeNote('');
-                    setStatusModalFilterType('all');
+                    setStatusModalFilterType('lead');
+                    // Reset event fields
+                    setEventDate('');
+                    setEventHour('09');
+                    setEventMinute('00');
+                    setEventComment('');
                   }}
                 >
                   Annuler
@@ -2728,8 +3397,16 @@ export function ContactList({
                   <Button 
                     type="button" 
                     onClick={handleUpdateStatus}
-                    disabled={requiresNoteForStatusChange && !statusChangeNote.trim()}
+                    disabled={
+                      (requiresNoteForStatusChange && !statusChangeNote.trim()) ||
+                      ((() => {
+                        const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+                        const isEventStatus = selectedStatus && selectedStatus.isEvent;
+                        return isEventStatus && canCreatePlanning && !eventDate;
+                      })())
+                    }
                   >
+                    <Send className="w-4 h-4 mr-2" />
                     Enregistrer
                   </Button>
                 )}
@@ -2861,6 +3538,103 @@ export function ContactList({
         </div>
       )}
 
+      {/* Status Change Confirmation Modal */}
+      {isStatusChangeConfirmOpen && (
+        <div className="modal-overlay" onClick={() => {
+          setIsStatusChangeConfirmOpen(false);
+          const actionType = pendingBulkAction?.type;
+          setPendingBulkAction(null);
+          // Reset the select values
+          if (actionType === 'teleoperator') {
+            setBulkTeleoperatorId('');
+          } else if (actionType === 'confirmateur') {
+            setBulkConfirmateurId('');
+          }
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                <h2 className="modal-title">Attention</h2>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => {
+                  setIsStatusChangeConfirmOpen(false);
+                  const actionType = pendingBulkAction?.type;
+                  setPendingBulkAction(null);
+                  // Reset the select values
+                  if (actionType === 'teleoperator') {
+                    setBulkTeleoperatorId('');
+                  } else if (actionType === 'confirmateur') {
+                    setBulkConfirmateurId('');
+                  }
+                }}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <div className="modal-form">
+              <div className="modal-form-field">
+                <p style={{ fontSize: '1rem', color: '#374151', lineHeight: '1.5' }}>
+                  Cette manipulation risque de modifier le statut de <strong>{pendingBulkAction?.affectedCount || 0} contact(s)</strong>.
+                  <br />
+                  <br />
+                  En retirant {pendingBulkAction?.type === 'teleoperator' ? 'le téléopérateur' : 'le confirmateur'}, ces contacts deviendront non assignés et leur statut sera automatiquement modifié selon les paramètres Fosse configurés.
+                </p>
+              </div>
+              <div className="modal-form-actions">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsStatusChangeConfirmOpen(false);
+                    const actionType = pendingBulkAction?.type;
+                    setPendingBulkAction(null);
+                    // Reset the select values
+                    if (actionType === 'teleoperator') {
+                      setBulkTeleoperatorId('');
+                    } else if (actionType === 'confirmateur') {
+                      setBulkConfirmateurId('');
+                    }
+                  }}
+                >
+                  Annuler
+                </Button>
+                <Button 
+                  type="button"
+                  onClick={async () => {
+                    setIsStatusChangeConfirmOpen(false);
+                    if (pendingBulkAction) {
+                      if (pendingBulkAction.type === 'teleoperator') {
+                        await executeBulkAssignTeleoperator(pendingBulkAction.value);
+                      } else {
+                        await executeBulkAssignConfirmateur(pendingBulkAction.value);
+                      }
+                      setPendingBulkAction(null);
+                    }
+                  }}
+                  style={{ backgroundColor: '#d97706', color: 'white' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#b45309';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#d97706';
+                  }}
+                >
+                  Confirmer
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+
+export default ContactList;

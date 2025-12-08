@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Plus, Pencil, Trash2, Tag, X, GripVertical } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, X, GripVertical, Star } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Checkbox } from './ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -40,17 +41,22 @@ interface Status {
   type: 'lead' | 'client';
   color: string;
   orderIndex: number;
+  isFosseDefault?: boolean;
+  isEvent?: boolean;
+  clientDefault?: boolean;
   createdAt: string;
 }
 
 function SortableStatusItem({ 
   status, 
   onEdit, 
-  onDelete 
+  onDelete,
+  onSetClientDefault
 }: { 
   status: Status; 
   onEdit: (status: Status) => void;
   onDelete: (statusId: string) => void;
+  onSetClientDefault?: (statusId: string) => void | Promise<void>;
 }) {
   const {
     attributes,
@@ -103,6 +109,23 @@ function SortableStatusItem({
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
       >
+        {status.type === 'client' && onSetClientDefault && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSetClientDefault(status.id);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={status.clientDefault ? 'Retirer le statut par défaut' : 'Définir comme statut par défaut'}
+          >
+            <Star 
+              className={`w-4 h-4 ${status.clientDefault ? 'fill-yellow-400 text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`}
+              style={status.clientDefault ? { fill: '#facc15', color: '#facc15' } : undefined}
+            />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -140,6 +163,7 @@ export function StatusesTab() {
     name: '',
     type: 'lead' as 'lead' | 'client',
     color: '',
+    isEvent: false,
   });
   const [filterType, setFilterType] = useState<'lead' | 'client'>('lead');
   const [statusLoading, setStatusLoading] = useState(false);
@@ -184,11 +208,12 @@ export function StatusesTab() {
           name: statusForm.name,
           type: statusForm.type,
           color: statusForm.color || '',
+          isEvent: statusForm.isEvent || false,
         }),
       });
       toast.success('Statut créé avec succès');
       setIsStatusModalOpen(false);
-      setStatusForm({ name: '', type: 'lead', color: '' });
+      setStatusForm({ name: '', type: 'lead', color: '', isEvent: false });
       loadStatuses();
     } catch (error: any) {
       const message = error.message || 'Erreur lors de la création du statut';
@@ -210,12 +235,13 @@ export function StatusesTab() {
           name: statusForm.name,
           type: statusForm.type,
           color: statusForm.color || '',
+          isEvent: statusForm.isEvent || false,
         }),
       });
       toast.success('Statut mis à jour avec succès');
       setIsEditStatusModalOpen(false);
       setSelectedStatus(null);
-      setStatusForm({ name: '', type: 'lead', color: '' });
+      setStatusForm({ name: '', type: 'lead', color: '', isEvent: false });
       loadStatuses();
     } catch (error: any) {
       const message = error.message || 'Erreur lors de la mise à jour du statut';
@@ -239,12 +265,40 @@ export function StatusesTab() {
     }
   }
 
+  async function handleSetClientDefault(statusId: string) {
+    try {
+      const selectedStatus = statuses.find(s => s.id === statusId);
+      if (!selectedStatus || selectedStatus.type !== 'client') return;
+      
+      // Toggle: if already default, set to false; otherwise set to true
+      // The backend will automatically unset all other client statuses when setting one to true
+      const newValue = !selectedStatus.clientDefault;
+      
+      await apiCall(`/api/statuses/${statusId}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: selectedStatus.name,
+          type: selectedStatus.type,
+          color: selectedStatus.color || '',
+          isEvent: selectedStatus.isEvent || false,
+          clientDefault: newValue,
+        }),
+      });
+      
+      toast.success(newValue ? 'Statut par défaut client défini' : 'Statut par défaut client retiré');
+      loadStatuses();
+    } catch (error: any) {
+      toast.error(error.message || 'Erreur lors de la mise à jour du statut par défaut');
+    }
+  }
+
   function handleEditStatus(status: Status) {
     setSelectedStatus(status);
     setStatusForm({
       name: status.name,
       type: status.type,
       color: status.color || '',
+      isEvent: status.isEvent || false,
     });
     setIsEditStatusModalOpen(true);
   }
@@ -402,6 +456,21 @@ export function StatusesTab() {
                   />
                 </div>
               </div>
+              <div className="modal-form-field">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="status-event"
+                    checked={statusForm.isEvent}
+                    onCheckedChange={(checked) => setStatusForm({ ...statusForm, isEvent: checked === true })}
+                  />
+                  <Label htmlFor="status-event" className="text-sm font-normal cursor-pointer">
+                    Statut événement
+                  </Label>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Ce statut est utilisé pour créer des événements.
+                </p>
+              </div>
               {statusError && (
                 <div className="bg-red-50 text-red-600 px-4 py-2  text-sm">
                   {statusError}
@@ -503,6 +572,21 @@ export function StatusesTab() {
                   />
                 </div>
               </div>
+              <div className="modal-form-field">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-status-event"
+                    checked={statusForm.isEvent}
+                    onCheckedChange={(checked) => setStatusForm({ ...statusForm, isEvent: checked === true })}
+                  />
+                  <Label htmlFor="edit-status-event" className="text-sm font-normal cursor-pointer">
+                    Statut événement
+                  </Label>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Ce statut est utilisé pour créer des événements.
+                </p>
+              </div>
               {statusError && (
                 <div className="bg-red-50 text-red-600 px-4 py-2  text-sm">
                   {statusError}
@@ -558,6 +642,7 @@ export function StatusesTab() {
                       status={status}
                       onEdit={handleEditStatus}
                       onDelete={handleDeleteStatus}
+                      onSetClientDefault={filterType === 'client' ? handleSetClientDefault : undefined}
                     />
                   ))}
                 </div>

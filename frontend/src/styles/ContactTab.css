@@ -31,6 +31,32 @@
   font-size: 0.875rem;
   font-weight: 500;
   display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* Status Field Container - Prevent overflow */
+.contact-status-field-container {
+  max-width: 100%;
+  overflow: hidden;
+  min-width: 0; /* Allow flex item to shrink below content size */
+}
+
+.contact-status-field-container .contact-field-display {
+  max-width: 100%;
+  overflow: hidden;
+  min-width: 0; /* Allow flex item to shrink below content size */
+}
+
+.contact-status-field-container .contact-field-display .contact-status-badge {
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Appointment Card Styles */
@@ -51,6 +77,28 @@
 .contact-note-text {
   font-size: 0.875rem;
   color: rgb(51 65 85);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+
+/* Notes Column Container */
+.contact-notes-column {
+  min-width: 0; /* Allow flex item to shrink */
+  max-width: 96%;
+  overflow: hidden;
+}
+
+.contact-notes-column .card {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.contact-notes-column [data-slot="card-content"] {
+  max-width: 100%;
+  overflow: hidden;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 /* Icon Styles */
@@ -151,6 +199,8 @@
   gap: 0.5rem;
   align-items: center;
   min-height: 2.5rem;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .contact-field-input-wrapper input,
@@ -158,5 +208,23 @@
 .contact-field-input-wrapper [role="combobox"] {
   min-height: 2.5rem;
   height: 2.5rem;
+  flex: 1;
+  min-width: 0; /* Allow flex item to shrink */
+}
+
+.contact-field-input-wrapper [role="combobox"] {
+  overflow: hidden;
+}
+
+.contact-field-input-wrapper [role="combobox"] [data-slot="select-value"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.contact-field-input-wrapper button {
+  flex-shrink: 0; /* Prevent button from shrinking */
+  white-space: nowrap; /* Prevent button text from wrapping */
 }
 

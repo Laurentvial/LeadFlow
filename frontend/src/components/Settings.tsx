@@ -6,13 +6,15 @@ import { PermissionsTab } from './PermissionsTab';
 import { StatusesTab } from './StatusesTab';
 import { ContactFormTab } from './ContactFormTab';
 import { NotificationPreferencesTab } from './NotificationPreferencesTab';
-import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission } from '../hooks/usePermissions';
+import { FosseSettingsTab } from './FosseSettingsTab';
+import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission, useHasFosseSettingsPermission } from '../hooks/usePermissions';
 
 export function Settings() {
   const hasPermissionsPermission = useHasPermissionsPermission();
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   const hasNotificationsPermission = useHasNotificationsPermission();
+  const hasFosseSettingsPermission = useHasFosseSettingsPermission();
   
   // Determine default tab based on available permissions
   // Only return a tab that the user actually has permission to see
@@ -21,6 +23,7 @@ export function Settings() {
     if (hasPermissionsPermission) return 'permissions';
     if (hasStatusesPermission) return 'statuses';
     if (hasNoteCategoriesPermission) return 'contact-form';
+    if (hasFosseSettingsPermission) return 'fosse';
     return 'notifications'; // Fallback (shouldn't happen due to wrapper check)
   };
 
@@ -32,6 +35,7 @@ export function Settings() {
   if (hasPermissionsPermission) visibleTabs.push('permissions');
   if (hasStatusesPermission) visibleTabs.push('statuses');
   if (hasNoteCategoriesPermission) visibleTabs.push('contact-form');
+  if (hasFosseSettingsPermission) visibleTabs.push('fosse');
 
   return (
     <div className="users-teams-container">
@@ -47,6 +51,7 @@ export function Settings() {
             {hasPermissionsPermission && <TabsTrigger value="permissions">Permissions</TabsTrigger>}
             {hasStatusesPermission && <TabsTrigger value="statuses">Statuts</TabsTrigger>}
             {hasNoteCategoriesPermission && <TabsTrigger value="contact-form">Fiche contact</TabsTrigger>}
+            {hasFosseSettingsPermission && <TabsTrigger value="fosse">Fosse</TabsTrigger>}
           </TabsList>
 
           {hasNotificationsPermission && (
@@ -70,6 +75,12 @@ export function Settings() {
           {hasNoteCategoriesPermission && (
             <TabsContent value="contact-form" className="users-teams-tab-content">
               <ContactFormTab />
+            </TabsContent>
+          )}
+
+          {hasFosseSettingsPermission && (
+            <TabsContent value="fosse" className="users-teams-tab-content">
+              <FosseSettingsTab />
             </TabsContent>
           )}
         </Tabs>

@@ -50,10 +50,10 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
 
   // Initialize userId with current user when modal opens
   useEffect(() => {
-    if (isModalOpen && currentUser?.id) {
+    if (isModalOpen) {
       setFormData(prev => ({ 
         ...prev, 
-        userId: prev.userId || currentUser.id 
+        userId: currentUser?.id || prev.userId
       }));
     }
   }, [isModalOpen, currentUser]);
@@ -74,7 +74,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
         body: JSON.stringify({
           datetime: `${formData.date}T${timeString}`,
           contactId: contactId,
-          userId: formData.userId || currentUser?.id || null,
+          userId: currentUser?.id || null,
           comment: formData.comment || ''
         }),
       });
@@ -297,27 +297,6 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-
-              <div className="modal-form-field">
-                <Label htmlFor="event-user">Utilisateur</Label>
-                <Select
-                  value={formData.userId || currentUser?.id || ''}
-                  onValueChange={(value) => setFormData({ ...formData, userId: value })}
-                >
-                  <SelectTrigger id="event-user">
-                    <SelectValue placeholder="Sélectionner un utilisateur" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.firstName && user.lastName 
-                          ? `${user.firstName} ${user.lastName}` 
-                          : user.email || user.username || `User ${user.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
 
               <div className="modal-form-field">

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiCall, clearApiCache } from '../utils/api';
 import { Team } from '../types';
+import { ACCESS_TOKEN } from '../utils/constants';
 
 interface UseTeamsOptions {
   autoLoad?: boolean;
@@ -19,6 +20,14 @@ export function useTeams(options: UseTeamsOptions = { autoLoad: true }) {
   const [error, setError] = useState<Error | null>(null);
 
   const loadTeams = useCallback(async (forceRefresh = false) => {
+    // Check if user is authenticated before making API call
+    const token = localStorage.getItem(ACCESS_TOKEN);
+    if (!token) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     // Prevent duplicate requests
     if (isLoadingTeams && !forceRefresh) {
       return;
@@ -53,6 +62,12 @@ export function useTeams(options: UseTeamsOptions = { autoLoad: true }) {
       teamsCacheTime = now;
       setTeams(normalizedTeams);
     } catch (err: any) {
+      // Don't log 401 errors if we're redirecting to login (expected behavior)
+      if (err?.status === 401 && err?.isRedirecting) {
+        setLoading(false);
+        isLoadingTeams = false;
+        return;
+      }
       const errorMessage = err?.message || err?.response?.detail || 'Erreur lors du chargement des équipes';
       const error = new Error(errorMessage);
       setError(error);

@@ -11,13 +11,13 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference
+from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
-    NotificationPreferenceSerializer
+    NotificationPreferenceSerializer, FosseSettingsSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -27,7 +27,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
 from django.db.models import Count, Q, Sum
-from django.db.models.functions import Cast
+from django.db.models.functions import Cast, MD5, Substr
 from django.db.models import CharField
 import boto3
 from botocore.exceptions import ClientError
@@ -50,6 +50,110 @@ from email.header import decode_header
 import re
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+
+
+def send_event_notification(event, notification_type='assigned', minutes_before=None):
+    """
+    Send event notification via WebSocket to the assigned user.
+    
+    Args:
+        event: Event instance
+        notification_type: 'assigned', '30min_before', or '5min_before'
+        minutes_before: Number of minutes before event (for reminder notifications)
+    """
+    if not event.userId:
+        return
+    
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        
+        # Format event datetime
+        event_datetime = event.datetime
+        if timezone.is_aware(event_datetime):
+            event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
+        else:
+            event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
+        
+        # Build notification message based on type
+        if notification_type == 'assigned':
+            title = 'Nouvel événement assigné'
+            message = f"Vous avez été assigné à un événement le {event_datetime_str}"
+        elif notification_type == '30min_before':
+            title = 'Rappel événement'
+            message = f"Votre événement commence dans 30 minutes ({event_datetime_str})"
+        elif notification_type == '5min_before':
+            title = 'Rappel événement'
+            message = f"Votre événement commence dans 5 minutes ({event_datetime_str})"
+        else:
+            title = 'Notification événement'
+            message = f"Événement le {event_datetime_str}"
+        
+        # Add contact info if available
+        if event.contactId:
+            contact_name = f"{event.contactId.fname} {event.contactId.lname}".strip()
+            if contact_name:
+                message += f" - {contact_name}"
+        
+        # Add comment if available
+        if event.comment:
+            message += f"\n{event.comment[:100]}"  # Limit comment length
+        
+        # Create notification data
+        notification_data = {
+            'type': 'event_notification',
+            'event': {
+                'id': event.id,
+                'datetime': event.datetime.isoformat() if event.datetime else None,
+                'contactId': event.contactId.id if event.contactId else None,
+                'contactName': f"{event.contactId.fname} {event.contactId.lname}".strip() if event.contactId else None,
+                'comment': event.comment or '',
+            },
+            'notification_type': notification_type,
+            'title': title,
+            'message': message,
+            'minutes_before': minutes_before,
+        }
+        
+        # Send via WebSocket
+        async_to_sync(channel_layer.group_send)(
+            f'notifications_{event.userId.id}',
+            {
+                'type': 'event_notification',
+                'notification': notification_data,
+            }
+        )
+        
+        # Also create a database notification for persistence
+        try:
+            notification_id = uuid.uuid4().hex[:12]
+            while Notification.objects.filter(id=notification_id).exists():
+                notification_id = uuid.uuid4().hex[:12]
+            
+            Notification.objects.create(
+                id=notification_id,
+                user=event.userId,
+                type='event',
+                title=title,
+                message=message,
+                event_id=event.id,
+                is_read=False,
+                data={
+                    'notification_type': notification_type,
+                    'minutes_before': minutes_before,
+                }
+            )
+        except Exception as e:
+            # Log but don't fail - WebSocket notification is more important
+            import traceback
+            print(f"Error creating database notification for event {event.id}: {str(e)}")
+            print(traceback.format_exc())
+            
+    except Exception as e:
+        import traceback
+        print(f"Error sending event notification: {str(e)}")
+        print(traceback.format_exc())
 
 
 def get_client_ip(request):
@@ -281,32 +385,43 @@ def compute_changed_fields(old_value, new_value):
 
 def create_log_entry(event_type, user_id, request, old_value=None, new_value=None, contact_id=None, creator_id=None):
     """Create a log entry for an activity"""
-    # Generate log ID
-    log_id = uuid.uuid4().hex[:12]
-    while Log.objects.filter(id=log_id).exists():
+    try:
+        print(f"[LOG ENTRY] Creating log entry: event_type={event_type}, contact_id={contact_id.id if contact_id else None}")
+        # Generate log ID
         log_id = uuid.uuid4().hex[:12]
-    
-    # Extract details from request
-    details = {
-        'ip_address': get_client_ip(request),
-        'browser': get_browser_info(request),
-    }
-    
-    # Serialize old_value and new_value to handle datetime objects
-    serialized_old_value = serialize_for_json(old_value) if old_value else {}
-    serialized_new_value = serialize_for_json(new_value) if new_value else {}
-    
-    # Create log entry
-    Log.objects.create(
-        id=log_id,
-        event_type=event_type,
-        user_id=user_id if user_id else None,
-        contact_id=contact_id if contact_id else None,
-        creator_id=creator_id if creator_id else None,
-        details=details,
-        old_value=serialized_old_value,
-        new_value=serialized_new_value
-    )
+        while Log.objects.filter(id=log_id).exists():
+            log_id = uuid.uuid4().hex[:12]
+        
+        # Extract details from request
+        details = {
+            'ip_address': get_client_ip(request),
+            'browser': get_browser_info(request),
+        }
+        
+        # Serialize old_value and new_value to handle datetime objects
+        serialized_old_value = serialize_for_json(old_value) if old_value else {}
+        serialized_new_value = serialize_for_json(new_value) if new_value else {}
+        
+        print(f"[LOG ENTRY] Serialized data - old_value keys: {list(serialized_old_value.keys()) if serialized_old_value else []}, new_value keys: {list(serialized_new_value.keys()) if serialized_new_value else []}")
+        
+        # Create log entry
+        log = Log.objects.create(
+            id=log_id,
+            event_type=event_type,
+            user_id=user_id if user_id else None,
+            contact_id=contact_id if contact_id else None,
+            creator_id=creator_id if creator_id else None,
+            details=details,
+            old_value=serialized_old_value,
+            new_value=serialized_new_value
+        )
+        print(f"[LOG ENTRY] Log entry created successfully: id={log.id}, event_type={log.event_type}, contact_id={log.contact_id.id if log.contact_id else None}")
+    except Exception as e:
+        # Log the error but don't fail the request
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"[LOG ENTRY] ERROR creating log entry for {event_type}: {str(e)}")
+        print(f"[LOG ENTRY] Error details: {error_details}")
 
 
 class UserCreateView(generics.CreateAPIView):
@@ -1192,6 +1307,11 @@ class FosseContactView(generics.ListAPIView):
         Filter contacts to only show unassigned contacts (teleoperator=null AND confirmateur=null).
         Bypasses all permission-based filtering - shows all contacts regardless of status.
         """
+        # If we have a filtered queryset stored, use it (for pagination counting)
+        # This is set in list() method after applying filters
+        if hasattr(self, '_filtered_queryset') and self._filtered_queryset is not None:
+            return self._filtered_queryset
+        
         # Start with all contacts
         queryset = Contact.objects.all()
         
@@ -1224,13 +1344,48 @@ class FosseContactView(generics.ListAPIView):
             )
         )
         
-        # Order by created_at descending (most recent first)
+        # Order by created_at descending (most recent first) - same as ContactView
         queryset = queryset.order_by('-created_at')
         
         return queryset
     
     def _apply_filters_fosse(self, queryset, request):
         """Helper method to apply all filters to a Fosse queryset"""
+        # Apply forced filters from FosseSettings (server-side enforcement)
+        user = request.user
+        try:
+            from .models import UserDetails, FosseSettings
+            user_details = UserDetails.objects.select_related('role').get(django_user=user)
+            if user_details.role:
+                try:
+                    fosse_setting = FosseSettings.objects.get(role=user_details.role)
+                    forced_filters = fosse_setting.forced_filters or {}
+                    
+                    # Apply forced 'defined' type filters server-side
+                    # This ensures forced filters are always applied even if frontend doesn't send them
+                    for column_id, filter_config in forced_filters.items():
+                        config = filter_config if isinstance(filter_config, dict) else {}
+                        if config.get('type') == 'defined' and config.get('values'):
+                            values = config['values']
+                            if column_id == 'status':
+                                queryset = queryset.filter(status_id__in=values)
+                            elif column_id == 'source':
+                                queryset = queryset.filter(source_id__in=values)
+                            elif column_id == 'creator':
+                                queryset = queryset.filter(creator_id__in=values)
+                            elif column_id == 'postalCode':
+                                queryset = queryset.filter(postal_code__in=values)
+                            elif column_id == 'nationality':
+                                queryset = queryset.filter(nationality__in=values)
+                            elif column_id == 'campaign':
+                                queryset = queryset.filter(campaign__in=values)
+                            elif column_id == 'civility':
+                                queryset = queryset.filter(civility__in=values)
+                except FosseSettings.DoesNotExist:
+                    pass
+        except (UserDetails.DoesNotExist, Exception):
+            pass
+        
         # Apply search filter
         search = request.query_params.get('search', '').strip()
         if search:
@@ -1340,7 +1495,10 @@ class FosseContactView(generics.ListAPIView):
                     if column_id == 'status':
                         q_objects.append(models.Q(status_id__in=regular_values))
                     elif column_id == 'source':
+                        print(f"[FOSSE DEBUG] Applying source filter with values: {regular_values}")
+                        print(f"[FOSSE DEBUG] Source filter type check - first value type: {type(regular_values[0])}")
                         q_objects.append(models.Q(source_id__in=regular_values))
+                        print(f"[FOSSE DEBUG] Source filter Q object created: {q_objects[-1]}")
                     elif column_id == 'teleoperator':
                         # For Fosse, teleoperator is always null, so regular values would exclude all
                         queryset = queryset.none()
@@ -1366,6 +1524,9 @@ class FosseContactView(generics.ListAPIView):
                 
                 # Apply combined filter
                 if q_objects:
+                    if column_id == 'source':
+                        print(f"[FOSSE DEBUG] About to apply source filter. Q objects count: {len(q_objects)}")
+                        print(f"[FOSSE DEBUG] Queryset count before filter: {queryset.count()}")
                     if len(q_objects) == 1:
                         # Single filter - apply directly
                         queryset = queryset.filter(q_objects[0])
@@ -1381,6 +1542,15 @@ class FosseContactView(generics.ListAPIView):
                         # Filter by creator's team for Fosse contacts
                         team_user_ids = TeamMember.objects.filter(team_id__in=regular_values).values_list('user__django_user__id', flat=True)
                         queryset = queryset.filter(creator_id__in=team_user_ids)
+                    
+                    # Debug logging for source filter
+                    if column_id == 'source':
+                        queryset_after_count = queryset.count()
+                        print(f"[FOSSE DEBUG] Source filter applied. Queryset count after filter: {queryset_after_count}")
+                        # Sample a few source_ids to verify
+                        sample_sources = list(queryset.values_list('source_id', flat=True)[:10])
+                        print(f"[FOSSE DEBUG] Sample source_ids after filter: {sample_sources}")
+                        print(f"[FOSSE DEBUG] Expected source_ids: {regular_values}")
         
         # Apply date range filters
         for column_id, date_range in date_range_filters.items():
@@ -1445,8 +1615,17 @@ class FosseContactView(generics.ListAPIView):
             queryset = self.get_queryset()
             queryset = self._apply_filters_fosse(queryset, request)
             
+            # CRITICAL: Store the filtered queryset so get_queryset() returns it
+            # This ensures DRF pagination uses the filtered queryset for counting
+            cloned_queryset = queryset._clone()
+            self._filtered_queryset = cloned_queryset
+            
             self.pagination_class = FosseContactPagination
+            
             response = super().list(request, *args, **kwargs)
+            
+            # Clean up after pagination
+            self._filtered_queryset = None
             return Response({
                 'contacts': response.data['results'],
                 'total': response.data['count'],
@@ -1499,6 +1678,8 @@ class FosseContactView(generics.ListAPIView):
         # Default behavior: return contacts with a reasonable limit to prevent performance issues
         # Always apply a limit to prevent loading all contacts at once
         queryset = self.get_queryset()
+        # Apply filters even in default path
+        queryset = self._apply_filters_fosse(queryset, request)
         DEFAULT_LIMIT = 1000
         limited_queryset = queryset[:DEFAULT_LIMIT]
         serializer = self.get_serializer(limited_queryset, many=True, context={'request': request})
@@ -1765,11 +1946,24 @@ def csv_import_contacts(request):
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Source ID '{default_source_id}' not found during import")
         
+        # Handle teleoperator - required field
         teleoperator_obj = None
         if default_teleoperator_id:
             from django.contrib.auth import get_user_model
             User = get_user_model()
             teleoperator_obj = User.objects.filter(id=default_teleoperator_id).first()
+            if not teleoperator_obj:
+                return Response({'error': 'Invalid teleoperator ID'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # If not provided, try to auto-set to current user if they have teleoperateur role
+            try:
+                user_details = UserDetails.objects.select_related('role').get(django_user=request.user)
+                if user_details.role and user_details.role.is_teleoperateur:
+                    teleoperator_obj = request.user
+                else:
+                    return Response({'error': 'Teleoperator is required. Please select a teleoperator or ensure your role has teleoperateur permissions.'}, status=status.HTTP_400_BAD_REQUEST)
+            except UserDetails.DoesNotExist:
+                return Response({'error': 'Teleoperator is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Field mapping from frontend names to model field names
         field_mapping = {
@@ -1890,8 +2084,8 @@ def csv_import_contacts(request):
                 # Always set source if source_obj exists (even if None, to ensure it's saved)
                 if source_obj is not None:
                     contact_data['source'] = source_obj
-                if teleoperator_obj:
-                    contact_data['teleoperator'] = teleoperator_obj
+                # Teleoperator is required, so always set it
+                contact_data['teleoperator'] = teleoperator_obj
                 
                 # Store row data for results
                 contact_name = contact_data.get('fname', '')
@@ -2078,6 +2272,8 @@ def contact_detail(request, contact_id):
     
     # Check data access restrictions
     try:
+        # Use the module-level import directly (imported at top of file)
+        # Avoid any local imports that might shadow this
         user_details = UserDetails.objects.get(django_user=user)
         
         # Special case: If contact is in fosse, check if user has fosse view permission
@@ -2346,13 +2542,19 @@ def contact_detail(request, contact_id):
                             # Clear any cached relationship
                             if hasattr(contact, '_teleoperator_cache'):
                                 delattr(contact, '_teleoperator_cache')
-                    except Exception:
-                        pass
+                            print(f"[DEBUG] Set teleoperator to user ID: {teleoperator_id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
+                        else:
+                            print(f"[DEBUG] Teleoperator user not found for ID: {teleoperator_id}")
+                    except Exception as e:
+                        print(f"[DEBUG] Error setting teleoperator: {e}")
+                        import traceback
+                        traceback.print_exc()
                 else:
                     contact.teleoperator = None
                     # Clear any cached relationship
                     if hasattr(contact, '_teleoperator_cache'):
                         delattr(contact, '_teleoperator_cache')
+                    print(f"[DEBUG] Cleared teleoperator (set to None)")
             
             # Update confirmateur if provided
             if 'confirmateurId' in request.data:
@@ -2378,6 +2580,8 @@ def contact_detail(request, contact_id):
                     if hasattr(contact, '_confirmateur_cache'):
                         delattr(contact, '_confirmateur_cache')
                     print(f"[DEBUG] Cleared confirmateur (set to None)")
+                    print(f"[DEBUG] After clearing confirmateur - teleoperator: {contact.teleoperator}, confirmateur: {contact.confirmateur}")
+                    print(f"[DEBUG] Will check default status after all field updates")
             
             # Update campaign if provided
             if 'campaign' in request.data:
@@ -2428,6 +2632,94 @@ def contact_detail(request, contact_id):
                         # If we can't check (e.g., lock timeout), try to save anyway and let the exception handler catch it
                         pass
             
+            # Check if teleoperator or confirmateur was changed and if both are now null
+            # If both are null, set status to default fosse status from user's role settings
+            print(f"[DEBUG] ===== CHECKING DEFAULT FOSSE STATUS =====")
+            teleoperator_changed = 'teleoperatorId' in request.data
+            confirmateur_changed = 'confirmateurId' in request.data
+            
+            # Use _id fields to check actual database values (avoids Django ORM caching issues)
+            teleoperator_id = getattr(contact, 'teleoperator_id', None)
+            confirmateur_id = getattr(contact, 'confirmateur_id', None)
+            
+            print(f"[DEBUG] Teleoperator changed: {teleoperator_changed}, Confirmateur changed: {confirmateur_changed}")
+            print(f"[DEBUG] Contact teleoperator_id: {teleoperator_id}, confirmateur_id: {confirmateur_id}")
+            print(f"[DEBUG] Contact teleoperator object: {contact.teleoperator}, confirmateur object: {contact.confirmateur}")
+            print(f"[DEBUG] Teleoperator is None: {teleoperator_id is None}, Confirmateur is None: {confirmateur_id is None}")
+            print(f"[DEBUG] Request data keys: {list(request.data.keys())}")
+            if 'teleoperatorId' in request.data:
+                print(f"[DEBUG] Request teleoperatorId value: {request.data.get('teleoperatorId')}")
+            if 'confirmateurId' in request.data:
+                print(f"[DEBUG] Request confirmateurId value: {request.data.get('confirmateurId')}")
+            
+            # Only check for default fosse status if we're clearing assignments (both become None)
+            # This prevents running the logic when assigning users
+            if (teleoperator_changed or confirmateur_changed):
+                # Check if both teleoperator and confirmateur are null/empty AFTER the update
+                # We check the actual contact object values after they've been updated above
+                # Use _id fields to avoid Django ORM caching issues
+                # Only set default status if BOTH fields are None (meaning both were cleared)
+                if teleoperator_id is None and confirmateur_id is None:
+                    print(f"[DEBUG] Both teleoperator and confirmateur are None - checking for default fosse status")
+                    # Both are None - check for default fosse status
+                    # Note: UserDetails, FosseSettings, and Status are already imported at the top of the file
+                    try:
+                        user_details = UserDetails.objects.filter(django_user=request.user).first()
+                        print(f"[DEBUG] User details found: {user_details is not None}, Role ID: {user_details.role_id if user_details else None}")
+                        if user_details and user_details.role_id:
+                            # Use select_related to avoid N+1 query
+                            fosse_setting = FosseSettings.objects.select_related('default_status').filter(role_id=user_details.role_id).first()
+                            print(f"[DEBUG] Fosse setting found: {fosse_setting is not None}")
+                            if fosse_setting:
+                                default_status_id = getattr(fosse_setting, 'default_status_id', None)
+                                print(f"[DEBUG] Default status ID from FosseSettings: {default_status_id}")
+                                
+                                # Determine which status to use: FosseSettings.default_status or fallback to is_fosse_default=True
+                                status_to_use = None
+                                if default_status_id:
+                                    # Use the status configured in FosseSettings
+                                    try:
+                                        status_to_use = Status.objects.get(id=default_status_id)
+                                        print(f"[DEBUG] Using FosseSettings default status: {status_to_use.name} (ID: {status_to_use.id})")
+                                    except Status.DoesNotExist:
+                                        print(f"[DEBUG] FosseSettings default status {default_status_id} not found, falling back to is_fosse_default")
+                                        status_to_use = None
+                                
+                                # Fallback: if no status from FosseSettings, use the status with is_fosse_default=True
+                                if not status_to_use:
+                                    status_to_use = Status.objects.filter(is_fosse_default=True).first()
+                                    if status_to_use:
+                                        print(f"[DEBUG] Using fallback status with is_fosse_default=True: {status_to_use.name} (ID: {status_to_use.id})")
+                                    else:
+                                        print(f"[DEBUG] No status with is_fosse_default=True found")
+                                
+                                # Apply the status if we found one and statusId wasn't explicitly set
+                                if status_to_use:
+                                    if 'statusId' not in request.data:
+                                        print(f"[DEBUG] StatusId not in request.data, updating to default fosse status")
+                                        try:
+                                            contact.status = status_to_use
+                                            print(f"[DEBUG] SUCCESS: Set contact status to default fosse status: {status_to_use.name} (ID: {status_to_use.id})")
+                                        except Exception as status_error:
+                                            print(f"[DEBUG] Error setting default status object: {status_error}")
+                                            import traceback
+                                            traceback.print_exc()
+                                    else:
+                                        print(f"[DEBUG] StatusId is in request.data, skipping default status update")
+                                else:
+                                    print(f"[DEBUG] No default status available (neither FosseSettings.default_status nor is_fosse_default=True)")
+                            else:
+                                print(f"[DEBUG] No fosse setting found for role {user_details.role_id}")
+                        else:
+                            print(f"[DEBUG] User has no role or user_details not found")
+                    except Exception as e:
+                        # If there's an error getting the default status, log it but don't fail the update
+                        print(f"[DEBUG] Error setting default fosse status: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"[DEBUG] Not both None - teleoperator_id: {teleoperator_id}, confirmateur_id: {confirmateur_id}")
+            
             # Save the contact with all modifications
             try:
                 contact.save()
@@ -2460,43 +2752,56 @@ def contact_detail(request, contact_id):
             
             # Reload contact from database with all relationships to ensure confirmateur/teleoperator are properly loaded
             # This ensures we get the latest committed data with all relationships
-            contact_id = contact.id
-            # Use a fresh query to get the updated contact with all relationships
-            contact = Contact.objects.select_related(
-                'status',
-                'source',
-                'teleoperator',
-                'confirmateur',
-                'creator'
-            ).prefetch_related(
-                Prefetch(
-                    'teleoperator__user_details__team_memberships',
-                    queryset=TeamMember.objects.select_related('team')
-                ),
-                Prefetch(
-                    'confirmateur__user_details__team_memberships',
-                    queryset=TeamMember.objects.select_related('team')
-                ),
-                Prefetch(
-                    'creator__user_details__team_memberships',
-                    queryset=TeamMember.objects.select_related('team')
-                )
-            ).get(id=contact_id)
-            
-            # Force Django to load the confirmateur relationship
-            # Access the confirmateur to ensure it's loaded from DB
-            if hasattr(contact, 'confirmateur_id') and contact.confirmateur_id:
-                confirmateur_obj = contact.confirmateur  # This forces Django to load the relationship
-                if confirmateur_obj:
-                    # Verify the confirmateur has the expected data
-                    first_name = getattr(confirmateur_obj, 'first_name', '') or ''
-                    last_name = getattr(confirmateur_obj, 'last_name', '') or ''
-                    confirmateur_name = f"{first_name} {last_name}".strip()
-                    print(f"[DEBUG] Reloaded contact - confirmateur_id: {contact.confirmateur_id}, confirmateur_name: {confirmateur_name}")
+            try:
+                contact_id = contact.id
+                # Use a fresh query to get the updated contact with all relationships
+                contact = Contact.objects.select_related(
+                    'status',
+                    'source',
+                    'teleoperator',
+                    'confirmateur',
+                    'creator'
+                ).prefetch_related(
+                    Prefetch(
+                        'teleoperator__user_details__team_memberships',
+                        queryset=TeamMember.objects.select_related('team')
+                    ),
+                    Prefetch(
+                        'confirmateur__user_details__team_memberships',
+                        queryset=TeamMember.objects.select_related('team')
+                    ),
+                    Prefetch(
+                        'creator__user_details__team_memberships',
+                        queryset=TeamMember.objects.select_related('team')
+                    )
+                ).get(id=contact_id)
+                
+                # Force Django to load the confirmateur relationship
+                # Access the confirmateur to ensure it's loaded from DB
+                if hasattr(contact, 'confirmateur_id') and contact.confirmateur_id:
+                    confirmateur_obj = contact.confirmateur  # This forces Django to load the relationship
+                    if confirmateur_obj:
+                        # Verify the confirmateur has the expected data
+                        first_name = getattr(confirmateur_obj, 'first_name', '') or ''
+                        last_name = getattr(confirmateur_obj, 'last_name', '') or ''
+                        confirmateur_name = f"{first_name} {last_name}".strip()
+                        print(f"[DEBUG] Reloaded contact - confirmateur_id: {contact.confirmateur_id}, confirmateur_name: {confirmateur_name}")
+                    else:
+                        print(f"[DEBUG] Reloaded contact - confirmateur_id exists ({contact.confirmateur_id}) but confirmateur object is None")
                 else:
-                    print(f"[DEBUG] Reloaded contact - confirmateur_id exists ({contact.confirmateur_id}) but confirmateur object is None")
-            else:
-                print(f"[DEBUG] Reloaded contact - no confirmateur_id (confirmateur is None)")
+                    print(f"[DEBUG] Reloaded contact - no confirmateur_id (confirmateur is None)")
+            except Contact.DoesNotExist:
+                # Contact was deleted or doesn't exist - this shouldn't happen but handle it gracefully
+                print(f"[DEBUG] Contact {contact_id} not found after save, using original contact object")
+                # Use the contact object we just saved (it should still be valid)
+                pass
+            except Exception as reload_error:
+                # If reload fails, log it but continue with the contact object we saved
+                print(f"[DEBUG] Error reloading contact: {reload_error}")
+                import traceback
+                traceback.print_exc()
+                # Continue with the contact object we just saved
+                pass
             
             # Get new value after saving
             serializer = ContactSerializer(contact, context={'request': request})
@@ -3003,6 +3308,46 @@ def event_create(request):
             contactId=contact,
             created_by=request.user if request.user.is_authenticated else None
         )
+        
+        # Refresh from database to ensure we have the latest data
+        event.refresh_from_db()
+        
+        # Send notification to assigned user
+        if event.userId:
+            send_event_notification(event, notification_type='assigned')
+        
+        # Create log entry for event creation
+        # Use event.contactId after saving to ensure we have the correct contact reference
+        print(f"[EVENT LOG] Event created: id={event.id}, contactId={event.contactId.id if event.contactId else None}")
+        if event.contactId:
+            try:
+                event_data = {
+                    'eventId': event.id,
+                    'datetime': event.datetime.isoformat() if event.datetime else None,
+                    'comment': event.comment or '',
+                    'userId': user.id if user else None,
+                    'userName': f"{user.first_name} {user.last_name}".strip() if user and (user.first_name or user.last_name) else (user.username if user else None),
+                    'createdAt': event.created_at.isoformat() if event.created_at else None,
+                    'updatedAt': event.updated_at.isoformat() if event.updated_at else None,
+                }
+                print(f"[EVENT LOG] Creating log entry for createEvent, contact_id={event.contactId.id}")
+                create_log_entry(
+                    event_type='createEvent',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    request=request,
+                    old_value={},
+                    new_value=event_data,
+                    contact_id=event.contactId,
+                    creator_id=request.user if request.user.is_authenticated else None
+                )
+                print(f"[EVENT LOG] Log entry created successfully")
+            except Exception as e:
+                import traceback
+                print(f"[EVENT LOG] Error creating log entry: {str(e)}")
+                print(f"[EVENT LOG] Traceback: {traceback.format_exc()}")
+        else:
+            print(f"[EVENT LOG] No contactId for event {event.id}, skipping log creation")
+        
         return Response(EventSerializer(event).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3017,6 +3362,18 @@ def event_update(request, event_id):
             return Response({'detail': 'You do not have permission to update this event.'}, status=status.HTTP_403_FORBIDDEN)
     except Event.DoesNotExist:
         return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Store old values before update
+    old_event_data = {
+        'eventId': event.id,
+        'datetime': event.datetime.isoformat() if event.datetime else None,
+        'comment': event.comment or '',
+        'userId': event.userId.id if event.userId else None,
+        'userName': f"{event.userId.first_name} {event.userId.last_name}".strip() if event.userId and (event.userId.first_name or event.userId.last_name) else (event.userId.username if event.userId else None),
+        'createdAt': event.created_at.isoformat() if event.created_at else None,
+        'updatedAt': event.updated_at.isoformat() if event.updated_at else None,
+    }
+    contact_before_update = event.contactId
     
     serializer = EventSerializer(event, data=request.data, partial=True)
     if serializer.is_valid():
@@ -3040,8 +3397,52 @@ def event_update(request, event_id):
             except DjangoUser.DoesNotExist:
                 pass  # Keep existing user as fallback
         
+        # Check if user assignment changed
+        old_user_id = event.userId.id if event.userId else None
+        new_user_id = user.id if user else None
+        
         # Update event with new data
         event = serializer.save(contactId=contact, userId=user)
+        
+        # Refresh from database to get updated timestamps
+        event.refresh_from_db()
+        
+        # Send notification if user was assigned or changed
+        if event.userId and (old_user_id != new_user_id or old_user_id is None):
+            send_event_notification(event, notification_type='assigned')
+        
+        # Create log entry for event update
+        contact_for_log = contact or contact_before_update
+        print(f"[EVENT LOG] Event updated: id={event.id}, contact_for_log={contact_for_log.id if contact_for_log else None}")
+        if contact_for_log:
+            try:
+                new_event_data = {
+                    'eventId': event.id,
+                    'datetime': event.datetime.isoformat() if event.datetime else None,
+                    'comment': event.comment or '',
+                    'userId': user.id if user else None,
+                    'userName': f"{user.first_name} {user.last_name}".strip() if user and (user.first_name or user.last_name) else (user.username if user else None),
+                    'createdAt': event.created_at.isoformat() if event.created_at else None,
+                    'updatedAt': event.updated_at.isoformat() if event.updated_at else None,
+                }
+                print(f"[EVENT LOG] Creating log entry for editEvent, contact_id={contact_for_log.id}")
+                create_log_entry(
+                    event_type='editEvent',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    request=request,
+                    old_value=old_event_data,
+                    new_value=new_event_data,
+                    contact_id=contact_for_log,
+                    creator_id=request.user if request.user.is_authenticated else None
+                )
+                print(f"[EVENT LOG] Log entry created successfully")
+            except Exception as e:
+                import traceback
+                print(f"[EVENT LOG] Error creating log entry: {str(e)}")
+                print(f"[EVENT LOG] Traceback: {traceback.format_exc()}")
+        else:
+            print(f"[EVENT LOG] No contact_for_log for event {event.id}, skipping log creation")
+        
         return Response(EventSerializer(event).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3057,7 +3458,43 @@ def event_delete(request, event_id):
     except Event.DoesNotExist:
         return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
     
+    # Store event data before deletion
+    contact = event.contactId
+    event_data = {
+        'eventId': event.id,
+        'datetime': event.datetime.isoformat() if event.datetime else None,
+        'comment': event.comment or '',
+        'userId': event.userId.id if event.userId else None,
+        'userName': f"{event.userId.first_name} {event.userId.last_name}".strip() if event.userId and (event.userId.first_name or event.userId.last_name) else (event.userId.username if event.userId else None),
+        'createdAt': event.created_at.isoformat() if event.created_at else None,
+        'updatedAt': event.updated_at.isoformat() if event.updated_at else None,
+    }
+    
+    print(f"[EVENT LOG] Event deleted: id={event.id}, contact={contact.id if contact else None}")
+    
     event.delete()
+    
+    # Create log entry for event deletion
+    if contact:
+        try:
+            print(f"[EVENT LOG] Creating log entry for deleteEvent, contact_id={contact.id}")
+            create_log_entry(
+                event_type='deleteEvent',
+                user_id=request.user if request.user.is_authenticated else None,
+                request=request,
+                old_value=event_data,
+                new_value={},
+                contact_id=contact,
+                creator_id=request.user if request.user.is_authenticated else None
+            )
+            print(f"[EVENT LOG] Log entry created successfully")
+        except Exception as e:
+            import traceback
+            print(f"[EVENT LOG] Error creating log entry: {str(e)}")
+            print(f"[EVENT LOG] Traceback: {traceback.format_exc()}")
+    else:
+        print(f"[EVENT LOG] No contact for event {event.id}, skipping log creation")
+    
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 @api_view(['POST'])
@@ -3385,11 +3822,36 @@ def status_create(request):
 @permission_classes([IsAuthenticated])
 def status_update(request, status_id):
     """Update a status"""
+    import sys
+    import logging
+    logger = logging.getLogger(__name__)
+    
     status_obj = get_object_or_404(Status, id=status_id)
+    
+    # Debug: log incoming data using both print and logger
+    logger.info(f"[DEBUG] Status update request data: {request.data}")
+    logger.info(f"[DEBUG] Status ID: {status_id}")
+    logger.info(f"[DEBUG] Request method: {request.method}")
+    print(f"[DEBUG] Status update request data: {request.data}", flush=True, file=sys.stderr)
+    print(f"[DEBUG] Status ID: {status_id}", flush=True, file=sys.stderr)
+    print(f"[DEBUG] Request method: {request.method}", flush=True, file=sys.stderr)
+    sys.stderr.flush()
+    
     serializer = StatusSerializer(status_obj, data=request.data, partial=True)
     if serializer.is_valid():
+        logger.info(f"[DEBUG] Serializer is valid, saving...")
+        print(f"[DEBUG] Serializer is valid, saving...", flush=True, file=sys.stderr)
+        sys.stderr.flush()
         serializer.save()
+        # Refresh from database to get updated values
+        status_obj.refresh_from_db()
+        logger.info(f"[DEBUG] Status after update - is_event: {status_obj.is_event}, is_fosse_default: {status_obj.is_fosse_default}")
+        print(f"[DEBUG] Status after update - is_event: {status_obj.is_event}, is_fosse_default: {status_obj.is_fosse_default}", flush=True, file=sys.stderr)
+        sys.stderr.flush()
         return Response(StatusSerializer(status_obj).data, status=status.HTTP_200_OK)
+    logger.error(f"[ERROR] Status update validation errors: {serializer.errors}")
+    print(f"[ERROR] Status update validation errors: {serializer.errors}", flush=True, file=sys.stderr)
+    sys.stderr.flush()
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['DELETE'])
@@ -3555,6 +4017,10 @@ def contact_logs(request, contact_id):
             'contact_id',  # For contactId in serializer
             'creator_id'  # For creatorId and creatorName in serializer
         ).order_by('-created_at')
+        
+        # Debug: Print log types being returned
+        log_types = logs.values_list('event_type', flat=True).distinct()
+        print(f"[CONTACT LOGS] Contact {contact_id}: Found {logs.count()} logs with types: {list(log_types)}")
         
         serializer = LogSerializer(logs, many=True)
         return Response({'logs': serializer.data}, status=status.HTTP_200_OK)
@@ -5361,6 +5827,97 @@ def notification_preference_update(request, role_id):
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Role.DoesNotExist:
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+
+# Fosse Settings endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def fosse_settings_list(request):
+    """Get all Fosse settings for all roles"""
+    settings_list = FosseSettings.objects.all().select_related('role').order_by('role__name')
+    serializer = FosseSettingsSerializer(settings_list, many=True)
+    return Response({'settings': serializer.data})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def fosse_settings_detail(request, role_id):
+    """Get Fosse settings for a specific role"""
+    try:
+        role = Role.objects.get(id=role_id)
+        fosse_setting, created = FosseSettings.objects.get_or_create(
+            role=role,
+            defaults={
+                'id': uuid.uuid4().hex[:12],
+                'forced_columns': [],
+                'forced_filters': {},
+                'default_order': 'default'
+            }
+        )
+        # Ensure ID is set if it was just created
+        if created:
+            setting_id = uuid.uuid4().hex[:12]
+            while FosseSettings.objects.filter(id=setting_id).exists():
+                setting_id = uuid.uuid4().hex[:12]
+            fosse_setting.id = setting_id
+            fosse_setting.save()
+        
+        serializer = FosseSettingsSerializer(fosse_setting)
+        return Response(serializer.data)
+    except Role.DoesNotExist:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def fosse_settings_update(request, role_id):
+    """Update Fosse settings for a specific role"""
+    # Import status module locally to avoid scoping conflicts
+    from rest_framework import status as http_status
+    try:
+        role = Role.objects.get(id=role_id)
+        fosse_setting, created = FosseSettings.objects.get_or_create(
+            role=role,
+            defaults={
+                'id': uuid.uuid4().hex[:12],
+                'forced_columns': [],
+                'forced_filters': {},
+                'default_order': 'default'
+            }
+        )
+        
+        # Ensure ID is set if it was just created
+        if created:
+            setting_id = uuid.uuid4().hex[:12]
+            while FosseSettings.objects.filter(id=setting_id).exists():
+                setting_id = uuid.uuid4().hex[:12]
+            fosse_setting.id = setting_id
+            fosse_setting.save()
+        
+        # Use serializer to validate and update
+        serializer = FosseSettingsSerializer(fosse_setting, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=http_status.HTTP_200_OK)
+        else:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"FosseSettings validation errors: {serializer.errors}")
+            logger.error(f"Request data: {request.data}")
+            return Response({
+                'error': 'Validation failed',
+                'details': serializer.errors
+            }, status=http_status.HTTP_400_BAD_REQUEST)
+    except Role.DoesNotExist:
+        return Response({'error': 'Role not found'}, status=http_status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error updating Fosse settings: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return Response({
+            'error': 'Internal server error',
+            'detail': str(e),
+            'traceback': traceback.format_exc()
+        }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # TEMPORARY ENDPOINT - DELETE ALL CONTACTS
 # WARNING: This is a dangerous operation that will delete ALL contacts from the database

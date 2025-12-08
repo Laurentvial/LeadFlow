@@ -87,6 +87,13 @@ export function CsvImport() {
   // Get teleoperateurs only
   const teleoperateurs = Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];
 
+  // Auto-set teleoperateur to current user if they have the teleoperateur role
+  React.useEffect(() => {
+    if (currentUser?.isTeleoperateur === true && currentUser?.id) {
+      setDefaultTeleoperatorId(currentUser.id);
+    }
+  }, [currentUser]);
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -157,6 +164,11 @@ export function CsvImport() {
 
     if (!defaultStatusId) {
       toast.error('Veuillez sélectionner un statut par défaut');
+      return;
+    }
+
+    if (!defaultTeleoperatorId) {
+      toast.error('Veuillez sélectionner un téléopérateur');
       return;
     }
 
@@ -528,16 +540,15 @@ export function CsvImport() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="default-teleoperator">Téléopérateur (optionnel)</Label>
+                  <Label htmlFor="default-teleoperator">Téléopérateur (requis)</Label>
                   <Select
-                    value={defaultTeleoperatorId || '__none__'}
-                    onValueChange={(value) => setDefaultTeleoperatorId(value === '__none__' ? '' : value)}
+                    value={defaultTeleoperatorId}
+                    onValueChange={setDefaultTeleoperatorId}
                   >
                     <SelectTrigger id="default-teleoperator">
                       <SelectValue placeholder="Sélectionner un téléopérateur" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">Aucun</SelectItem>
                       {teleoperateurs.map((teleoperator) => (
                         <SelectItem key={teleoperator.id} value={teleoperator.id}>
                           {teleoperator.firstName} {teleoperator.lastName}
@@ -615,7 +626,7 @@ export function CsvImport() {
                 </Button>
                 <Button
                   onClick={handleImport}
-                  disabled={isLoading || !columnMapping.firstName || !defaultStatusId}
+                  disabled={isLoading || !columnMapping.firstName || !defaultStatusId || !defaultTeleoperatorId}
                 >
                   <Upload className="w-4 h-4 mr-2" />
                   Importer les contacts

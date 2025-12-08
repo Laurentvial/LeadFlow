@@ -167,6 +167,9 @@ class Status(models.Model):
     type = models.CharField(max_length=10, choices=STATUS_TYPE_CHOICES, default='lead')
     color = models.CharField(max_length=20, default="", blank=True)
     order_index = models.IntegerField(default=0)
+    is_event = models.BooleanField(default=False)
+    is_fosse_default = models.BooleanField(default=False)
+    client_default = models.BooleanField(default=False)
     created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_statuses')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -215,6 +218,46 @@ class NotificationPreference(models.Model):
     
     def __str__(self):
         return f"Notification Preferences - {self.role.name}"
+
+class FosseSettings(models.Model):
+    """Fosse page settings per role - forced columns, filters, and ordering"""
+    ORDER_CHOICES = [
+        ('default', 'Par défaut (nom complet)'),
+        ('created_at_asc', 'Date de création (ancien à nouveau)'),
+        ('created_at_desc', 'Date de création (nouveau à ancien)'),
+        ('updated_at_asc', 'Date de modification (ancien à nouveau)'),
+        ('updated_at_desc', 'Date de modification (nouveau à ancien)'),
+        ('email_asc', 'Email (ordre alphabétique)'),
+    ]
+    
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    role = models.ForeignKey('Role', on_delete=models.CASCADE, related_name='fosse_settings')
+    
+    # Forced columns: list of column IDs that must be visible on Fosse page
+    forced_columns = models.JSONField(default=list, blank=True)
+    
+    # Forced filters: object mapping column IDs to filter settings
+    # Example: {
+    #   "status": {"type": "defined", "values": ["status1", "status2"]},
+    #   "creator": {"type": "open"},
+    #   "source": {"type": "defined", "values": ["source1"]}
+    # }
+    forced_filters = models.JSONField(default=dict, blank=True)
+    
+    # Default ordering: 'default' (by creation date) or 'random' (random order)
+    default_order = models.CharField(max_length=20, choices=ORDER_CHOICES, default='default')
+    
+    # Default status to set when a contact becomes unassigned (both teleoperator and confirmateur are null)
+    default_status = models.ForeignKey('Status', on_delete=models.SET_NULL, null=True, blank=True, related_name='fosse_settings_default')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['role']  # One setting per role
+    
+    def __str__(self):
+        return f"Fosse Settings - {self.role.name}"
 
 class Permission(models.Model):
     """Permissions for components and fields"""

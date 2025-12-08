@@ -20,13 +20,9 @@ interface MessagePopupProps {
 export function MessagePopup({ message, onClose }: MessagePopupProps) {
   const navigate = useNavigate();
 
-  console.log('[MessagePopup] Rendering popup with message:', message);
-
   useEffect(() => {
-    console.log('[MessagePopup] Setting up auto-close timer');
     // Auto-close after 5 seconds
     const timer = setTimeout(() => {
-      console.log('[MessagePopup] Auto-closing popup');
       onClose();
     }, 5000);
 
@@ -45,8 +41,6 @@ export function MessagePopup({ message, onClose }: MessagePopupProps) {
     }
     return name.substring(0, 2).toUpperCase();
   };
-
-  console.log('[MessagePopup] Rendering popup with message:', message);
 
   return (
     <div 

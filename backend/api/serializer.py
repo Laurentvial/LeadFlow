@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -814,13 +814,16 @@ class StatusSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
     orderIndex = serializers.IntegerField(source='order_index', required=False)
+    isEvent = serializers.BooleanField(source='is_event', required=False)
+    isFosseDefault = serializers.BooleanField(source='is_fosse_default', required=False)
+    clientDefault = serializers.BooleanField(source='client_default', required=False)
     name = serializers.CharField(required=True, allow_blank=False)
     type = serializers.ChoiceField(choices=Status.STATUS_TYPE_CHOICES, required=False, default='lead')
     color = serializers.CharField(required=False, allow_blank=True, max_length=20)
     
     class Meta:
         model = Status
-        fields = ['id', 'name', 'type', 'color', 'orderIndex', 'createdAt', 'updatedAt']
+        fields = ['id', 'name', 'type', 'color', 'orderIndex', 'isEvent', 'isFosseDefault', 'clientDefault', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def validate_name(self, value):
@@ -855,9 +858,159 @@ class StatusSerializer(serializers.ModelSerializer):
         
         return data
     
+    def create(self, validated_data):
+        """Create status instance, ensuring only one status can be fosse default and only one client status can be client default"""
+        # Get values from validated_data (after source mapping) or initial_data (before mapping)
+        # The source parameter maps: isEvent -> is_event, isFosseDefault -> is_fosse_default, clientDefault -> client_default
+        
+        # Check for is_event value
+        if 'is_event' not in validated_data and hasattr(self, 'initial_data'):
+            is_event_value = self.initial_data.get('isEvent')
+            if is_event_value is not None:
+                validated_data['is_event'] = bool(is_event_value)
+        
+        # Check for is_fosse_default value
+        if 'is_fosse_default' not in validated_data and hasattr(self, 'initial_data'):
+            is_fosse_default_value = self.initial_data.get('isFosseDefault')
+            if is_fosse_default_value is not None:
+                validated_data['is_fosse_default'] = bool(is_fosse_default_value)
+        
+        # Check for client_default value
+        if 'client_default' not in validated_data and hasattr(self, 'initial_data'):
+            client_default_value = self.initial_data.get('clientDefault')
+            if client_default_value is not None:
+                validated_data['client_default'] = bool(client_default_value)
+        
+        # If setting is_fosse_default to True, unset all other statuses
+        if validated_data.get('is_fosse_default', False):
+            # Unset all other statuses that have is_fosse_default=True
+            Status.objects.filter(is_fosse_default=True).update(is_fosse_default=False)
+        
+        # If setting client_default to True, unset all other client statuses
+        status_type = validated_data.get('type', 'lead')
+        if validated_data.get('client_default', False) and status_type == 'client':
+            # Unset all other client statuses that have client_default=True
+            Status.objects.filter(type='client', client_default=True).update(client_default=False)
+        
+        # Create the instance with validated data
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update status instance, ensuring only one status can be fosse default"""
+        import sys
+        # Debug: print what we're working with
+        print(f"[DEBUG] Update validated_data: {validated_data}", flush=True)
+        if hasattr(self, 'initial_data'):
+            print(f"[DEBUG] Update initial_data: {self.initial_data}", flush=True)
+        sys.stdout.flush()
+        
+        # Get values directly from initial_data (request data before mapping)
+        # The source parameter should map isEvent -> is_event, but let's handle both
+        is_event_value = None
+        is_fosse_default_value = None
+        client_default_value = None
+        
+        # Check initial_data first (original request)
+        if hasattr(self, 'initial_data'):
+            # Handle isEvent - check if it's explicitly in the request (even if False)
+            if 'isEvent' in self.initial_data:
+                is_event_value = bool(self.initial_data.get('isEvent', False))
+                validated_data['is_event'] = is_event_value
+                print(f"[DEBUG] Found isEvent in initial_data: {is_event_value}", flush=True)
+            else:
+                print(f"[DEBUG] isEvent NOT in initial_data", flush=True)
+            
+            # Handle isFosseDefault - check if it's explicitly in the request (even if False)
+            if 'isFosseDefault' in self.initial_data:
+                is_fosse_default_value = bool(self.initial_data.get('isFosseDefault', False))
+                validated_data['is_fosse_default'] = is_fosse_default_value
+                print(f"[DEBUG] Found isFosseDefault in initial_data: {is_fosse_default_value}", flush=True)
+            else:
+                print(f"[DEBUG] isFosseDefault NOT in initial_data", flush=True)
+            
+            # Handle clientDefault - check if it's explicitly in the request (even if False)
+            if 'clientDefault' in self.initial_data:
+                client_default_value = bool(self.initial_data.get('clientDefault', False))
+                validated_data['client_default'] = client_default_value
+                print(f"[DEBUG] Found clientDefault in initial_data: {client_default_value}", flush=True)
+            else:
+                print(f"[DEBUG] clientDefault NOT in initial_data", flush=True)
+        
+        # Also check validated_data (after source mapping, if it worked)
+        if 'is_event' in validated_data and is_event_value is None:
+            is_event_value = validated_data['is_event']
+            print(f"[DEBUG] Found is_event in validated_data: {is_event_value}", flush=True)
+        
+        if 'is_fosse_default' in validated_data and is_fosse_default_value is None:
+            is_fosse_default_value = validated_data['is_fosse_default']
+            print(f"[DEBUG] Found is_fosse_default in validated_data: {is_fosse_default_value}", flush=True)
+        
+        if 'client_default' in validated_data and client_default_value is None:
+            client_default_value = validated_data['client_default']
+            print(f"[DEBUG] Found client_default in validated_data: {client_default_value}", flush=True)
+        
+        # If setting is_fosse_default to True, unset all other statuses
+        if is_fosse_default_value:
+            # Unset all other statuses that have is_fosse_default=True
+            Status.objects.filter(is_fosse_default=True).exclude(id=instance.id).update(is_fosse_default=False)
+        
+        # If setting client_default to True for a client status, unset all other client statuses
+        if client_default_value and instance.type == 'client':
+            # Unset all other client statuses that have client_default=True
+            Status.objects.filter(type='client', client_default=True).exclude(id=instance.id).update(client_default=False)
+        
+        # Update the instance with validated data
+        updated_instance = super().update(instance, validated_data)
+        
+        # Explicitly set and save both fields if they were provided
+        fields_to_update = []
+        if is_event_value is not None:
+            # Verify the field exists on the model
+            if hasattr(updated_instance, 'is_event'):
+                updated_instance.is_event = is_event_value
+                fields_to_update.append('is_event')
+                print(f"[DEBUG] Setting is_event to: {is_event_value}", flush=True)
+            else:
+                print(f"[ERROR] Field 'is_event' does not exist on Status model!", flush=True)
+        
+        if is_fosse_default_value is not None:
+            # Verify the field exists on the model
+            if hasattr(updated_instance, 'is_fosse_default'):
+                updated_instance.is_fosse_default = is_fosse_default_value
+                fields_to_update.append('is_fosse_default')
+                print(f"[DEBUG] Setting is_fosse_default to: {is_fosse_default_value}", flush=True)
+            else:
+                print(f"[ERROR] Field 'is_fosse_default' does not exist on Status model!", flush=True)
+        
+        if client_default_value is not None:
+            # Verify the field exists on the model
+            if hasattr(updated_instance, 'client_default'):
+                updated_instance.client_default = client_default_value
+                fields_to_update.append('client_default')
+                print(f"[DEBUG] Setting client_default to: {client_default_value}", flush=True)
+            else:
+                print(f"[ERROR] Field 'client_default' does not exist on Status model!", flush=True)
+        
+        # Save explicitly if we have fields to update
+        if fields_to_update:
+            # Use update() to directly update the database row
+            Status.objects.filter(id=updated_instance.id).update(**{field: getattr(updated_instance, field) for field in fields_to_update})
+            # Refresh instance to get updated values
+            updated_instance.refresh_from_db()
+            print(f"[DEBUG] Directly updated database fields: {fields_to_update}", flush=True)
+            print(f"[DEBUG] After DB update - is_event: {updated_instance.is_event}, is_fosse_default: {updated_instance.is_fosse_default}, client_default: {updated_instance.client_default}", flush=True)
+        else:
+            print(f"[DEBUG] No fields to update", flush=True)
+        
+        sys.stdout.flush()
+        return updated_instance
+    
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['orderIndex'] = instance.order_index
+        ret['isEvent'] = instance.is_event
+        ret['isFosseDefault'] = instance.is_fosse_default
+        ret['clientDefault'] = instance.client_default
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
@@ -1320,6 +1473,88 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
         ret['notifyMessageReceived'] = instance.notify_message_received
         ret['notifySensitiveContactModification'] = instance.notify_sensitive_contact_modification
         ret['notifyContactEdit'] = instance.notify_contact_edit
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class FosseSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for FosseSettings model"""
+    roleId = serializers.CharField(source='role.id', read_only=True)
+    roleName = serializers.CharField(source='role.name', read_only=True)
+    forcedColumns = serializers.JSONField(source='forced_columns', required=False)
+    forcedFilters = serializers.JSONField(source='forced_filters', required=False)
+    defaultOrder = serializers.CharField(source='default_order', required=False)
+    defaultStatusId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = FosseSettings
+        fields = ['id', 'roleId', 'roleName', 'forcedColumns', 'forcedFilters', 'defaultOrder', 'defaultStatusId', 'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'roleId', 'roleName', 'createdAt', 'updatedAt']
+    
+    def to_internal_value(self, data):
+        """Handle defaultStatusId conversion"""
+        # Get defaultStatusId before processing
+        default_status_id = None
+        if isinstance(data, dict):
+            default_status_id = data.get('defaultStatusId')
+        else:
+            # Handle QueryDict
+            default_status_id = getattr(data, 'get', lambda k, d=None: d)('defaultStatusId', None)
+        
+        # Process through parent to get validated_data
+        validated_data = super().to_internal_value(data)
+        
+        # Store defaultStatusId for use in update method
+        # Convert empty string to None
+        if default_status_id == '' or default_status_id is None:
+            self._default_status_id = None
+        else:
+            self._default_status_id = str(default_status_id)
+        
+        return validated_data
+    
+    def update(self, instance, validated_data):
+        # Handle default_status update from request data
+        # Remove defaultStatusId from validated_data since it's not a model field
+        validated_data.pop('defaultStatusId', None)
+        
+        # Update default_status if provided
+        if hasattr(self, '_default_status_id'):
+            default_status_id = self._default_status_id
+            if default_status_id:
+                try:
+                    from api.models import Status
+                    status_obj = Status.objects.get(id=default_status_id)
+                    instance.default_status = status_obj
+                except Status.DoesNotExist:
+                    instance.default_status = None
+            else:
+                instance.default_status = None
+        
+        return super().update(instance, validated_data)
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['roleId'] = instance.role.id
+        ret['roleName'] = instance.role.name
+        ret['forcedColumns'] = instance.forced_columns if instance.forced_columns else []
+        ret['forcedFilters'] = instance.forced_filters if instance.forced_filters else {}
+        ret['defaultOrder'] = instance.default_order if instance.default_order else 'default'
+        ret['defaultStatusId'] = instance.default_status.id if instance.default_status else None
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+    
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['roleId'] = instance.role.id
+        ret['roleName'] = instance.role.name
+        ret['forcedColumns'] = instance.forced_columns if instance.forced_columns else []
+        ret['forcedFilters'] = instance.forced_filters if instance.forced_filters else {}
+        ret['defaultOrder'] = instance.default_order if instance.default_order else 'default'
+        ret['defaultStatusId'] = instance.default_status.id if instance.default_status else None
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret

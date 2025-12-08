@@ -48,6 +48,9 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       'addContact': 'Création du contact',
       'editContact': 'Modification du contact',
       'deleteContact': 'Suppression du contact',
+      'createEvent': 'Création d\'événement',
+      'editEvent': 'Modification d\'événement',
+      'deleteEvent': 'Suppression d\'événement',
     };
     return labels[eventType] || eventType;
   }
@@ -73,6 +76,13 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       'postalCode': 'Code postal',
       'city': 'Ville',
       'campaign': 'Campagne',
+      'eventId': 'ID Événement',
+      'datetime': 'Date et heure',
+      'comment': 'Commentaire',
+      'userId': 'ID Utilisateur',
+      'userName': 'Utilisateur',
+      'createdAt': 'Créé le',
+      'updatedAt': 'Modifié le',
     };
     return labels[fieldName] || fieldName;
   }
@@ -81,14 +91,32 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
     if (value === null || value === undefined || value === '') {
       return '(vide)';
     }
+    // Format datetime strings
+    if (typeof value === 'string' && (value.includes('T') || value.includes('-'))) {
+      try {
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+          return date.toLocaleString('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+        }
+      } catch (e) {
+        // If parsing fails, return as is
+      }
+    }
     return String(value);
   }
 
   function getChangedFields(log: Log): Array<{field: string, old: any, new: any}> {
     const changes: Array<{field: string, old: any, new: any}> = [];
     
-    // For creation events, show all new values
-    if (log.eventType === 'addContact' && log.newValue) {
+    // For creation events (contact or event), show all new values
+    if ((log.eventType === 'addContact' || log.eventType === 'createEvent') && log.newValue) {
       Object.keys(log.newValue).forEach(key => {
         const newVal = log.newValue[key];
         // Only include non-empty fields for creation
@@ -97,6 +125,21 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
             field: key,
             old: null,
             new: newVal
+          });
+        }
+      });
+      return changes;
+    }
+    
+    // For deletion events, show old values
+    if (log.eventType === 'deleteEvent' && log.oldValue) {
+      Object.keys(log.oldValue).forEach(key => {
+        const oldVal = log.oldValue[key];
+        if (oldVal !== null && oldVal !== undefined && oldVal !== '') {
+          changes.push({
+            field: key,
+            old: oldVal,
+            new: null
           });
         }
       });
@@ -174,8 +217,10 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                           <div className="mt-2 space-y-1">
                             {changedFields.slice(0, 3).map((change, idx) => (
                               <p key={idx} className="text-xs text-slate-500">
-                                {log.eventType === 'addContact' ? (
+                                {log.eventType === 'addContact' || log.eventType === 'createEvent' ? (
                                   <>{getFieldLabel(change.field)}: {formatValue(change.new)}</>
+                                ) : log.eventType === 'deleteEvent' ? (
+                                  <>{getFieldLabel(change.field)}: {formatValue(change.old)}</>
                                 ) : (
                                   <>{getFieldLabel(change.field)}: {formatValue(change.old)} → {formatValue(change.new)}</>
                                 )}
@@ -183,7 +228,10 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                             ))}
                             {changedFields.length > 3 && (
                               <p className="text-xs text-slate-400 italic">
-                                +{changedFields.length - 3} autre(s) {log.eventType === 'addContact' ? 'champ(s)' : 'changement(s)'}
+                                +{changedFields.length - 3} autre(s) {
+                                  log.eventType === 'addContact' || log.eventType === 'createEvent' ? 'champ(s)' : 
+                                  log.eventType === 'deleteEvent' ? 'champ(s) supprimé(s)' : 
+                                  'changement(s)'}
                               </p>
                             )}
                           </div>
@@ -268,7 +316,9 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                     return (
                       <div>
                         <Label className="text-sm font-semibold">
-                          {selectedLog.eventType === 'addContact' ? 'Informations créées' : 'Modifications'}
+                          {selectedLog.eventType === 'addContact' || selectedLog.eventType === 'createEvent' ? 'Informations créées' : 
+                           selectedLog.eventType === 'deleteEvent' ? 'Informations supprimées' : 
+                           'Modifications'}
                         </Label>
                         <div className="mt-2 space-y-3">
                           {changedFields.map((change, idx) => (
@@ -279,10 +329,15 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                                     {getFieldLabel(change.field)}
                                   </Label>
                                   <div className="mt-1 space-y-1">
-                                    {selectedLog.eventType === 'addContact' ? (
+                                    {selectedLog.eventType === 'addContact' || selectedLog.eventType === 'createEvent' ? (
                                       <div className="flex items-center gap-2">
                                         <span className="text-xs text-green-600 font-medium">Valeur:</span>
                                         <span className="text-xs text-slate-600">{formatValue(change.new)}</span>
+                                      </div>
+                                    ) : selectedLog.eventType === 'deleteEvent' ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-red-600 font-medium">Valeur supprimée:</span>
+                                        <span className="text-xs text-slate-600">{formatValue(change.old)}</span>
                                       </div>
                                     ) : (
                                       <>

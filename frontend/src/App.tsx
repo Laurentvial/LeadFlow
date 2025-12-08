@@ -21,6 +21,7 @@ import SettingsPermissionWrapper from './components/SettingsPermissionWrapper';
 import { Layout } from './components/Layout';
 import { Toaster } from './components/ui/sonner';
 import { MessagePopupWrapper } from './components/MessagePopupWrapper';
+import { EventPopupWrapper } from './components/EventPopupWrapper';
 
 function Logout() {
     localStorage.clear();
@@ -45,6 +46,7 @@ function App() {
                 <UnreadMessagesProvider>
                     <Toaster />
                     <MessagePopupWrapper />
+                    <EventPopupWrapper />
                     <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/logout" element={<Logout />} />

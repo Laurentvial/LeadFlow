@@ -33,54 +33,26 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     try {
+      // apiCall already handles token refresh automatically on 401 errors
       const response = await apiCall("/api/user/current/");
       setCurrentUser(response);
     } catch (error: any) {
-      console.error("Erreur lors de la récupération de l'utilisateur", error);
-      
-      // If token is invalid (401), try to refresh it
-      if (error?.status === 401 || error?.message?.includes('token')) {
-        const refreshToken = localStorage.getItem(REFRESH_TOKEN);
-        if (refreshToken) {
-          try {
-            // @ts-ignore - Vite environment variables
-            const apiUrl = import.meta.env.VITE_URL || 'http://127.0.0.1:8000';
-            const refreshResponse = await fetch(`${apiUrl}/api/token/refresh/`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                refresh: refreshToken,
-              }),
-            });
-
-            if (refreshResponse.ok) {
-              const refreshData = await refreshResponse.json();
-              if (refreshData.access) {
-                localStorage.setItem(ACCESS_TOKEN, refreshData.access);
-                // Retry the request with new token
-                try {
-                  const response = await apiCall("/api/user/current/");
-                  setCurrentUser(response);
-                  setLoading(false);
-                  return;
-                } catch (retryError) {
-                  console.error("Erreur après refresh du token", retryError);
-                }
-              }
-            }
-          } catch (refreshError) {
-            console.error("Erreur lors du refresh du token", refreshError);
-          }
+      // If it's a 401, apiCall already tried to refresh the token
+      // If refresh failed, apiCall already redirected to login and cleared tokens
+      // Just set user to null here - don't try to refresh again (apiCall already did that)
+      if (error?.status === 401) {
+        // Token is invalid and refresh failed (or no refresh token)
+        // apiCall already handled redirect to login, just clear local state
+        // Don't log error if we're redirecting to login (to avoid console noise)
+        if (!error?.isRedirecting) {
+          console.error("Erreur lors de la récupération de l'utilisateur", error);
         }
-        
-        // If refresh failed or no refresh token, clear tokens
-        localStorage.removeItem(ACCESS_TOKEN);
-        localStorage.removeItem(REFRESH_TOKEN);
+        setCurrentUser(null);
+      } else {
+        // For other errors, log them but still set user to null
+        console.error("Erreur lors de la récupération de l'utilisateur", error);
+        setCurrentUser(null);
       }
-      
-      setCurrentUser(null);
     } finally {
       setLoading(false);
     }

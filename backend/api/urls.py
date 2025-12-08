@@ -109,4 +109,8 @@ urlpatterns = [
     path('notification-preferences/', api_views.notification_preference_list, name='notification-preference-list'),
     path('notification-preferences/<str:role_id>/', api_views.notification_preference_detail, name='notification-preference-detail'),
     path('notification-preferences/<str:role_id>/update/', api_views.notification_preference_update, name='notification-preference-update'),
+    # Fosse Settings endpoints
+    path('fosse-settings/', api_views.fosse_settings_list, name='fosse-settings-list'),
+    path('fosse-settings/<str:role_id>/', api_views.fosse_settings_detail, name='fosse-settings-detail'),
+    path('fosse-settings/<str:role_id>/update/', api_views.fosse_settings_update, name='fosse-settings-update'),
 ]

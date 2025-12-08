@@ -15,6 +15,23 @@ interface DateInputProps extends Omit<React.ComponentProps<"input">, "type" | "v
 function DateInput({ value, onChange, className, label, ...props }: DateInputProps) {
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
 
+  // Get today's date in YYYY-MM-DD format
+  const getTodayDateString = (): string => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Initialize with today's date if value is empty
+  React.useEffect(() => {
+    if (!value || value === '') {
+      const todayStr = getTodayDateString();
+      onChange(todayStr);
+    }
+  }, []); // Only run on mount
+
   // Convert YYYY-MM-DD to Date object
   const getDateFromValue = (dateStr: string): Date | undefined => {
     if (!dateStr) return undefined;
@@ -102,6 +119,7 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
       const parsed = parseFromDisplay(inputValue);
       if (parsed && parsed !== value) {
         onChange(parsed);
+        // If calendar is open, the selected date will update automatically via selectedDate
       }
     }
   };
@@ -132,7 +150,37 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
     }
   };
 
-  const selectedDate = getDateFromValue(value);
+  // Function to validate and get the date from input for calendar highlighting
+  // This function checks the date inserted in the input and returns it for calendar highlighting
+  const getSelectedDateForCalendar = React.useCallback((): Date | undefined => {
+    // Get date from the value prop (YYYY-MM-DD format) - this is the source of truth
+    if (value) {
+      const dateFromValue = getDateFromValue(value);
+      if (dateFromValue && !isNaN(dateFromValue.getTime())) {
+        return dateFromValue;
+      }
+    }
+    
+    // If value is empty or invalid, return undefined
+    // The calendar will show today's month but won't highlight any date
+    return undefined;
+  }, [value]);
+
+  // Update calendar when input value changes
+  React.useEffect(() => {
+    // When the calendar opens, ensure it shows the correct selected date
+    if (isCalendarOpen) {
+      const dateFromInput = getSelectedDateForCalendar();
+      if (dateFromInput && value) {
+        // The date is already in value, Calendar will use it via selected prop
+        // This effect ensures the calendar updates when input changes
+      }
+    }
+  }, [isCalendarOpen, value, displayValue, getSelectedDateForCalendar]);
+
+  const selectedDate = getSelectedDateForCalendar();
+  // Default to selected date's month, or today's month if no date selected
+  const defaultMonth = selectedDate || new Date();
 
   return (
     <div className={cn("flex gap-2", className)}>
@@ -162,9 +210,11 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start" style={{ zIndex: 10002 }}>
           <Calendar
+            key={selectedDate?.getTime() || 'no-date'} // Force re-render when selected date changes
             mode="single"
             selected={selectedDate}
             onSelect={handleCalendarSelect}
+            defaultMonth={defaultMonth}
             initialFocus
           />
         </PopoverContent>

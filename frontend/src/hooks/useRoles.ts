@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiCall } from '../utils/api';
+import { ACCESS_TOKEN } from '../utils/constants';
 
 export interface Role {
   id: string;
@@ -28,6 +29,14 @@ export function useRoles(options: UseRolesOptions = { autoLoad: true }) {
   const [error, setError] = useState<Error | null>(null);
 
   const loadRoles = useCallback(async (forceRefresh = false) => {
+    // Check if user is authenticated before making API call
+    const token = localStorage.getItem(ACCESS_TOKEN);
+    if (!token) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     // Prevent duplicate requests
     if (isLoadingRoles && !forceRefresh) {
       return;
@@ -63,6 +72,12 @@ export function useRoles(options: UseRolesOptions = { autoLoad: true }) {
       rolesCacheTime = now;
       setRoles(normalizedRoles);
     } catch (err: any) {
+      // Don't log 401 errors if we're redirecting to login (expected behavior)
+      if (err?.status === 401 && err?.isRedirecting) {
+        setLoading(false);
+        isLoadingRoles = false;
+        return;
+      }
       const errorMessage = err?.message || err?.response?.detail || 'Erreur lors du chargement des rôles';
       const error = new Error(errorMessage);
       setError(error);

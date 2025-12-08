@@ -156,7 +156,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     if (response.status === 401) {
       if (!token) {
         // No token available, redirect to login
-        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        const isRedirecting = typeof window !== 'undefined' && window.location.pathname !== '/login';
+        if (isRedirecting) {
           window.location.href = '/login';
         }
         const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
@@ -164,6 +165,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         const errorObj = new Error(errorMessage);
         (errorObj as any).response = error;
         (errorObj as any).status = 401;
+        (errorObj as any).isRedirecting = isRedirecting; // Mark that we're redirecting
         throw errorObj;
       }
       
@@ -209,7 +211,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           localStorage.removeItem(ACCESS_TOKEN);
           localStorage.removeItem(REFRESH_TOKEN);
           // Redirect to login page
-          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          const isRedirecting = typeof window !== 'undefined' && window.location.pathname !== '/login';
+          if (isRedirecting) {
             window.location.href = '/login';
           }
           const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
@@ -217,6 +220,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           const errorObj = new Error(errorMessage);
           (errorObj as any).response = error;
           (errorObj as any).status = 401;
+          (errorObj as any).isRedirecting = isRedirecting; // Mark that we're redirecting
           throw errorObj;
         }
       } else {
@@ -224,7 +228,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         localStorage.removeItem(ACCESS_TOKEN);
         localStorage.removeItem(REFRESH_TOKEN);
         // Redirect to login page
-        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        const isRedirecting = typeof window !== 'undefined' && window.location.pathname !== '/login';
+        if (isRedirecting) {
           window.location.href = '/login';
         }
         const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
@@ -232,6 +237,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         const errorObj = new Error(errorMessage);
         (errorObj as any).response = error;
         (errorObj as any).status = 401;
+        (errorObj as any).isRedirecting = isRedirecting; // Mark that we're redirecting
         throw errorObj;
       }
     }

@@ -2661,3 +2661,137 @@ html {
     transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0) scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1)) rotate(var(--tw-exit-rotate, 0));
   }
 }
+
+/* Highlight today's date in calendar picker */
+/* Target react-day-picker v8 classes - multiple selectors for maximum compatibility */
+[data-radix-popper-content-wrapper] .rdp-day_today,
+[data-radix-popper-content-wrapper] button.rdp-day_today,
+[data-radix-popper-content-wrapper] [class*="day_today"]:not([class*="day_selected"]),
+.rdp-day_today:not(.rdp-day_selected),
+button.rdp-day_today:not(.rdp-day_selected),
+[class*="day_today"]:not([class*="day_selected"]),
+.rdp button[class*="day_today"]:not([class*="day_selected"]) {
+  background-color: rgb(59 130 246) !important; /* blue-500 */
+  color: rgb(255 255 255) !important; /* white */
+  font-weight: 600 !important;
+  border: 2px solid rgb(37 99 235) !important; /* blue-600 */
+  border-radius: 0.375rem !important;
+  box-shadow: 0 0 0 1px rgb(37 99 235) !important;
+  transition: all 0.2s ease !important;
+}
+
+[data-radix-popper-content-wrapper] .rdp-day_today:hover,
+[data-radix-popper-content-wrapper] button.rdp-day_today:hover,
+[data-radix-popper-content-wrapper] [class*="day_today"]:hover,
+.rdp-day_today:hover,
+button.rdp-day_today:hover,
+[class*="day_today"]:hover {
+  background-color: rgb(37 99 235) !important; /* blue-600 */
+  border-color: rgb(29 78 216) !important; /* blue-700 */
+  box-shadow: 0 0 0 2px rgb(29 78 216), 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+  transform: scale(1.05) !important;
+  transition: all 0.2s ease !important;
+}
+
+.dark [data-radix-popper-content-wrapper] .rdp-day_today,
+.dark [data-radix-popper-content-wrapper] button.rdp-day_today,
+.dark [data-radix-popper-content-wrapper] [class*="day_today"]:not([class*="day_selected"]),
+.dark .rdp-day_today:not(.rdp-day_selected),
+.dark button.rdp-day_today:not(.rdp-day_selected),
+.dark [class*="day_today"]:not([class*="day_selected"]),
+.dark .rdp button[class*="day_today"]:not([class*="day_selected"]) {
+  background-color: rgb(37 99 235) !important; /* blue-600 */
+  color: rgb(255 255 255) !important; /* white */
+  border-color: rgb(29 78 216) !important; /* blue-700 */
+  box-shadow: 0 0 0 1px rgb(29 78 216) !important;
+  transition: all 0.2s ease !important;
+}
+
+.dark [data-radix-popper-content-wrapper] .rdp-day_today:hover,
+.dark [data-radix-popper-content-wrapper] button.rdp-day_today:hover,
+.dark [data-radix-popper-content-wrapper] [class*="day_today"]:hover,
+.dark .rdp-day_today:hover,
+.dark button.rdp-day_today:hover,
+.dark [class*="day_today"]:hover {
+  background-color: rgb(29 78 216) !important; /* blue-700 */
+  border-color: rgb(30 64 175) !important; /* blue-800 */
+  box-shadow: 0 0 0 2px rgb(30 64 175), 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+  transform: scale(1.05) !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Style past days in calendar picker */
+[data-radix-popper-content-wrapper] .rdp-day_past,
+[data-radix-popper-content-wrapper] button.rdp-day_past,
+[data-radix-popper-content-wrapper] .rdp-day[class*="past"],
+[data-radix-popper-content-wrapper] button.rdp-day[class*="past"],
+[data-radix-popper-content-wrapper] [class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.rdp-day_past:not(.rdp-day_selected):not(.rdp-day_today),
+button.rdp-day_past:not(.rdp-day_selected):not(.rdp-day_today),
+.rdp-day[class*="past"]:not(.rdp-day_selected):not(.rdp-day_today),
+button.rdp-day[class*="past"]:not(.rdp-day_selected):not(.rdp-day_today),
+[class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.rdp button[class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.rdp button[class*="past"]:not([class*="day_selected"]):not([class*="day_today"]) {
+  background-color: rgb(243 244 246) !important; /* gray-100 */
+  color: rgb(156 163 175) !important; /* gray-400 */
+  opacity: 0.7 !important;
+}
+
+.dark [data-radix-popper-content-wrapper] .rdp-day_past,
+.dark [data-radix-popper-content-wrapper] button.rdp-day_past,
+.dark [data-radix-popper-content-wrapper] .rdp-day[class*="past"],
+.dark [data-radix-popper-content-wrapper] button.rdp-day[class*="past"],
+.dark [data-radix-popper-content-wrapper] [class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.dark .rdp-day_past:not(.rdp-day_selected):not(.rdp-day_today),
+.dark button.rdp-day_past:not(.rdp-day_selected):not(.rdp-day_today),
+.dark .rdp-day[class*="past"]:not(.rdp-day_selected):not(.rdp-day_today),
+.dark button.rdp-day[class*="past"]:not(.rdp-day_selected):not(.rdp-day_today),
+.dark [class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.dark .rdp button[class*="day_past"]:not([class*="day_selected"]):not([class*="day_today"]),
+.dark .rdp button[class*="past"]:not([class*="day_selected"]):not([class*="day_today"]) {
+  background-color: rgba(31, 41, 55, 0.6) !important; /* gray-800 with opacity */
+  color: rgb(107 114 128) !important; /* gray-500 */
+  opacity: 0.7 !important;
+}
+
+/* Highlight selected date in calendar picker */
+[data-radix-popper-content-wrapper] button[aria-selected="true"],
+.rdp button[aria-selected="true"],
+button[aria-selected="true"].rdp-day,
+.rdp-day_selected,
+[class*="day_selected"] {
+  background-color: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  font-weight: 700 !important;
+  border-radius: 0.375rem !important;
+  box-shadow: 0 0 0 2px var(--primary) !important;
+}
+
+[data-radix-popper-content-wrapper] button[aria-selected="true"]:hover,
+.rdp button[aria-selected="true"]:hover,
+button[aria-selected="true"].rdp-day:hover,
+.rdp-day_selected:hover,
+[class*="day_selected"]:hover {
+  background-color: var(--primary) !important;
+  opacity: 0.9 !important;
+}
+
+.dark [data-radix-popper-content-wrapper] button[aria-selected="true"],
+.dark .rdp button[aria-selected="true"],
+.dark button[aria-selected="true"].rdp-day,
+.dark .rdp-day_selected,
+.dark [class*="day_selected"] {
+  background-color: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  box-shadow: 0 0 0 2px var(--primary) !important;
+}
+
+.dark [data-radix-popper-content-wrapper] button[aria-selected="true"]:hover,
+.dark .rdp button[aria-selected="true"]:hover,
+.dark button[aria-selected="true"].rdp-day:hover,
+.dark .rdp-day_selected:hover,
+.dark [class*="day_selected"]:hover {
+  background-color: var(--primary) !important;
+  opacity: 0.9 !important;
+}

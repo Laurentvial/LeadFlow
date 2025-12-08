@@ -55,12 +55,15 @@ export function PlanningCalendar() {
     userId: ''
   });
 
-  // Initialize userId with current user when modal opens
+  // Initialize userId with current user and today's date when modal opens
   useEffect(() => {
-    if (isModalOpen && currentUser?.id && !formData.userId) {
+    if (isModalOpen) {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0]; // Format: YYYY-MM-DD
       setFormData(prev => ({ 
         ...prev, 
-        userId: prev.userId || currentUser.id 
+        userId: currentUser?.id || prev.userId,
+        date: todayStr // Always set to today when modal opens
       }));
     }
   }, [isModalOpen, currentUser]);
@@ -96,7 +99,7 @@ export function PlanningCalendar() {
         body: JSON.stringify({
           datetime: `${formData.date}T${timeString}`,
           contactId: formData.clientId || null,
-          userId: formData.userId || currentUser?.id || null,
+          userId: currentUser?.id || null,
           comment: formData.comment || ''
         }),
       });
@@ -376,27 +379,6 @@ export function PlanningCalendar() {
                       Client sélectionné : {getSelectedClientName(formData.clientId)}
                     </div>
                   )}
-                </div>
-
-                <div className="modal-form-field">
-                  <Label>Utilisateur</Label>
-                  <Select
-                    value={formData.userId || currentUser?.id || ''}
-                    onValueChange={(value) => setFormData({ ...formData, userId: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Sélectionner un utilisateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {users.map((user) => (
-                        <SelectItem key={user.id} value={user.id}>
-                          {user.firstName && user.lastName 
-                            ? `${user.firstName} ${user.lastName}` 
-                            : user.email || user.username || `User ${user.id}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 
                 <div className="modal-form-field">

@@ -211,3 +211,28 @@ export function useAccessibleNoteCategoryIds(): string[] {
   return Array.from(new Set(categoryIds));
 }
 
+/**
+ * Hook to check if user has permission to view the Fosse settings page
+ * Returns true only if user has the general 'permissions' view permission
+ * (Fosse settings are managed through the permissions system)
+ * @returns boolean indicating if user has Fosse settings management permission
+ */
+export function useHasFosseSettingsPermission(): boolean {
+  const { currentUser } = useUser();
+
+  if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+    return false;
+  }
+
+  const permissions: Permission[] = currentUser.permissions;
+
+  // Check if user has the general 'permissions' view permission
+  // (Fosse settings are part of the permissions/settings system)
+  return permissions.some((perm) => {
+    return perm.component === 'permissions' && 
+           perm.action === 'view' && 
+           !perm.fieldName && // Exclude field-level permissions
+           !perm.statusId; // Only general permissions permission
+  });
+}
+

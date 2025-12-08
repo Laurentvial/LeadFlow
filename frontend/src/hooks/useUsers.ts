@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiCall, clearApiCache } from '../utils/api';
 import { User } from '../types';
+import { ACCESS_TOKEN } from '../utils/constants';
 
 // Shared loading state to prevent duplicate requests
 let isLoadingUsers = false;
@@ -14,6 +15,14 @@ export function useUsers() {
   const [error, setError] = useState<Error | null>(null);
 
   const loadUsers = useCallback(async (forceRefresh = false) => {
+    // Check if user is authenticated before making API call
+    const token = localStorage.getItem(ACCESS_TOKEN);
+    if (!token) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     // Prevent duplicate requests
     if (isLoadingUsers && !forceRefresh) {
       return;
@@ -57,6 +66,12 @@ export function useUsers() {
       setUsers(sortedUsers);
       setError(null); // Clear error on success
     } catch (err: any) {
+      // Don't log 401 errors if we're redirecting to login (expected behavior)
+      if (err?.status === 401 && err?.isRedirecting) {
+        setLoading(false);
+        isLoadingUsers = false;
+        return;
+      }
       // If we have cached data, use it even if there's an error
       if (usersCache.length > 0) {
         console.warn('Error loading users, using cached data:', err);

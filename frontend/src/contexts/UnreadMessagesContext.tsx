@@ -13,10 +13,27 @@ interface MessageNotification {
   createdAt: string;
 }
 
+interface EventNotification {
+  type: string;
+  event: {
+    id: string;
+    datetime: string;
+    contactId?: string | null;
+    contactName?: string | null;
+    comment?: string;
+  };
+  notification_type: 'assigned' | '30min_before' | '5min_before';
+  title: string;
+  message: string;
+  minutes_before?: number;
+}
+
 interface UnreadMessagesContextType {
   totalUnreadCount: number;
   messagePopup: MessageNotification | null;
+  eventPopup: EventNotification | null;
   closePopup: () => void;
+  closeEventPopup: () => void;
   refreshUnreadCount: () => Promise<void>;
 }
 
@@ -54,12 +71,11 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
   const activeChatRoomId = useActiveChatRoom();
   const [totalUnreadCount, setTotalUnreadCount] = useState(0);
   const [messagePopup, setMessagePopup] = useState<MessageNotification | null>(null);
+  const [eventPopup, setEventPopup] = useState<EventNotification | null>(null);
   
   // Use refs to track current values for use in setTimeout callbacks
   const activeChatRoomIdRef = React.useRef(activeChatRoomId);
   const locationRef = React.useRef(location);
-
-  console.log('[UnreadMessagesProvider] Initialized, currentUser:', currentUser?.id);
   
   // Update refs when values change
   React.useEffect(() => {
@@ -92,12 +108,9 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
   const ws = useWebSocket({
     url: shouldInitialize ? '/ws/notifications/' : '',
     onMessage: (message) => {
-      console.log('[UnreadMessagesContext] Received WebSocket message:', JSON.stringify(message, null, 2));
       // Listen for new message notifications (sent via chat_message group)
       if (message.type === 'new_message') {
-        console.log('[UnreadMessagesContext] New message detected');
         const msg = message.message;
-        console.log('[UnreadMessagesContext] Message data:', msg);
         
         if (!msg || !msg.id || !msg.chatRoomId) {
           console.error('[UnreadMessagesContext] Invalid message format:', msg);
@@ -108,7 +121,6 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
         const isViewingThisChat = isOnChatPage && activeChatRoomId === msg.chatRoomId;
         
         if (isViewingThisChat) {
-          console.log('[UnreadMessagesContext] User is viewing this chat room, not showing popup');
           // User is viewing the chat, mark as read and don't show popup
           // The message will appear in the chat automatically via chat WebSocket
           loadUnreadCount();
@@ -127,7 +139,6 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
           const stillNotViewing = !currentIsOnChatPage || currentActiveChatRoomId !== msg.chatRoomId;
           
           if (stillNotViewing) {
-            console.log('[UnreadMessagesContext] User is not viewing this chat, showing popup');
             setMessagePopup({
               id: msg.id,
               chatRoomId: msg.chatRoomId,
@@ -136,59 +147,48 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
               content: msg.content || '',
               createdAt: msg.createdAt || new Date().toISOString(),
             });
-            console.log('[UnreadMessagesContext] Popup state set, messagePopup should be visible now');
             
             // Reload unread count
             loadUnreadCount();
             
             // Auto-hide popup after 5 seconds
             setTimeout(() => {
-              console.log('[UnreadMessagesContext] Auto-hiding popup');
               setMessagePopup(null);
             }, 5000);
-          } else {
-            console.log('[UnreadMessagesContext] User switched to this chat room, not showing popup');
           }
         }, 500); // 500ms delay to let message appear in chat first if user is switching rooms
       } else if (message.type === 'notification' && message.notification?.type === 'message') {
         // Also reload when message notifications are received (for compatibility)
         loadUnreadCount();
+      } else if (message.type === 'event_notification') {
+        // Handle event notifications
+        const eventNotification = message.notification;
+        if (eventNotification) {
+          setEventPopup(eventNotification);
+          
+          // Auto-hide popup after 8 seconds
+          setTimeout(() => {
+            setEventPopup(null);
+          }, 8000);
+        }
       }
     },
     onOpen: () => {
-      console.log('[UnreadMessagesContext] WebSocket connected successfully');
+      // WebSocket connected successfully
     },
     onError: (error) => {
       console.error('[UnreadMessagesContext] WebSocket error:', error);
     },
     reconnect: true,
   });
-  
-  // Log when messagePopup changes
-  useEffect(() => {
-    console.log('[UnreadMessagesContext] messagePopup state changed:', messagePopup);
-  }, [messagePopup]);
 
   // Also listen to chat rooms updates via notifications WebSocket
   // Only use WebSocket if it's connected and not disabled
   useEffect(() => {
-    console.log('[UnreadMessagesContext] WebSocket connection status:', ws.isConnected, 'isDisabled:', ws.isDisabled, 'shouldInitialize:', shouldInitialize);
     if (ws.isConnected && !ws.isDisabled && shouldInitialize) {
       loadUnreadCount();
     }
   }, [ws.isConnected, ws.isDisabled, shouldInitialize, loadUnreadCount]);
-  
-  // Update when active chat room changes
-  useEffect(() => {
-    console.log('[UnreadMessagesContext] Active chat room changed:', activeChatRoomId, 'isOnChatPage:', isOnChatPage);
-  }, [activeChatRoomId, isOnChatPage]);
-  
-  // Force reconnection when shouldInitialize changes from false to true
-  useEffect(() => {
-    if (shouldInitialize && !ws.isConnected) {
-      console.log('[UnreadMessagesContext] User loaded, WebSocket should connect now');
-    }
-  }, [shouldInitialize, ws.isConnected]);
 
   // Initial load
   useEffect(() => {
@@ -208,12 +208,18 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
     setMessagePopup(null);
   }, []);
 
+  const closeEventPopup = useCallback(() => {
+    setEventPopup(null);
+  }, []);
+
   return (
     <UnreadMessagesContext.Provider
       value={{
         totalUnreadCount,
         messagePopup,
+        eventPopup,
         closePopup,
+        closeEventPopup,
         refreshUnreadCount: loadUnreadCount,
       }}
     >

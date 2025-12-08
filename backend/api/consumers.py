@@ -187,6 +187,13 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'message': event['message'],
             'chat_room_id': event.get('chat_room_id')
         }))
+    
+    async def event_notification(self, event):
+        """Send event notification to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'event_notification',
+            'notification': event['notification']
+        }))
 
 
 class ChatConsumer(AsyncWebsocketConsumer):

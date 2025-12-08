@@ -108,7 +108,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       )}
 
       {/* Contact Details Tabs */}
-      <Tabs defaultValue="info" className="space-y-6">
+      <Tabs defaultValue="info" className="space-y-3">
         <TabsList>
           <TabsTrigger value="info">Informations</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>

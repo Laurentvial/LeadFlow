@@ -50,7 +50,6 @@ export function useWebSocket({
 
     // Don't connect if already connected or connecting
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-      console.log('[useWebSocket] Already connected or connecting, skipping');
       return;
     }
 
@@ -71,7 +70,6 @@ export function useWebSocket({
       const host = backendUrl.host;
       const fullUrl = `${protocol}//${host}${wsUrl}`;
 
-      console.log('[useWebSocket] Connecting to:', fullUrl);
       const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {
@@ -103,7 +101,6 @@ export function useWebSocket({
 
       ws.onclose = (event) => {
         setIsConnected(false);
-        console.log('[useWebSocket] Connection closed. Code:', event.code, 'Reason:', event.reason, 'Clean:', event.wasClean);
         onClose?.();
 
         // Check if this was a server error (404, 500, etc.) or connection refused
@@ -114,7 +111,6 @@ export function useWebSocket({
         
         if (isServerError) {
           consecutiveFailuresRef.current += 1;
-          console.log(`[useWebSocket] Connection failed. Consecutive failures: ${consecutiveFailuresRef.current}/${maxConsecutiveFailures}`);
           
           // Stop trying if we've failed too many times
           if (consecutiveFailuresRef.current >= maxConsecutiveFailures) {
@@ -136,7 +132,6 @@ export function useWebSocket({
             reconnectTimeoutRef.current = setTimeout(() => {
               if (shouldReconnectRef.current && token && url && 
                   consecutiveFailuresRef.current < maxConsecutiveFailures) {
-                console.log('[useWebSocket] Attempting to reconnect...');
                 setReconnectAttempts((prev) => prev + 1);
                 connect();
               }
@@ -176,15 +171,11 @@ export function useWebSocket({
   }, []);
 
   useEffect(() => {
-    console.log('[useWebSocket] Effect triggered - url:', url, 'hasToken:', !!token, 'isConnected:', wsRef.current?.readyState === WebSocket.OPEN);
-    
     // Only connect if we have both token and URL, and we're not already connected
     if (token && url && wsRef.current?.readyState !== WebSocket.OPEN) {
-      console.log('[useWebSocket] Conditions met, calling connect()');
       connect();
     } else if (!token || !url) {
       // Disconnect if URL is empty or token is not available
-      console.log('[useWebSocket] Conditions not met, disconnecting. Token:', !!token, 'URL:', url);
       disconnect();
     }
 
