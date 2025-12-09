@@ -37,7 +37,6 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
     date: '',
     hour: '09',
     minute: '00',
-    comment: '',
     userId: ''
   });
   const [editFormData, setEditFormData] = useState({
@@ -75,7 +74,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
           datetime: `${formData.date}T${timeString}`,
           contactId: contactId,
           userId: currentUser?.id || null,
-          comment: formData.comment || ''
+          comment: ''
         }),
       });
       
@@ -85,7 +84,6 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
         date: '', 
         hour: '09', 
         minute: '00', 
-        comment: '',
         userId: currentUser?.id || ''
       });
       onRefresh();
@@ -299,18 +297,6 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
                 </div>
               </div>
 
-              <div className="modal-form-field">
-                <Label htmlFor="event-comment">Commentaire (optionnel)</Label>
-                <Textarea
-                  id="event-comment"
-                  value={formData.comment}
-                  onChange={(e) => setFormData({ ...formData, comment: e.target.value })}
-                  placeholder="Ajoutez un commentaire..."
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
-
               <div className="modal-form-actions">
                 <Button
                   type="button"
@@ -321,7 +307,6 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
                       date: '', 
                       hour: '09', 
                       minute: '00', 
-                      comment: '',
                       userId: currentUser?.id || ''
                     });
                   }}

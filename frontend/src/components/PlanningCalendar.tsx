@@ -43,7 +43,6 @@ export function PlanningCalendar() {
     hour: '09',
     minute: '00',
     clientId: '',
-    comment: '',
     userId: ''
   });
   const [editFormData, setEditFormData] = useState({
@@ -100,12 +99,12 @@ export function PlanningCalendar() {
           datetime: `${formData.date}T${timeString}`,
           contactId: formData.clientId || null,
           userId: currentUser?.id || null,
-          comment: formData.comment || ''
+          comment: ''
         }),
       });
       
       setIsModalOpen(false);
-      setFormData({ date: '', hour: '09', minute: '00', clientId: '', comment: '', userId: currentUser?.id || '' });
+      setFormData({ date: '', hour: '09', minute: '00', clientId: '', userId: currentUser?.id || '' });
       setClientSearchQuery('');
       setClientSearchFocused(false);
       loadData();
@@ -379,15 +378,6 @@ export function PlanningCalendar() {
                       Client sélectionné : {getSelectedClientName(formData.clientId)}
                     </div>
                   )}
-                </div>
-                
-                <div className="modal-form-field">
-                  <Label>Commentaire (optionnel)</Label>
-                  <Textarea
-                    value={formData.comment}
-                    onChange={(e) => setFormData({ ...formData, comment: e.target.value })}
-                    placeholder="Notes sur le rendez-vous..."
-                  />
                 </div>
                 
                 <div className="modal-form-actions">

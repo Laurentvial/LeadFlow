@@ -7,7 +7,8 @@ import { Textarea } from './ui/textarea';
 import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2, Star } from 'lucide-react';
+import { Checkbox } from './ui/checkbox';
+import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2, Star, Upload, CheckCircle2 } from 'lucide-react';
 // Permissions are now computed directly from currentUser.permissions for better performance
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
@@ -21,6 +22,24 @@ import '../styles/ContactTab.css';
 interface Source {
   id: string;
   name: string;
+}
+
+interface Platform {
+  id: string;
+  name: string;
+}
+
+interface Document {
+  id: string;
+  contactId: string;
+  documentType: string;
+  hasDocument: boolean;
+  fileUrl: string;
+  fileName: string;
+  uploadedAt: string;
+  updatedAt: string;
+  uploadedById?: number;
+  uploadedByName?: string;
 }
 
 interface NoteCategory {
@@ -494,9 +513,16 @@ export function ContactInfoTab({
     return false;
   }, [currentUser?.permissions, contact, canEditContact]);
   
-  // Statuses and sources
+  // Statuses, sources, platforms, and documents
   const [statuses, setStatuses] = useState<any[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [uploadingDocument, setUploadingDocument] = useState<string | null>(null);
+  const cniUploadRef = useRef<HTMLInputElement>(null);
+  const justifUploadRef = useRef<HTMLInputElement>(null);
+  const selfieUploadRef = useRef<HTMLInputElement>(null);
+  const ribUploadRef = useRef<HTMLInputElement>(null);
 
   // Helper function to get status display text for a contact
   // The ONLY condition to see the status name is to have "view" permission for that status
@@ -546,6 +572,124 @@ export function ContactInfoTab({
   const editingFieldRef = useRef<HTMLDivElement>(null);
   const cancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingStatusChange, setPendingStatusChange] = useState<string | null>(null);
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [selectedStatusId, setSelectedStatusId] = useState('');
+  const [statusChangeNote, setStatusChangeNote] = useState('');
+  const [statusChangeNoteCategoryId, setStatusChangeNoteCategoryId] = useState<string>('');
+  const [statusModalFilterType, setStatusModalFilterType] = useState<'lead' | 'client'>('lead');
+  // Event fields for status with is_event=true
+  const [eventDate, setEventDate] = useState('');
+  const [eventHour, setEventHour] = useState('09');
+  const [eventMinute, setEventMinute] = useState('00');
+  
+  // Check if selected status is client default
+  const selectedStatusIsClientDefault = React.useMemo(() => {
+    if (!selectedStatusId || selectedStatusId === '') return false;
+    const status = statuses.find(s => s.id === selectedStatusId);
+    return status?.clientDefault === true;
+  }, [selectedStatusId, statuses]);
+  
+  const [clientFormData, setClientFormData] = useState({
+    platformId: '',
+    teleoperatorId: '',
+    nomDeScene: '',
+    firstName: '',
+    lastName: '',
+    emailClient: '',
+    telephoneClient: '',
+    portableClient: '',
+    contrat: '',
+    sourceId: '',
+    montantEncaisse: '',
+    bonus: '',
+    paiement: '',
+    noteGestionnaire: '',
+    noteCategoryId: ''
+  });
+  const [selectedNoteCategoryId, setSelectedNoteCategoryId] = useState<string>('');
+  const [isSavingClientForm, setIsSavingClientForm] = useState(false);
+  
+  // Check if note is required for status change
+  const requiresNoteForStatusChange = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'other' && 
+             perm.action === 'edit' && 
+             perm.fieldName === 'status_change_note_required' &&
+             !perm.statusId;
+    });
+  }, [currentUser?.permissions]);
+  
+  // Initialize event fields when event status is selected
+  React.useEffect(() => {
+    if (isStatusModalOpen && selectedStatusId) {
+      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+      const isEventStatus = selectedStatus && selectedStatus.isEvent;
+      if (isEventStatus && canCreatePlanning && !eventDate) {
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        setEventDate(dateStr);
+        setEventHour(today.getHours().toString().padStart(2, '0'));
+      } else if (!isEventStatus) {
+        // Reset event fields if status is not an event status
+        setEventDate('');
+        setEventHour('09');
+        setEventMinute('00');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStatusId, isStatusModalOpen]);
+  
+  // Auto-set filter based on contact's current status
+  React.useEffect(() => {
+    if (isStatusModalOpen && statuses.length > 0 && contact) {
+      // First, check the contact's current status type
+      const currentStatus = contact.statusId ? statuses.find((s: any) => s.id === contact.statusId) : null;
+      
+      if (currentStatus && (currentStatus.type === 'client' || currentStatus.type === 'lead')) {
+        // Set filter to match contact's current status type
+        if (statusModalFilterType !== currentStatus.type) {
+          setStatusModalFilterType(currentStatus.type);
+        }
+        return; // Don't override if contact has a status
+      }
+      
+      // If contact has no status or status type is unknown, check user permissions
+      const clientStatuses = statuses.filter((s: any) => s.type === 'client');
+      const clientDefaultStatus = clientStatuses.find((s: any) => s.clientDefault === true);
+      const clientStatusesWithPermission = clientStatuses.filter((status: any) => {
+        if (!status.id || status.id.trim() === '') return false;
+        const normalizedStatusId = String(status.id).trim();
+        return statusViewPermissions.has(normalizedStatusId);
+      });
+      
+      // If user has no permission on any client status, set filter to lead
+      if (clientStatusesWithPermission.length === 0 && statusModalFilterType !== 'lead') {
+        setStatusModalFilterType('lead');
+      }
+      // If user only has permission on client_default status, set filter to client
+      else if (clientDefaultStatus && 
+          clientStatusesWithPermission.length === 1 && 
+          clientStatusesWithPermission[0].id === clientDefaultStatus.id &&
+          statusModalFilterType !== 'client') {
+        setStatusModalFilterType('client');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStatusModalOpen, statuses, statusViewPermissions, contact]);
+  
+  // Prefill client form when modal opens if selected status is client default
+  React.useEffect(() => {
+    if (isStatusModalOpen && contact && selectedStatusId) {
+      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+      if (selectedStatus?.clientDefault === true) {
+        prefillClientForm(contact);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStatusModalOpen, contact, selectedStatusId, statuses]);
 
   function cancelEditing() {
     setEditingField(null);
@@ -657,7 +801,6 @@ export function ContactInfoTab({
     date: '',
     hour: '09',
     minute: '00',
-    comment: '',
     userId: ''
   });
   const [editAppointmentFormData, setEditAppointmentFormData] = useState({
@@ -726,6 +869,40 @@ export function ContactInfoTab({
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [categories, accessibleCategoryIds]);
   
+  // Ensure first category is selected when modal opens and categories are available
+  React.useEffect(() => {
+    if (isStatusModalOpen && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+      setStatusChangeNoteCategoryId(accessibleCategories[0].id);
+    }
+  }, [isStatusModalOpen, accessibleCategories, statusChangeNoteCategoryId]);
+  
+  // Helper function to prefill client form with contact data
+  const prefillClientForm = React.useCallback((contactData: any) => {
+    // Prefill teleoperatorId with current user if they are a teleoperateur
+    const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+      ? currentUser.id 
+      : (contactData.teleoperatorId || contactData.managerId || '');
+    
+    setClientFormData({
+      platformId: contactData.platformId || '',
+      teleoperatorId: defaultTeleoperatorId,
+      nomDeScene: contactData.nomDeScene || '',
+      firstName: contactData.firstName || '',
+      lastName: contactData.lastName || '',
+      emailClient: contactData.email || '',
+      telephoneClient: contactData.phone || '',
+      portableClient: contactData.mobile || '',
+      contrat: contactData.contrat || '',
+      sourceId: contactData.sourceId || '',
+      montantEncaisse: contactData.montantEncaisse || '',
+      bonus: contactData.bonus || '',
+      paiement: contactData.paiement || '',
+      noteGestionnaire: '',
+      noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+    });
+    setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+  }, [currentUser, accessibleCategories]);
+  
   // Pre-compute note permissions map for all notes to avoid calling hooks in NoteItemCompact
   const notePermissionsMap = React.useMemo(() => {
     if (!currentUser?.permissions) return new Map<string, { canEdit: boolean; canDelete: boolean }>();
@@ -779,12 +956,21 @@ export function ContactInfoTab({
     // Load categories separately - non-blocking for notes display
     loadCategories().catch(err => console.error('Error loading categories:', err));
     
-    // Load statuses and sources (also non-blocking)
+    // Load statuses, sources, platforms, and documents (also non-blocking)
     Promise.all([
       loadStatuses(),
-      loadSources()
+      loadSources(),
+      loadPlatforms(),
+      loadDocuments()
     ]).catch(err => console.error('Error loading dropdown data:', err));
   }, []);
+
+  // Reload documents when contactId changes
+  useEffect(() => {
+    if (contactId) {
+      loadDocuments();
+    }
+  }, [contactId]);
 
   useEffect(() => {
     // Update selected category if current selection is not accessible
@@ -830,6 +1016,81 @@ export function ContactInfoTab({
     } catch (error) {
       console.error('Error loading sources:', error);
     }
+  }
+
+  async function loadPlatforms() {
+    try {
+      const data = await apiCall('/api/platforms/');
+      setPlatforms(data.platforms || []);
+    } catch (error) {
+      console.error('Error loading platforms:', error);
+    }
+  }
+
+  async function loadDocuments() {
+    if (!contactId) return;
+    try {
+      const data = await apiCall(`/api/contacts/${contactId}/documents/`);
+      setDocuments(data.documents || []);
+    } catch (error) {
+      console.error('Error loading documents:', error);
+    }
+  }
+
+  async function handleDocumentUpload(documentType: string, file: File) {
+    if (!contactId) {
+      toast.error('Contact ID manquant');
+      return;
+    }
+
+    try {
+      setUploadingDocument(documentType);
+      
+      // Upload file to Impossible Cloud via backend
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('contactId', contactId);
+      formData.append('documentType', documentType);
+      
+      const uploadResponse = await apiCall('/api/documents/upload/', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const { fileUrl, fileName } = uploadResponse;
+      
+      // Create or update document with the uploaded file URL
+      await apiCall('/api/documents/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contactId,
+          documentType,
+          fileUrl,
+          fileName: fileName || file.name,
+        }),
+      });
+      
+      toast.success('Document uploadé avec succès');
+      await loadDocuments();
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (error: any) {
+      console.error('Error uploading document:', error);
+      toast.error(error.message || 'Erreur lors de l\'upload du document');
+    } finally {
+      setUploadingDocument(null);
+    }
+  }
+
+  function getDocumentByType(type: string): Document | undefined {
+    return documents.find(doc => doc.documentType === type);
+  }
+
+  function hasDocument(type: string): boolean {
+    const doc = getDocumentByType(type);
+    return doc?.hasDocument === true && !!doc?.fileUrl;
   }
 
   // Load users when modals open (lazy loading)
@@ -922,7 +1183,16 @@ export function ContactInfoTab({
         'sourceId': 'sourceId',
         'campaign': 'campaign',
         'teleoperatorId': 'teleoperatorId',
-        'confirmateurId': 'confirmateurId'
+        'confirmateurId': 'confirmateurId',
+        'platformId': 'platformId',
+        'montantEncaisse': 'montantEncaisse',
+        'bonus': 'bonus',
+        'paiement': 'paiement',
+        'contrat': 'contrat',
+        'nomDeScene': 'nomDeScene',
+        'dateProTr': 'dateProTr',
+        'potentiel': 'potentiel',
+        'produit': 'produit'
       };
       
       const apiFieldName = fieldMap[fieldName];
@@ -933,6 +1203,10 @@ export function ContactInfoTab({
           // Ensure we remove all spaces - convert to string first, then remove spaces
           const cleanedValue = value === '' || value === 'none' ? '' : removePhoneSpaces(String(value));
           payload[apiFieldName] = cleanedValue === '' ? null : cleanedValue;
+        } else if (fieldName === 'montantEncaisse' || fieldName === 'bonus') {
+          // Handle numeric fields - convert to number or null
+          const numValue = value === '' || value === 'none' ? null : (isNaN(Number(value)) ? null : Number(value));
+          payload[apiFieldName] = numValue;
         } else {
           payload[apiFieldName] = value === '' || value === 'none' ? null : value;
         }
@@ -989,6 +1263,193 @@ export function ContactInfoTab({
       setIsSaving(false);
     }
   }
+  
+  async function handleUpdateStatus() {
+    if (!contact) return;
+    
+    // Validate note is provided only if permission requires it (and not client default status)
+    if (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) {
+      toast.error('Veuillez saisir une note pour changer le statut');
+      return;
+    }
+    
+    // Validate that a category is selected if note is provided and categories are available
+    if (statusChangeNote.trim() && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+      toast.error('Veuillez sélectionner une catégorie pour la note');
+      return;
+    }
+    
+    // Check if selected status has isEvent=true
+    const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+    const isEventStatus = selectedStatus && selectedStatus.isEvent;
+    
+    // If status is an event status, validate event fields
+    if (isEventStatus && canCreatePlanning) {
+      if (!eventDate) {
+        toast.error('Veuillez sélectionner une date pour l\'événement');
+        return;
+      }
+    }
+    
+    // If status is being changed, check permissions
+    if (selectedStatusId !== contact.statusId) {
+      // Check if user has EDIT permission for CURRENT status (to allow changing it)
+      if (contact.statusId && !canEditContact(contact)) {
+        toast.error('Vous n\'avez pas la permission de modifier le statut de ce contact');
+        return;
+      }
+      
+      // Check if user has VIEW permission for NEW status (to allow assigning it)
+      if (selectedStatusId) {
+        const normalizedNewStatusId = String(selectedStatusId).trim();
+        if (!statusViewPermissions.has(normalizedNewStatusId)) {
+          toast.error('Vous n\'avez pas la permission d\'assigner ce statut');
+          return;
+        }
+      }
+    } else {
+      // Status not changing, just check if user can edit this contact
+      if (!canEditContact(contact)) {
+        toast.error('Vous n\'avez pas la permission d\'éditer ce contact');
+        return;
+      }
+    }
+    
+    setIsSavingClientForm(true);
+    try {
+      // If status is client default, validate and include client form data
+      if (selectedStatusIsClientDefault) {
+        // Validate required client form fields
+        if (!clientFormData.platformId || !clientFormData.teleoperatorId || !clientFormData.nomDeScene || 
+            !clientFormData.firstName || !clientFormData.emailClient || !clientFormData.contrat || 
+            !clientFormData.sourceId || clientFormData.montantEncaisse === '' || clientFormData.bonus === '' || 
+            !clientFormData.paiement) {
+          toast.error('Veuillez remplir tous les champs obligatoires de la fiche client');
+          setIsSavingClientForm(false);
+          return;
+        }
+        
+        // Prepare update payload with client form data
+        const payload: any = {
+          statusId: selectedStatusId || '',
+          platformId: clientFormData.platformId || null,
+          teleoperatorId: clientFormData.teleoperatorId || null,
+          nomDeScene: clientFormData.nomDeScene,
+          firstName: clientFormData.firstName,
+          lastName: clientFormData.lastName,
+          email: clientFormData.emailClient,
+          phone: clientFormData.telephoneClient ? clientFormData.telephoneClient.replace(/\s/g, '') : null,
+          mobile: clientFormData.portableClient ? clientFormData.portableClient.replace(/\s/g, '') : null,
+          contrat: clientFormData.contrat,
+          sourceId: clientFormData.sourceId || null,
+          montantEncaisse: clientFormData.montantEncaisse ? parseFloat(clientFormData.montantEncaisse) : null,
+          bonus: clientFormData.bonus ? parseFloat(clientFormData.bonus) : null,
+          paiement: clientFormData.paiement
+        };
+        
+        // Update contact with client form data
+        await apiCall(`/api/contacts/${contactId}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        // Update status only (non-client default status)
+        await apiCall(`/api/contacts/${contactId}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ statusId: selectedStatusId || '' })
+        });
+      }
+      
+      // Create event if status has isEvent=true
+      if (isEventStatus && canCreatePlanning && eventDate) {
+        const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
+        await apiCall('/api/events/create/', {
+          method: 'POST',
+          body: JSON.stringify({
+            datetime: `${eventDate}T${timeString}`,
+            contactId: contactId,
+            userId: currentUser?.id || null,
+            comment: ''
+          }),
+        });
+      }
+      
+      // Create note with selected category if note was provided
+      if (statusChangeNote.trim()) {
+        // Validate that a category is selected if categories are available
+        if (accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+          toast.error('Veuillez sélectionner une catégorie pour la note');
+          return;
+        }
+        
+        const notePayload: any = {
+          text: statusChangeNote.trim(),
+          contactId: contactId
+        };
+        
+        if (statusChangeNoteCategoryId) {
+          notePayload.categId = statusChangeNoteCategoryId;
+        }
+        
+        await apiCall('/api/notes/create/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(notePayload)
+        });
+      }
+      
+      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
+      setIsStatusModalOpen(false);
+      setSelectedStatusId('');
+      setStatusChangeNote('');
+      setStatusChangeNoteCategoryId('');
+      setStatusModalFilterType('lead');
+      // Reset event fields
+      setEventDate('');
+      setEventHour('09');
+      setEventMinute('00');
+      // Reset client form
+      setClientFormData({
+        platformId: '',
+        teleoperatorId: '',
+        nomDeScene: '',
+        firstName: '',
+        lastName: '',
+        emailClient: '',
+        telephoneClient: '',
+        portableClient: '',
+        contrat: '',
+        sourceId: '',
+        montantEncaisse: '',
+        bonus: '',
+        paiement: '',
+        noteGestionnaire: '',
+        noteCategoryId: ''
+      });
+      setSelectedNoteCategoryId('');
+      
+      // Refresh contact data
+      if (onContactUpdated) {
+        onContactUpdated();
+      }
+      if (onRefresh) {
+        onRefresh();
+      }
+      
+      // Refresh page after update
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch (error: any) {
+      console.error('Error updating status:', error);
+      const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
+      toast.error(errorMessage);
+    } finally {
+      setIsSavingClientForm(false);
+    }
+  }
 
   function startEditing(fieldName: string, currentValue: any) {
     // Check field-level edit permission
@@ -1014,13 +1475,55 @@ export function ContactInfoTab({
     console.log('[saveField] Saving field:', fieldName, 'value:', fieldValue);
     console.log('[saveField] canEdit:', canEdit, 'contactId:', contactId);
     
-    // Check if saving statusId and if the status has isEvent=true
+    // Check if saving statusId and if the status has isEvent=true or clientDefault=true
     let selectedStatusIsEvent = false;
+    let selectedStatusIsClientDefault = false;
     if (fieldName === 'statusId' && fieldValue && fieldValue !== 'none' && fieldValue !== '') {
       const selectedStatus = statuses.find(s => s.id === fieldValue);
-      if (selectedStatus && selectedStatus.isEvent) {
+      console.log('[saveField] Selected status:', selectedStatus);
+      if (selectedStatus) {
+        if (selectedStatus.isEvent) {
         selectedStatusIsEvent = true;
       }
+        console.log('[saveField] Checking clientDefault:', selectedStatus.clientDefault, 'type:', selectedStatus.type);
+        if (selectedStatus.clientDefault === true && selectedStatus.type === 'client') {
+          selectedStatusIsClientDefault = true;
+          console.log('[saveField] Status is client default, opening modal');
+        }
+      }
+    }
+    
+    // If status is a client default status, show client form modal
+    if (fieldName === 'statusId' && selectedStatusIsClientDefault) {
+      console.log('[saveField] Opening client form modal');
+      // Don't save the status yet - store it as pending and open client form modal
+      setPendingStatusChange(fieldValue);
+      // Pre-fill form with existing contact data
+      // Prefill teleoperatorId with current user if they are a teleoperateur
+      const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+        ? currentUser.id 
+        : (contact.teleoperatorId || contact.managerId || '');
+      
+      setClientFormData({
+        platformId: contact.platformId || '',
+        teleoperatorId: defaultTeleoperatorId,
+        nomDeScene: contact.nomDeScene || '',
+        firstName: contact.firstName || '',
+        lastName: contact.lastName || '',
+        emailClient: contact.email || '',
+        telephoneClient: contact.phone || '',
+        portableClient: contact.mobile || '',
+        contrat: contact.contrat || '',
+        sourceId: contact.sourceId || '',
+        montantEncaisse: contact.montantEncaisse || '',
+        bonus: contact.bonus || '',
+        paiement: contact.paiement || '',
+        noteGestionnaire: '',
+        noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+      });
+      setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+      // Keep the modal open and show client form in right column
+      return;
     }
     
     // If status is an event status, require event creation before saving status
@@ -1034,7 +1537,6 @@ export function ContactInfoTab({
         date: dateStr,
         hour: today.getHours().toString().padStart(2, '0'),
         minute: '00',
-        comment: '',
         userId: currentUser?.id || ''
       });
       setIsEventModalFromStatus(true);
@@ -1086,7 +1588,7 @@ export function ContactInfoTab({
           datetime: `${appointmentFormData.date}T${timeString}`,
           contactId: contactId,
           userId: currentUser?.id || null,
-          comment: appointmentFormData.comment || ''
+          comment: ''
         }),
       });
       
@@ -1641,60 +2143,64 @@ export function ContactInfoTab({
             {canViewField('statusId') && (
               <div className="contact-status-field-container">
                 <Label className="text-slate-600">Statut</Label>
-              {editingField === 'statusId' ? (
-                <div className="contact-field-input-wrapper" ref={editingFieldRef}>
-                  <Select
-                    value={fieldValue || 'none'}
-                    onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
-                    disabled={isSaving}
-                  >
-                    <SelectTrigger className="flex-1 h-10 min-w-0">
-                      <SelectValue placeholder="Sélectionner un statut" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">
-                        <span className="inline-block px-2 py-1 rounded text-sm">Aucun</span>
-                      </SelectItem>
-                      {statuses
-                        .filter((status) => {
-                          if (!status.id || status.id.trim() === '') return false;
-                          // Filter by view permissions
-                          const normalizedStatusId = String(status.id).trim();
-                          return statusViewPermissions.has(normalizedStatusId);
-                        })
-                        .map((status) => (
-                          <SelectItem key={status.id} value={status.id}>
-                            <span 
-                              className="inline-block px-2 py-1 rounded text-sm"
-                              style={{
-                                backgroundColor: status.color || '#e5e7eb',
-                                color: status.color ? '#000000' : '#374151'
-                              }}
-                            >
-                              {status.name}
-                            </span>
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    onClick={() => saveField('statusId')} 
-                    disabled={isSaving}
-                    style={{ backgroundColor: '#22c55e', color: 'white' }}
-                    onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                    onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
-                  >
-                    Enregistrer
-                  </Button>
-                </div>
-              ) : (
                 <div className="flex items-center gap-2">
                 <div 
                     className={`contact-field-display flex-1 ${canEditField('statusId') ? 'editable' : ''}`}
-                  onClick={canEditField('statusId') ? () => {
-                    // User can change status if they have EDIT permission for the field
-                    startEditing('statusId', contact.statusId);
+                    onClick={canEditField('statusId') ? async () => {
+                      // Fetch fresh contact data
+                      try {
+                        const contactData = await apiCall(`/api/contacts/${contactId}/`);
+                        const freshContact = contactData.contact || contact;
+                        setSelectedStatusId(freshContact.statusId || '');
+                        setStatusChangeNote('');
+                        setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                        // Set filter type based on current status
+                        const currentStatus = statuses.find(s => s.id === freshContact.statusId);
+                        if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                          setStatusModalFilterType(currentStatus.type);
+                        } else {
+                          setStatusModalFilterType('lead');
+                        }
+                        // Prefill client form if status is client default
+                        if (currentStatus?.clientDefault === true) {
+                          const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                            ? currentUser.id 
+                            : (freshContact.teleoperatorId || freshContact.managerId || '');
+                          
+                          setClientFormData({
+                            platformId: freshContact.platformId || '',
+                            teleoperatorId: defaultTeleoperatorId,
+                            nomDeScene: freshContact.nomDeScene || '',
+                            firstName: freshContact.firstName || '',
+                            lastName: freshContact.lastName || '',
+                            emailClient: freshContact.email || '',
+                            telephoneClient: freshContact.phone || '',
+                            portableClient: freshContact.mobile || '',
+                            contrat: freshContact.contrat || '',
+                            sourceId: freshContact.sourceId || '',
+                            montantEncaisse: freshContact.montantEncaisse || '',
+                            bonus: freshContact.bonus || '',
+                            paiement: freshContact.paiement || '',
+                            noteGestionnaire: '',
+                            noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                          });
+                          setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                        }
+                        setIsStatusModalOpen(true);
+                      } catch (error) {
+                        console.error('Error fetching fresh contact:', error);
+                        // Fallback to current contact
+                        setSelectedStatusId(contact.statusId || '');
+                        setStatusChangeNote('');
+                        setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                        const currentStatus = statuses.find(s => s.id === contact.statusId);
+                        if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                          setStatusModalFilterType(currentStatus.type);
+                        } else {
+                          setStatusModalFilterType('lead');
+                        }
+                        setIsStatusModalOpen(true);
+                      }
                   } : undefined}
                 >
                   {(() => {
@@ -1716,62 +2222,7 @@ export function ContactInfoTab({
                     );
                     })()}
                   </div>
-                  {(() => {
-                    // Check if current contact status is already type='client'
-                    const currentStatus = contact.statusId ? statuses.find((s: any) => s.id === contact.statusId) : null;
-                    if (currentStatus && currentStatus.type === 'client') {
-                      return null; // Don't show button if already a client status
-                    }
-                    
-                    // Find the client_default status
-                    const clientDefaultStatus = statuses.find((s: any) => s.clientDefault === true && s.type === 'client');
-                    if (clientDefaultStatus && clientDefaultStatus.id) {
-                      const normalizedStatusId = String(clientDefaultStatus.id).trim();
-                      // Check if user has view permission on this status and edit permission on statusId field
-                      if (statusViewPermissions.has(normalizedStatusId) && canEditField('statusId')) {
-                        return (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={async () => {
-                              // Set field value and use saveField to handle event status logic
-                              setFieldValue(clientDefaultStatus.id);
-                              // Check if this status requires an event
-                              if (clientDefaultStatus.isEvent && canCreatePlanning) {
-                                // Don't save the status yet - store it as pending and open event modal
-                                setPendingStatusChange(clientDefaultStatus.id);
-                                // Set today's date as default
-                                const today = new Date();
-                                const dateStr = today.toISOString().split('T')[0];
-                                setAppointmentFormData({
-                                  date: dateStr,
-                                  hour: today.getHours().toString().padStart(2, '0'),
-                                  minute: '00',
-                                  comment: '',
-                                  userId: currentUser?.id || ''
-                                });
-                                setIsEventModalFromStatus(true);
-                                setIsAppointmentModalOpen(true);
-                              } else {
-                                // Directly save the status
-                                await handleFieldUpdate('statusId', clientDefaultStatus.id);
-                              }
-                            }}
-                            disabled={isSaving}
-                            title={`Changer le statut en: ${clientDefaultStatus.name}`}
-                            style={{ backgroundColor: '#22c55e', color: 'white' }}
-                            onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
-                            onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
-                          >
-                            Nouveau client
-                          </Button>
-                        );
-                      }
-                    }
-                    return null;
-                  })()}
                 </div>
-              )}
               </div>
             )}
             {canViewField('civility') && (
@@ -2199,6 +2650,539 @@ export function ContactInfoTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* 4. Confirmateur */}
+      <Card>
+        <CardHeader>
+          <CardTitle>4. Confirmateur</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            {canViewField('platformId') && (
+              <div>
+                <Label className="text-slate-600">PLATEFORME</Label>
+                {editingField === 'platformId' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner une plateforme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucune</SelectItem>
+                        {platforms
+                          .filter((platform) => platform.id && platform.id.trim() !== '')
+                          .map((platform) => (
+                            <SelectItem key={platform.id} value={platform.id}>
+                              {platform.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('platformId')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('platformId') ? 'editable' : ''}`}
+                    onClick={canEditField('platformId') ? () => startEditing('platformId', contact.platformId) : undefined}
+                  >
+                    {contact.platform || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('montantEncaisse') && (
+              <div>
+                <Label className="text-slate-600">Montant ENCAISSÉ</Label>
+                {editingField === 'montantEncaisse' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('montantEncaisse')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('montantEncaisse') ? 'editable' : ''}`}
+                    onClick={canEditField('montantEncaisse') ? () => startEditing('montantEncaisse', contact.montantEncaisse) : undefined}
+                  >
+                    {contact.montantEncaisse || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('bonus') && (
+              <div>
+                <Label className="text-slate-600">Bonus</Label>
+                {editingField === 'bonus' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('bonus')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('bonus') ? 'editable' : ''}`}
+                    onClick={canEditField('bonus') ? () => startEditing('bonus', contact.bonus) : undefined}
+                  >
+                    {contact.bonus || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('paiement') && (
+              <div>
+                <Label className="text-slate-600">PAIEMENT</Label>
+                {editingField === 'paiement' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner un mode de paiement" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun</SelectItem>
+                        <SelectItem value="carte">Carte</SelectItem>
+                        <SelectItem value="virement">Virement</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('paiement')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('paiement') ? 'editable' : ''}`}
+                    onClick={canEditField('paiement') ? () => startEditing('paiement', contact.paiement) : undefined}
+                  >
+                    {contact.paiement === 'carte' ? 'Carte' : contact.paiement === 'virement' ? 'Virement' : '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('contrat') && (
+              <div>
+                <Label className="text-slate-600">Contrat</Label>
+                {editingField === 'contrat' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Select
+                      value={fieldValue || 'none'}
+                      onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="flex-1 h-10">
+                        <SelectValue placeholder="Sélectionner un statut de contrat" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun</SelectItem>
+                        <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
+                        <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
+                        <SelectItem value="PAS DE CONTRAT ENVOYÉ">PAS DE CONTRAT ENVOYÉ</SelectItem>
+                        <SelectItem value="J'AI SIGNÉ LE CONTRAT POUR LE CLIENT">J'AI SIGNÉ LE CONTRAT POUR LE CLIENT</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('contrat')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('contrat') ? 'editable' : ''}`}
+                    onClick={canEditField('contrat') ? () => startEditing('contrat', contact.contrat) : undefined}
+                  >
+                    {contact.contrat || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('nomDeScene') && (
+              <div>
+                <Label className="text-slate-600">Nom de scène</Label>
+                {editingField === 'nomDeScene' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('nomDeScene')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('nomDeScene') ? 'editable' : ''}`}
+                    onClick={canEditField('nomDeScene') ? () => startEditing('nomDeScene', contact.nomDeScene) : undefined}
+                  >
+                    {contact.nomDeScene || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('dateProTr') && (
+              <div>
+                <Label className="text-slate-600">Date pro TR</Label>
+                {editingField === 'dateProTr' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('dateProTr')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('dateProTr') ? 'editable' : ''}`}
+                    onClick={canEditField('dateProTr') ? () => startEditing('dateProTr', contact.dateProTr) : undefined}
+                  >
+                    {contact.dateProTr || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('potentiel') && (
+              <div>
+                <Label className="text-slate-600">Potentiel</Label>
+                {editingField === 'potentiel' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('potentiel')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('potentiel') ? 'editable' : ''}`}
+                    onClick={canEditField('potentiel') ? () => startEditing('potentiel', contact.potentiel) : undefined}
+                  >
+                    {contact.potentiel || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('produit') && (
+              <div>
+                <Label className="text-slate-600">Produit</Label>
+                {editingField === 'produit' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('produit')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('produit') ? 'editable' : ''}`}
+                    onClick={canEditField('produit') ? () => startEditing('produit', contact.produit) : undefined}
+                  >
+                    {contact.produit || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          {/* Document checkboxes section */}
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <Label className="text-slate-600 mb-4 block">Documents</Label>
+            <div className="space-y-3">
+              {/* CNI */}
+              <div className="flex items-center justify-between p-3 border border-slate-200">
+                <Label className="text-sm font-normal">
+                  CNI
+                </Label>
+                {hasDocument('CNI') ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <div className="flex-shrink-0">
+                    <input
+                      type="file"
+                      id={`cni-upload-${contactId}`}
+                      ref={cniUploadRef}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleDocumentUpload('CNI', file);
+                          // Reset input
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        cniUploadRef.current?.click();
+                      }}
+                      disabled={uploadingDocument === 'CNI'}
+                      className="h-8 text-xs"
+                    >
+                      {uploadingDocument === 'CNI' ? (
+                        'Upload...'
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Importer
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Justificatif de domicile */}
+              <div className="flex items-center justify-between p-3 border border-slate-200">
+                <Label className="text-sm font-normal">
+                  Justif. domicile
+                </Label>
+                {hasDocument('JUSTIFICATIF_DOMICILE') ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <div className="flex-shrink-0">
+                    <input
+                      type="file"
+                      id={`justif-upload-${contactId}`}
+                      ref={justifUploadRef}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleDocumentUpload('JUSTIFICATIF_DOMICILE', file);
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        justifUploadRef.current?.click();
+                      }}
+                      disabled={uploadingDocument === 'JUSTIFICATIF_DOMICILE'}
+                      className="h-8 text-xs"
+                    >
+                      {uploadingDocument === 'JUSTIFICATIF_DOMICILE' ? (
+                        'Upload...'
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Importer
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Selfie */}
+              <div className="flex items-center justify-between p-3 border border-slate-200">
+                <Label className="text-sm font-normal">
+                  Selfie
+                </Label>
+                {hasDocument('SELFIE') ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <div className="flex-shrink-0">
+                    <input
+                      type="file"
+                      id={`selfie-upload-${contactId}`}
+                      ref={selfieUploadRef}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleDocumentUpload('SELFIE', file);
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        selfieUploadRef.current?.click();
+                      }}
+                      disabled={uploadingDocument === 'SELFIE'}
+                      className="h-8 text-xs"
+                    >
+                      {uploadingDocument === 'SELFIE' ? (
+                        'Upload...'
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Importer
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* RIB */}
+              <div className="flex items-center justify-between p-3 border border-slate-200">
+                <Label className="text-sm font-normal">
+                  RIB
+                </Label>
+                {hasDocument('RIB') ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <div className="flex-shrink-0">
+                    <input
+                      type="file"
+                      id={`rib-upload-${contactId}`}
+                      ref={ribUploadRef}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleDocumentUpload('RIB', file);
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        ribUploadRef.current?.click();
+                      }}
+                      disabled={uploadingDocument === 'RIB'}
+                      className="h-8 text-xs"
+                    >
+                      {uploadingDocument === 'RIB' ? (
+                        'Upload...'
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Importer
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
         </div>
 
         {/* Right Column */}
@@ -2420,18 +3404,6 @@ export function ContactInfoTab({
                 </div>
               </div>
 
-              <div className="modal-form-field">
-                <Label htmlFor="appointment-comment">Commentaire (optionnel)</Label>
-                <Textarea
-                  id="appointment-comment"
-                  value={appointmentFormData.comment}
-                  onChange={(e) => setAppointmentFormData({ ...appointmentFormData, comment: e.target.value })}
-                  placeholder="Ajoutez un commentaire..."
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
-
               <div className="modal-form-actions">
                 <Button
                   type="button"
@@ -2444,7 +3416,7 @@ export function ContactInfoTab({
                     }
                     setIsAppointmentModalOpen(false);
                     setIsEventModalFromStatus(false);
-                    setAppointmentFormData({ date: '', hour: '09', minute: '00', comment: '', userId: currentUser?.id || '' });
+                    setAppointmentFormData({ date: '', hour: '09', minute: '00', userId: currentUser?.id || '' });
                   }}
                   disabled={isSubmittingAppointment}
                 >
@@ -2588,6 +3560,717 @@ export function ContactInfoTab({
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Status Change Modal */}
+      {isStatusModalOpen && contact && (
+        <div className="modal-overlay" onClick={() => {
+          setIsStatusModalOpen(false);
+          setSelectedStatusId('');
+          setStatusChangeNote('');
+          setStatusChangeNoteCategoryId('');
+          setStatusModalFilterType('lead');
+          // Reset client form
+          setClientFormData({
+            platformId: '',
+            teleoperatorId: '',
+            nomDeScene: '',
+            firstName: '',
+            lastName: '',
+            emailClient: '',
+            telephoneClient: '',
+            portableClient: '',
+            contrat: '',
+            sourceId: '',
+            montantEncaisse: '',
+            bonus: '',
+            paiement: '',
+            noteGestionnaire: '',
+            noteCategoryId: ''
+          });
+          setSelectedNoteCategoryId('');
+          // Reset event fields
+          setEventDate('');
+          setEventHour('09');
+          setEventMinute('00');
+        }}>
+          <div 
+            className="modal-content" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              maxWidth: selectedStatusIsClientDefault ? '1200px' : '600px', 
+              maxHeight: '90vh', 
+              overflow: 'visible',
+              display: 'flex',
+              flexDirection: 'row',
+              gap: '20px'
+            }}
+          >
+            {/* Left Column - Status Selection */}
+            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: '80vh', overflow: 'visible' }}>
+              <div className="modal-header" style={{ flexShrink: 0 }}>
+                <h2 className="modal-title">Modifier le statut</h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="modal-close"
+                  onClick={() => {
+                    setIsStatusModalOpen(false);
+                    setSelectedStatusId('');
+                    setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId('');
+                    setStatusModalFilterType('lead');
+                    // Reset client form
+                    setClientFormData({
+                      platformId: '',
+                      teleoperatorId: '',
+                      nomDeScene: '',
+                      firstName: '',
+                      lastName: '',
+                      emailClient: '',
+                      telephoneClient: '',
+                      portableClient: '',
+                      contrat: '',
+                      sourceId: '',
+                      montantEncaisse: '',
+                      bonus: '',
+                      paiement: '',
+                      noteGestionnaire: '',
+                      noteCategoryId: ''
+                    });
+                    setSelectedNoteCategoryId('');
+                    // Reset event fields
+                    setEventDate('');
+                    setEventHour('09');
+                    setEventMinute('00');
+                  }}
+                >
+                  <X className="planning-icon-md" />
+                </Button>
+              </div>
+              <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
+              <div className="modal-form-field">
+                <Label htmlFor="statusSelect">Statut</Label>
+                {(() => {
+                  // Check if user has any view permission on client statuses
+                  const clientStatuses = statuses.filter((s: any) => s.type === 'client');
+                  const clientStatusesWithPermission = clientStatuses.filter((status: any) => {
+                    if (!status.id || status.id.trim() === '') return false;
+                    const normalizedStatusId = String(status.id).trim();
+                    return statusViewPermissions.has(normalizedStatusId);
+                  });
+                  
+                  // Hide tabs if:
+                  // 1. User has no permission on any client status, OR
+                  // 2. User only has permission on client_default status
+                  const clientDefaultStatus = clientStatuses.find((s: any) => s.clientDefault === true);
+                  const shouldHideTabs = clientStatusesWithPermission.length === 0 || 
+                                         (clientDefaultStatus && 
+                                          clientStatusesWithPermission.length === 1 && 
+                                          clientStatusesWithPermission[0].id === clientDefaultStatus.id);
+                  
+                  if (shouldHideTabs) {
+                    return null;
+                  }
+                  
+                  return (
+                    <div className="mb-2 flex gap-2">
+                      <Button
+                        type="button"
+                        variant={statusModalFilterType === 'lead' ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 h-8 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusModalFilterType('lead');
+                        }}
+                      >
+                        Lead
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={statusModalFilterType === 'client' ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 h-8 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusModalFilterType('client');
+                        }}
+                      >
+                        Client
+                      </Button>
+    </div>
+  );
+                })()}
+                <Select
+                  value={selectedStatusId ? selectedStatusId.toString() : undefined}
+                  onValueChange={(value) => {
+                    setSelectedStatusId(value);
+                    // Check if selected status is client default
+                    const selectedStatus = statuses.find(s => s.id === value);
+                    if (selectedStatus?.clientDefault === true) {
+                      // Pre-fill form with existing contact data
+                      // Prefill teleoperatorId with current user if they are a teleoperateur
+                      const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                        ? currentUser.id 
+                        : (contact.teleoperatorId || contact.managerId || '');
+                      
+                      setClientFormData({
+                        platformId: contact.platformId || '',
+                        teleoperatorId: defaultTeleoperatorId,
+                        nomDeScene: contact.nomDeScene || '',
+                        firstName: contact.firstName || '',
+                        lastName: contact.lastName || '',
+                        emailClient: contact.email || '',
+                        telephoneClient: contact.phone || '',
+                        portableClient: contact.mobile || '',
+                        contrat: contact.contrat || '',
+                        sourceId: contact.sourceId || '',
+                        montantEncaisse: contact.montantEncaisse || '',
+                        bonus: contact.bonus || '',
+                        paiement: contact.paiement || '',
+                        noteGestionnaire: '',
+                        noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                      });
+                      setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                    } else {
+                      // Reset client form if not client default
+                      setClientFormData({
+                        platformId: '',
+                        teleoperatorId: '',
+                        nomDeScene: '',
+                        firstName: '',
+                        lastName: '',
+                        emailClient: '',
+                        telephoneClient: '',
+                        portableClient: '',
+                        contrat: '',
+                        sourceId: '',
+                        montantEncaisse: '',
+                        bonus: '',
+                        paiement: '',
+                        noteGestionnaire: '',
+                        noteCategoryId: ''
+                      });
+                      setSelectedNoteCategoryId('');
+                    }
+                  }}
+                >
+                  <SelectTrigger id="statusSelect">
+                    {selectedStatusId ? (() => {
+                      // Find the selected status (can be from any type for display purposes)
+                      const selectedStatus = statuses.find((s: any) => s.id === selectedStatusId);
+                      if (selectedStatus) {
+                        // Check if user has view permission on this status
+                        const normalizedStatusId = String(selectedStatus.id).trim();
+                        if (statusViewPermissions.has(normalizedStatusId)) {
+                          return (
+                            <SelectValue asChild>
+                              <span 
+                                className="inline-block px-2 py-1 rounded text-sm"
+                                style={{
+                                  backgroundColor: selectedStatus.color || '#e5e7eb',
+                                  color: selectedStatus.color ? '#000000' : '#374151'
+                                }}
+                              >
+                                {selectedStatus.name}
+                              </span>
+                            </SelectValue>
+                          );
+                        }
+                      }
+                      return <SelectValue placeholder="Sélectionner un statut" />;
+                    })() : (
+                      <SelectValue placeholder="Sélectionner un statut" />
+                    )}
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses
+                      .filter((status) => {
+                        if (!status.id || status.id.trim() === '') return false;
+                        // Filter by view permissions
+                        const normalizedStatusId = String(status.id).trim();
+                        if (!statusViewPermissions.has(normalizedStatusId)) return false;
+                        // Filter by status type - only show statuses matching the current filter type
+                        if (status.type !== statusModalFilterType) {
+                          return false;
+                        }
+                        return true;
+                      })
+                      .map((status) => (
+                        <SelectItem key={status.id} value={status.id.toString()}>
+                          <span 
+                            className="inline-block px-2 py-1 rounded text-sm"
+                            style={{
+                              backgroundColor: status.color || '#e5e7eb',
+                              color: status.color ? '#000000' : '#374151'
+                            }}
+                          >
+                            {status.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {(() => {
+                  // Check if current contact status is already type='client'
+                  const currentStatus = contact?.statusId ? statuses.find((s: any) => s.id === contact.statusId) : null;
+                  if (currentStatus && currentStatus.type === 'client') {
+                    return null; // Don't show button if already a client status
+                  }
+                  
+                  // Find the client_default status
+                  const clientDefaultStatus = statuses.find((s: any) => s.clientDefault === true && s.type === 'client');
+                  if (clientDefaultStatus && clientDefaultStatus.id) {
+                    const normalizedStatusId = String(clientDefaultStatus.id).trim();
+                    // Check if user has view permission on this status
+                    if (statusViewPermissions.has(normalizedStatusId)) {
+                      return (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedStatusId(clientDefaultStatus.id.toString());
+                            // Switch to client filter if not already
+                            if (statusModalFilterType !== 'client') {
+                              setStatusModalFilterType('client');
+                            }
+                            // Pre-fill form with existing contact data
+                            // Prefill teleoperatorId with current user if they are a teleoperateur
+                            const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                              ? currentUser.id 
+                              : (contact.teleoperatorId || contact.managerId || '');
+                            
+                            setClientFormData({
+                              platformId: contact.platformId || '',
+                              teleoperatorId: defaultTeleoperatorId,
+                              nomDeScene: contact.nomDeScene || '',
+                              firstName: contact.firstName || '',
+                              lastName: contact.lastName || '',
+                              emailClient: contact.email || '',
+                              telephoneClient: contact.phone || '',
+                              portableClient: contact.mobile || '',
+                              contrat: contact.contrat || '',
+                              sourceId: contact.sourceId || '',
+                              montantEncaisse: contact.montantEncaisse || '',
+                              bonus: contact.bonus || '',
+                              paiement: contact.paiement || '',
+                              noteGestionnaire: '',
+                              noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                            });
+                            setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                          }}
+                          className="mt-2"
+                          title={`Définir comme statut par défaut client: ${clientDefaultStatus.name}`}
+                          style={{ backgroundColor: '#22c55e', color: 'white' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#16a34a')}
+                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#22c55e')}
+                        >
+                          Nouveau client
+                        </Button>
+                      );
+                    }
+                  }
+                  return null;
+                })()}
+              </div>
+              <div className="modal-form-field">
+                <Label htmlFor="statusNote">
+                  Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
+                </Label>
+                {/* Show category tabs if user has permission and categories are available */}
+                {accessibleCategories.length > 0 && (
+                  <div className="mb-2 flex gap-2">
+                    {accessibleCategories.map((category) => (
+                      <Button
+                        key={category.id}
+                        type="button"
+                        variant={statusChangeNoteCategoryId === category.id ? 'default' : 'outline'}
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => {
+                          setStatusChangeNoteCategoryId(category.id);
+                        }}
+                      >
+                        {category.name}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                <Textarea
+                  id="statusNote"
+                  placeholder={requiresNoteForStatusChange 
+                    ? "Saisissez une note expliquant le changement de statut..."
+                    : "Saisissez une note expliquant le changement de statut (optionnel)..."
+                  }
+                  value={statusChangeNote}
+                  onChange={(e) => setStatusChangeNote(e.target.value)}
+                  rows={4}
+                  className="resize-none"
+                />
+                {requiresNoteForStatusChange && (
+                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                    Une note est obligatoire pour changer le statut.
+                  </p>
+                )}
+              </div>
+              {/* Event fields - show when selected status has isEvent=true */}
+              {(() => {
+                const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+                const isEventStatus = selectedStatus && selectedStatus.isEvent;
+                if (!isEventStatus || !canCreatePlanning) return null;
+                
+                const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+                const minutes = ['00', '15', '30', '45'];
+                
+                return (
+                  <>
+                    <div className="modal-form-field">
+                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                        <p className="font-medium">Événement requis</p>
+                        <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
+                      </div>
+                    </div>
+                    <div className="modal-form-field">
+                      <Label htmlFor="eventDate">Date de l'événement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <DateInput
+                        id="eventDate"
+                        value={eventDate}
+                        onChange={(value) => setEventDate(value)}
+                        required
+                      />
+                    </div>
+                    <div className="modal-form-field">
+                      <Label>Heure <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <div className="flex gap-2 items-center">
+                        <Select
+                          value={eventHour}
+                          onValueChange={(value) => setEventHour(value)}
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {hours.map((hour) => (
+                              <SelectItem key={hour} value={hour}>
+                                {hour}h
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={eventMinute}
+                          onValueChange={(value) => setEventMinute(value)}
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {minutes.map((minute) => (
+                              <SelectItem key={minute} value={minute}>
+                                {minute}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+              <div className="modal-form-actions">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsStatusModalOpen(false);
+                    setSelectedStatusId('');
+                    setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId('');
+                    setStatusModalFilterType('lead');
+                    // Reset event fields
+                    setEventDate('');
+                    setEventHour('09');
+                    setEventMinute('00');
+                    // Reset client form
+                    setClientFormData({
+                      platformId: '',
+                      teleoperatorId: '',
+                      nomDeScene: '',
+                      firstName: '',
+                      lastName: '',
+                      emailClient: '',
+                      telephoneClient: '',
+                      portableClient: '',
+                      contrat: '',
+                      sourceId: '',
+                      montantEncaisse: '',
+                      bonus: '',
+                      paiement: '',
+                      noteGestionnaire: '',
+                      noteCategoryId: ''
+                    });
+                    setSelectedNoteCategoryId('');
+                  }}
+                >
+                  Annuler
+                </Button>
+                {canEditContact(contact) && (
+                  <Button 
+                    type="button" 
+                    onClick={handleUpdateStatus}
+                    disabled={
+                      isSavingClientForm ||
+                      (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) ||
+                      ((() => {
+                        const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+                        const isEventStatus = selectedStatus && selectedStatus.isEvent;
+                        return isEventStatus && canCreatePlanning && !eventDate;
+                      })())
+                    }
+                  >
+                    <Send className="w-4 h-4 mr-2" />
+                    {isSavingClientForm ? 'Enregistrement...' : 'Enregistrer'}
+                  </Button>
+                )}
+              </div>
+              </div>
+            </div>
+
+            {/* Right Column - Client Form (shown when client default status is selected) */}
+            {selectedStatusIsClientDefault && (
+              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px', display: 'flex', flexDirection: 'column', maxHeight: '80vh', overflow: 'visible' }}>
+                <div className="modal-header" style={{ flexShrink: 0 }}>
+                  <h2 className="modal-title">Fiche client</h2>
+                </div>
+                <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-sm text-blue-800">
+                    <p className="font-semibold mb-2">Pour que le gestionnaire de compte reçoive toutes les informations nécessaires, merci de remplir la fiche de manière exacte, complète et en vous assurant qu'elle correspond exactement.</p>
+                    <p className="mb-2">L'objectif : une fiche claire et fidèle aux échanges avec le client afin que le profil client sur la plateforme soit également en correspondance avec son identité.</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-platform">Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.platformId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, platformId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-platform">
+                            <SelectValue placeholder="Sélectionner une plateforme" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {platforms
+                              .filter((platform) => platform.id && platform.id.trim() !== '')
+                              .map((platform) => (
+                                <SelectItem key={platform.id} value={platform.id}>
+                                  {platform.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-teleoperator">Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.teleoperatorId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, teleoperatorId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-teleoperator">
+                            <SelectValue placeholder="Sélectionner un téléopérateur" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            {users
+                              ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                              .map((user) => {
+                                const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                                return (
+                                  <SelectItem key={user.id} value={user.id}>
+                                    {displayName}
+                                  </SelectItem>
+                                );
+                              })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                      <Label htmlFor="client-nom-scene">Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-nom-scene"
+                        value={clientFormData.nomDeScene}
+                        onChange={(e) => setClientFormData({ ...clientFormData, nomDeScene: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-prenom">Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-prenom"
+                          value={clientFormData.firstName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, firstName: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-nom">Nom du client</Label>
+                        <Input
+                          id="client-nom"
+                          value={clientFormData.lastName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, lastName: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                      <Label htmlFor="client-email">E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-email"
+                        type="email"
+                        value={clientFormData.emailClient}
+                        onChange={(e) => setClientFormData({ ...clientFormData, emailClient: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-telephone">Téléphone du client</Label>
+                        <Input
+                          id="client-telephone"
+                          type="number"
+                          value={clientFormData.telephoneClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, telephoneClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-portable">Portable du client</Label>
+                        <Input
+                          id="client-portable"
+                          type="number"
+                          value={clientFormData.portableClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, portableClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-contrat">Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.contrat || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, contrat: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-contrat">
+                            <SelectValue placeholder="Sélectionner un statut de contrat" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
+                            <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
+                            <SelectItem value="PAS DE CONTRAT ENVOYÉ">PAS DE CONTRAT ENVOYÉ</SelectItem>
+                            <SelectItem value="J'AI SIGNÉ LE CONTRAT POUR LE CLIENT">J'AI SIGNÉ LE CONTRAT POUR LE CLIENT</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-source">Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.sourceId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, sourceId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-source">
+                            <SelectValue placeholder="Sélectionner une source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {sources
+                              .filter((source) => source.id && source.id.trim() !== '')
+                              .map((source) => (
+                                <SelectItem key={source.id} value={source.id}>
+                                  {source.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-montant">Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-montant"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.montantEncaisse}
+                          onChange={(e) => setClientFormData({ ...clientFormData, montantEncaisse: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                          Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
+                        </p>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-bonus">Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-bonus"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.bonus}
+                          onChange={(e) => setClientFormData({ ...clientFormData, bonus: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                      <Label htmlFor="client-paiement">Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Select
+                        value={clientFormData.paiement || 'none'}
+                        onValueChange={(value) => setClientFormData({ ...clientFormData, paiement: value === 'none' ? '' : value })}
+                        disabled={isSavingClientForm}
+                      >
+                        <SelectTrigger id="client-paiement">
+                          <SelectValue placeholder="Sélectionner un mode de paiement" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          <SelectItem value="carte">Carte</SelectItem>
+                          <SelectItem value="virement">Virement</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div style={{ paddingBottom: '1rem' }}></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

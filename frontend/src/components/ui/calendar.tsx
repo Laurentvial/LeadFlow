@@ -127,21 +127,22 @@ function Calendar({
     : dateFromInput;
 
   // Debug: Log the selected date (remove in production)
-  React.useEffect(() => {
-    if (finalSelectedDate) {
-      console.log('Calendar selected date:', finalSelectedDate.toISOString().split('T')[0]);
-    }
-  }, [finalSelectedDate]);
+  // Removed to prevent infinite loops - use React DevTools instead if needed
 
   // Get today's date for comparison (normalized to start of day)
   const today = getTodayDate();
+
+  // Only set month from selected date if month prop is not provided
+  const monthToUse = props.month !== undefined 
+    ? props.month 
+    : (finalSelectedDate ? new Date(finalSelectedDate.getFullYear(), finalSelectedDate.getMonth(), 1) : undefined);
 
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       selected={finalSelectedDate}
-      month={finalSelectedDate ? new Date(finalSelectedDate.getFullYear(), finalSelectedDate.getMonth(), 1) : undefined}
+      month={monthToUse}
       modifiers={{
         past: (date) => {
           const dateToCompare = new Date(date);

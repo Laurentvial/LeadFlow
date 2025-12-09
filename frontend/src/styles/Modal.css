@@ -12,6 +12,11 @@
   overflow-x: hidden;
 }
 
+/* Allow dropdowns to overflow modal overlay */
+.modal-overlay:has([data-slot="select-content"]) {
+  overflow: visible;
+}
+
 /* Prevent body scroll when modal is open */
 body:has(.modal-overlay) {
   overflow: hidden;

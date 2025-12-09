@@ -10,10 +10,12 @@ interface DateInputProps extends Omit<React.ComponentProps<"input">, "type" | "v
   value: string; // Format: YYYY-MM-DD (for internal storage)
   onChange: (value: string) => void; // Returns YYYY-MM-DD format
   label?: string;
+  autoInitialize?: boolean; // If false, don't auto-initialize with today's date
 }
 
-function DateInput({ value, onChange, className, label, ...props }: DateInputProps) {
+function DateInput({ value, onChange, className, label, autoInitialize = true, ...props }: DateInputProps) {
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
+  const [calendarMonth, setCalendarMonth] = React.useState<Date | undefined>(undefined);
 
   // Get today's date in YYYY-MM-DD format
   const getTodayDateString = (): string => {
@@ -24,9 +26,9 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
     return `${year}-${month}-${day}`;
   };
 
-  // Initialize with today's date if value is empty
+  // Initialize with today's date if value is empty (only if autoInitialize is true)
   React.useEffect(() => {
-    if (!value || value === '') {
+    if (autoInitialize && (!value || value === '')) {
       const todayStr = getTodayDateString();
       onChange(todayStr);
     }
@@ -166,21 +168,43 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
     return undefined;
   }, [value]);
 
-  // Update calendar when input value changes
-  React.useEffect(() => {
-    // When the calendar opens, ensure it shows the correct selected date
-    if (isCalendarOpen) {
-      const dateFromInput = getSelectedDateForCalendar();
-      if (dateFromInput && value) {
-        // The date is already in value, Calendar will use it via selected prop
-        // This effect ensures the calendar updates when input changes
-      }
-    }
-  }, [isCalendarOpen, value, displayValue, getSelectedDateForCalendar]);
-
   const selectedDate = getSelectedDateForCalendar();
   // Default to selected date's month, or today's month if no date selected
-  const defaultMonth = selectedDate || new Date();
+  const defaultMonth = calendarMonth || selectedDate || new Date();
+  
+  // Update calendar month when calendar opens or value changes
+  React.useEffect(() => {
+    if (isCalendarOpen) {
+      // Parse date directly from value string to avoid dependency on selectedDate
+      let dateToUse: Date | undefined;
+      if (value) {
+        const dateFromValue = getDateFromValue(value);
+        if (dateFromValue && !isNaN(dateFromValue.getTime())) {
+          dateToUse = dateFromValue;
+        }
+      }
+      
+      if (dateToUse) {
+        const newMonth = new Date(dateToUse.getFullYear(), dateToUse.getMonth(), 1);
+        // Use functional update to avoid stale closure issues
+        setCalendarMonth(prevMonth => {
+          if (!prevMonth || prevMonth.getTime() !== newMonth.getTime()) {
+            return newMonth;
+          }
+          return prevMonth;
+        });
+      } else {
+        // Only set to today's month if calendarMonth is not already set
+        setCalendarMonth(prevMonth => {
+          if (!prevMonth) {
+            const today = new Date();
+            return new Date(today.getFullYear(), today.getMonth(), 1);
+          }
+          return prevMonth;
+        });
+      }
+    }
+  }, [isCalendarOpen, value]); // Only depend on value string, not Date objects
 
   return (
     <div className={cn("flex gap-2", className)}>
@@ -195,7 +219,13 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
         className={cn("flex-1")}
         {...props}
       />
-      <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+      <Popover 
+        open={isCalendarOpen} 
+        onOpenChange={(open) => {
+          setIsCalendarOpen(open);
+        }}
+        modal={false}
+      >
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -204,16 +234,41 @@ function DateInput({ value, onChange, className, label, ...props }: DateInputPro
               "px-3",
               !value && "text-muted-foreground"
             )}
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
           >
             <CalendarIcon className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start" style={{ zIndex: 10002 }}>
+        <PopoverContent 
+          className="w-auto p-0" 
+          align="start" 
+          style={{ zIndex: 10003 }}
+          onClick={(e) => {
+            // Only stop propagation for clicks outside the calendar navigation
+            const target = e.target as HTMLElement;
+            // Allow calendar navigation buttons to work
+            if (!target.closest('.rdp-nav_button') && !target.closest('.rdp-button')) {
+              e.stopPropagation();
+            }
+          }}
+          onPointerDown={(e) => {
+            // Only stop propagation for pointer events outside the calendar navigation
+            const target = e.target as HTMLElement;
+            // Allow calendar navigation buttons to work
+            if (!target.closest('.rdp-nav_button') && !target.closest('.rdp-button')) {
+              e.stopPropagation();
+            }
+          }}
+        >
           <Calendar
             key={selectedDate?.getTime() || 'no-date'} // Force re-render when selected date changes
             mode="single"
             selected={selectedDate}
             onSelect={handleCalendarSelect}
+            month={calendarMonth}
+            onMonthChange={setCalendarMonth}
             defaultMonth={defaultMonth}
             initialFocus
           />

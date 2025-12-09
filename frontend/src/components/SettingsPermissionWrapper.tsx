@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUser } from '../contexts/UserContext';
-import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission, useHasFosseSettingsPermission } from '../hooks/usePermissions';
+import { useHasPermissionsPermission, useHasStatusesPermission, useHasNoteCategoriesPermission, useHasNotificationsPermission } from '../hooks/usePermissions';
 import { getAccessibleRoute } from '../utils/getAccessibleRoute';
 
 interface SettingsPermissionWrapperProps {
@@ -11,7 +11,7 @@ interface SettingsPermissionWrapperProps {
 /**
  * Wrapper for Settings page that allows access if user has permission for
  * PermissionsTab (permissions component), StatusesTab (statuses component), ContactFormTab (note-categories component),
- * NotificationPreferencesTab (notifications component), or FosseSettingsTab (fosse settings)
+ * or NotificationPreferencesTab (notifications component)
  */
 export function SettingsPermissionWrapper({ children }: SettingsPermissionWrapperProps) {
   const { currentUser, loading } = useUser();
@@ -19,10 +19,9 @@ export function SettingsPermissionWrapper({ children }: SettingsPermissionWrappe
   const hasStatusesPermission = useHasStatusesPermission();
   const hasNoteCategoriesPermission = useHasNoteCategoriesPermission();
   const hasNotificationsPermission = useHasNotificationsPermission();
-  const hasFosseSettingsPermission = useHasFosseSettingsPermission();
   
-  // User has access if they can view permissions, statuses, note categories, notifications, or fosse settings
-  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission || hasFosseSettingsPermission;
+  // User has access if they can view permissions, statuses, note categories, or notifications
+  const hasAccess = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission;
 
   // Show loading while user data is being fetched
   if (loading) {

@@ -17,6 +17,7 @@ import { apiCall } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../hooks/useUsers';
 import { useSources } from '../hooks/useSources';
+import { usePlatforms } from '../hooks/usePlatforms';
 import { useHasPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
@@ -71,6 +72,7 @@ export function ContactList({
   const navigate = useNavigate();
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { sources, loading: sourcesLoading } = useSources();
+  const { platforms, loading: platformsLoading } = usePlatforms();
   
   // Get current user for default permission functions
   const { currentUser, loading: userLoading } = useUser();
@@ -268,6 +270,11 @@ export function ContactList({
   const [appliedStatusType, setAppliedStatusType] = useState<'all' | 'lead' | 'client'>('all');
   const [appliedColumnFilters, setAppliedColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
   
+  // Order selection state - used by select dropdown
+  // For Fosse page: used when settings.defaultOrder is 'none' or not set
+  // For Contacts page: always used
+  const [selectedOrder, setSelectedOrder] = useState<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc'>('created_at_desc');
+  
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const [columnFilters, setColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
@@ -286,13 +293,75 @@ export function ContactList({
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedStatusId, setSelectedStatusId] = useState('');
   const [statusChangeNote, setStatusChangeNote] = useState('');
+  const [statusChangeNoteCategoryId, setStatusChangeNoteCategoryId] = useState<string>('');
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
   // Event fields for status with is_event=true
   const [eventDate, setEventDate] = useState('');
   const [eventHour, setEventHour] = useState('09');
   const [eventMinute, setEventMinute] = useState('00');
-  const [eventComment, setEventComment] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // Client form state
+  const [clientFormData, setClientFormData] = useState({
+    platformId: '',
+    teleoperatorId: '',
+    nomDeScene: '',
+    firstName: '',
+    lastName: '',
+    emailClient: '',
+    telephoneClient: '',
+    portableClient: '',
+    contrat: '',
+    sourceId: '',
+    montantEncaisse: '',
+    bonus: '',
+    paiement: '',
+    noteGestionnaire: '',
+    noteCategoryId: ''
+  });
+  const [isSavingClientForm, setIsSavingClientForm] = useState(false);
+  const [selectedNoteCategoryId, setSelectedNoteCategoryId] = useState<string>('');
+  const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
+  
+  // Check if selected status is client default
+  const selectedStatusIsClientDefault = React.useMemo(() => {
+    if (!selectedStatusId || selectedStatusId === '') return false;
+    const status = statuses.find(s => s.id === selectedStatusId);
+    return status?.clientDefault === true;
+  }, [selectedStatusId, statuses]);
+  
+  // Filter categories to only show those user has view permission for
+  const accessibleCategories = React.useMemo(() => {
+    return noteCategories.filter(cat => accessibleCategoryIds.includes(cat.id))
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [noteCategories, accessibleCategoryIds]);
+  
+  // Helper function to prefill client form with contact data
+  const prefillClientForm = React.useCallback((contact: any) => {
+    // Prefill teleoperatorId with current user if they are a teleoperateur
+    const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+      ? currentUser.id 
+      : (contact.teleoperatorId || contact.managerId || '');
+    
+    setClientFormData({
+      platformId: contact.platformId || '',
+      teleoperatorId: defaultTeleoperatorId,
+      nomDeScene: contact.nomDeScene || '',
+      firstName: contact.firstName || '',
+      lastName: contact.lastName || '',
+      emailClient: contact.email || '',
+      telephoneClient: contact.phone || '',
+      portableClient: contact.mobile || '',
+      contrat: contact.contrat || '',
+      sourceId: contact.sourceId || '',
+      montantEncaisse: contact.montantEncaisse || '',
+      bonus: contact.bonus || '',
+      paiement: contact.paiement || '',
+      noteGestionnaire: '',
+      noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+    });
+    setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+  }, [currentUser, accessibleCategories]);
   
   // Confirmation modal state for status change warning
   const [isStatusChangeConfirmOpen, setIsStatusChangeConfirmOpen] = useState(false);
@@ -304,7 +373,6 @@ export function ContactList({
   const [notesPopoverOpen, setNotesPopoverOpen] = useState<string | null>(null);
   const [notesData, setNotesData] = useState<Record<string, any[]>>({});
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
-  const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
   const hoverTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   
   // Define all available columns
@@ -334,6 +402,8 @@ export function ContactList({
     { id: 'confirmateur', label: 'Confirmateur', defaultVisible: true },
     { id: 'creator', label: 'Créateur', defaultVisible: false },
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
+    { id: 'previousStatus', label: 'Statut précédent', defaultVisible: false },
+    { id: 'previousTeleoperator', label: 'Téléopérateur précédent', defaultVisible: false },
   ];
   
   // Check if this is the Fosse page (before using it in localStorage keys)
@@ -381,8 +451,8 @@ export function ContactList({
   // Fosse settings state
   const [fosseSettings, setFosseSettings] = useState<{
     forcedColumns: string[];
-    forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[] }>;
-    defaultOrder?: 'default' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+    forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
+    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
   } | null>(null);
   const [fosseSettingsLoading, setFosseSettingsLoading] = useState(false);
   
@@ -419,7 +489,7 @@ export function ContactList({
           setFosseSettings({
             forcedColumns: data.forcedColumns || [],
             forcedFilters: data.forcedFilters || {},
-            defaultOrder: data.defaultOrder || 'default',
+            defaultOrder: data.defaultOrder || 'none',
           });
         } catch (error: any) {
           console.error('[FOSSE DEBUG] Error loading Fosse settings:', error);
@@ -427,7 +497,7 @@ export function ContactList({
           setFosseSettings({
             forcedColumns: [],
             forcedFilters: {},
-            defaultOrder: 'default',
+            defaultOrder: 'none',
           });
         } finally {
           setFosseSettingsLoading(false);
@@ -470,22 +540,39 @@ export function ContactList({
       }
       const forcedFilters = fosseSettings.forcedFilters || {};
       const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      const forcedOpenFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
       
       Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
-        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } };
         if (config.type === 'defined' && config.values && config.values.length > 0) {
+          // 'defined' type: enforce specific values
           forcedDefinedFilters[columnId] = config.values;
+        } else if (config.type === 'open') {
+          // 'open' type: apply default values if they exist (user can still modify)
+          if (config.values && config.values.length > 0) {
+            // Multi-select filter with 'open' type
+            forcedOpenFilters[columnId] = config.values;
+          } else if (config.dateRange && (config.dateRange.from || config.dateRange.to)) {
+            // Date range filter with 'open' type
+            forcedOpenFilters[columnId] = config.dateRange;
+          } else if (config.value !== undefined && config.value !== '') {
+            // Text filter with 'open' type
+            forcedOpenFilters[columnId] = config.value;
+          }
         }
       });
       
-      if (Object.keys(forcedDefinedFilters).length > 0) {
-        // Store forced filters in ref to preserve them during re-renders
-        forcedFiltersAppliedRef.current = forcedDefinedFilters;
+      // Apply both 'defined' and 'open' type filters
+      const allForcedFilters = { ...forcedDefinedFilters, ...forcedOpenFilters };
+      
+      if (Object.keys(allForcedFilters).length > 0) {
+        // Store ALL forced filters (both 'defined' and 'open') in ref to preserve them during re-renders
+        forcedFiltersAppliedRef.current = allForcedFilters;
         // Apply forced filters - forced filters take precedence, remove conflicting existing filters first
         setAppliedColumnFilters(prev => {
           // Check if forced filters are already correctly applied
-          const needsUpdate = Object.keys(forcedDefinedFilters).some(key => {
-            const forcedValue = forcedDefinedFilters[key];
+          const needsUpdate = Object.keys(allForcedFilters).some(key => {
+            const forcedValue = allForcedFilters[key];
             const currentValue = prev[key];
             
             // If filter is missing, needs update
@@ -510,16 +597,16 @@ export function ContactList({
           
           // Remove any existing filters for columns that have forced filters, then apply forced ones
           const cleaned = { ...prev };
-          Object.keys(forcedDefinedFilters).forEach(key => {
+          Object.keys(allForcedFilters).forEach(key => {
             delete cleaned[key];
           });
-          const merged = { ...cleaned, ...forcedDefinedFilters };
+          const merged = { ...cleaned, ...allForcedFilters };
           return merged;
         });
         setColumnFilters(prev => {
           // Check if forced filters are already correctly applied
-          const needsUpdate = Object.keys(forcedDefinedFilters).some(key => {
-            const forcedValue = forcedDefinedFilters[key];
+          const needsUpdate = Object.keys(allForcedFilters).some(key => {
+            const forcedValue = allForcedFilters[key];
             const currentValue = prev[key];
             
             if (!currentValue) return true;
@@ -538,10 +625,10 @@ export function ContactList({
           }
           
           const cleaned = { ...prev };
-          Object.keys(forcedDefinedFilters).forEach(key => {
+          Object.keys(allForcedFilters).forEach(key => {
             delete cleaned[key];
           });
-          return { ...cleaned, ...forcedDefinedFilters };
+          return { ...cleaned, ...allForcedFilters };
         });
         // Reset to first page when forced filters are applied
         setCurrentPage(1);
@@ -549,8 +636,7 @@ export function ContactList({
     }
   }, [isFossePage, fosseSettings, fosseSettingsLoading]);
   
-  // Reapply forced 'defined' filters if they're changed (to ensure they're always enforced)
-  // IMPORTANT: This only affects 'defined' type filters. 'open' type filters allow users to filter freely.
+  // Reapply forced filters if they're changed (to ensure they're always enforced)
   // This effect only runs when forced filters change, not when user filters change, to avoid interference.
   useEffect(() => {
     // Only process if settings are loaded and not loading
@@ -563,45 +649,55 @@ export function ContactList({
       
       const forcedFilters = fosseSettings.forcedFilters || {};
       const forcedDefinedFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
+      const forcedOpenFilters: Record<string, string | string[] | { from?: string; to?: string }> = {};
       
-      // Only process 'defined' type filters - 'open' type filters are not enforced here
+      // Process both 'defined' and 'open' type filters
       Object.entries(forcedFilters).forEach(([columnId, filterConfig]) => {
-        const config = filterConfig as { type: 'open' | 'defined'; values?: string[] };
-        // Only enforce 'defined' type filters - 'open' allows user filtering
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } };
         if (config.type === 'defined' && config.values && config.values.length > 0) {
           forcedDefinedFilters[columnId] = config.values;
+        } else if (config.type === 'open') {
+          // 'open' type: apply default values if they exist
+          if (config.values && config.values.length > 0) {
+            forcedOpenFilters[columnId] = config.values;
+          } else if (config.dateRange && (config.dateRange.from || config.dateRange.to)) {
+            forcedOpenFilters[columnId] = config.dateRange;
+          } else if (config.value !== undefined && config.value !== '') {
+            forcedOpenFilters[columnId] = config.value;
+          }
         }
-        // 'open' type filters are ignored here - users can filter freely
       });
       
-      const forcedFiltersKey = JSON.stringify(forcedDefinedFilters);
+      // Combine both types
+      const allForcedFilters = { ...forcedDefinedFilters, ...forcedOpenFilters };
+      const forcedFiltersKey = JSON.stringify(allForcedFilters);
       
-      if (Object.keys(forcedDefinedFilters).length > 0) {
-        // Only reapply if forced 'defined' filters have changed (not when user filters change)
+      if (Object.keys(allForcedFilters).length > 0) {
+        // Only reapply if forced filters have changed (not when user filters change)
         if (forcedFiltersKey !== lastAppliedForcedFiltersRef.current) {
           lastAppliedForcedFiltersRef.current = forcedFiltersKey;
-          // Store forced filters in ref to preserve them during re-renders
-          forcedFiltersAppliedRef.current = forcedDefinedFilters;
-          // Reapply only 'defined' filters - don't touch 'open' filters or user filters
+          // Store ALL forced filters in ref to preserve them during re-renders
+          forcedFiltersAppliedRef.current = allForcedFilters;
+          // Reapply forced filters - 'defined' filters override user filters, 'open' filters are pre-filled
           setAppliedColumnFilters(prev => {
             const cleaned = { ...prev };
-            // Only remove filters for columns that have forced 'defined' filters
-            Object.keys(forcedDefinedFilters).forEach(key => {
+            // Remove filters for columns that have forced filters
+            Object.keys(allForcedFilters).forEach(key => {
               delete cleaned[key];
             });
-            const merged = { ...cleaned, ...forcedDefinedFilters };
+            const merged = { ...cleaned, ...allForcedFilters };
             return merged;
           });
           setColumnFilters(prev => {
             const cleaned = { ...prev };
-            Object.keys(forcedDefinedFilters).forEach(key => {
+            Object.keys(allForcedFilters).forEach(key => {
               delete cleaned[key];
             });
-            return { ...cleaned, ...forcedDefinedFilters };
+            return { ...cleaned, ...allForcedFilters };
           });
         }
       } else {
-        // No forced 'defined' filters - clear the refs only if we're sure there are no forced filters
+        // No forced filters - clear the refs only if we're sure there are no forced filters
         // Don't clear if settings are temporarily unavailable
         lastAppliedForcedFiltersRef.current = '';
         forcedFiltersAppliedRef.current = {};
@@ -825,23 +921,22 @@ export function ContactList({
         queryParams.append('status_type', appliedStatusType);
       }
       
-      // On Fosse page, prioritize forced filters from ref if they exist
-      // This prevents filters from being lost during re-renders (e.g., WebSocket reconnection)
+      // On Fosse page, always merge forced filters from ref with state filters
+      // This ensures forced filters are always applied even if state is temporarily cleared
       let filtersToUse = appliedColumnFilters;
       if (isFossePage) {
         const refFilters = forcedFiltersAppliedRef.current;
         const hasRefFilters = Object.keys(refFilters).length > 0;
-        const hasStateFilters = Object.keys(appliedColumnFilters).length > 0;
         
         if (hasRefFilters) {
-          // Always use ref filters if they exist - they take precedence over state
-          // This ensures filters persist even if state is temporarily cleared
-          const stateFilters = appliedColumnFilters;
+          // Merge ref filters (forced filters) with state filters
+          // Ref filters take precedence - they override any conflicting state filters
+          filtersToUse = { ...appliedColumnFilters, ...refFilters };
           
-          // Check if state filters match ref filters
-          const stateMatchesRef = hasStateFilters && Object.keys(refFilters).every(key => {
+          // If state doesn't include all ref filters, update state to match
+          const stateHasAllRefFilters = Object.keys(refFilters).every(key => {
             const refValue = refFilters[key];
-            const stateValue = stateFilters[key];
+            const stateValue = appliedColumnFilters[key];
             
             if (!stateValue) return false;
             
@@ -851,18 +946,13 @@ export function ContactList({
               return refSorted === stateSorted;
             }
             return JSON.stringify(refValue) === JSON.stringify(stateValue);
-          }) && Object.keys(stateFilters).length === Object.keys(refFilters).length;
+          });
           
-          // If state doesn't match ref or is empty, use ref filters for API call
-          // Update state synchronously to keep it in sync, but the ref flag prevents concurrent calls
-          if (!stateMatchesRef || !hasStateFilters) {
-            filtersToUse = refFilters;
-            // Update state synchronously to keep it in sync with ref
-            // The isLoadingDataRef flag prevents this from triggering another concurrent loadData call
-            if (!stateMatchesRef) {
-              setAppliedColumnFilters(refFilters);
-              setColumnFilters(refFilters);
-            }
+          // Update state if it doesn't match ref filters
+          // The isLoadingDataRef flag prevents this from triggering another concurrent loadData call
+          if (!stateHasAllRefFilters) {
+            setAppliedColumnFilters(filtersToUse);
+            setColumnFilters(filtersToUse);
           }
         }
       }
@@ -889,6 +979,19 @@ export function ContactList({
           }
         }
       });
+      
+      // Add ordering parameter - always send order based on select dropdown or forced settings
+      // Priority: Fosse settings (if forced) > select dropdown value
+      // The backend will respect this order parameter to sort contacts
+      let orderToUse: string;
+      if (isFossePage && fosseSettings && !fosseSettingsLoading && fosseSettings.defaultOrder && fosseSettings.defaultOrder !== 'none') {
+        // Fosse page: use forced order from settings (dropdown is disabled)
+        orderToUse = fosseSettings.defaultOrder;
+      } else {
+        // Contacts page OR Fosse page without forced order: use select dropdown value
+        orderToUse = selectedOrder;
+      }
+      queryParams.append('order', orderToUse);
       
       // Load data in parallel for better performance
       // Add cache-busting timestamp to ensure fresh data
@@ -920,7 +1023,7 @@ export function ContactList({
       setIsLoading(false);
       isLoadingDataRef.current = false;
     }
-  }, [currentPage, itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint]);
+  }, [currentPage, itemsPerPage, appliedSearchTerm, appliedStatusType, appliedColumnFilters, apiEndpoint, selectedOrder, isFossePage, fosseSettings, fosseSettingsLoading]);
 
   useEffect(() => {
     // Wait for user context to finish loading before making API calls
@@ -1146,7 +1249,7 @@ export function ContactList({
 
   // Helper function to determine if a column should use multi-select filter
   const shouldUseMultiSelectFilter = (columnId: string): boolean => {
-    return ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam'].includes(columnId);
+    return ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam', 'previousStatus', 'previousTeleoperator'].includes(columnId);
   };
 
   const isDateColumn = (columnId: string): boolean => {
@@ -1280,6 +1383,44 @@ export function ContactList({
         }));
         options.push(...teamOptions);
         break;
+      case 'previousStatus':
+        // For previousStatus, use status names (since it stores names, not IDs)
+        // Deduplicate by status name
+        const statusNameMap = new Map<string, { id: string; label: string }>();
+        statuses.forEach(status => {
+          const name = status.name;
+          if (!statusNameMap.has(name)) {
+            statusNameMap.set(name, { id: name, label: name });
+          } else {
+            // If duplicate name exists, use name with status ID to make it unique
+            statusNameMap.set(`${name}_${status.id}`, {
+              id: name, // Still use name for filtering
+              label: `${name} (${status.id})`
+            });
+          }
+        });
+        const previousStatusOptions = Array.from(statusNameMap.values());
+        options.push(...previousStatusOptions);
+        break;
+      case 'previousTeleoperator':
+        // For previousTeleoperator, use user names (since it stores names, not IDs)
+        // Deduplicate by user name
+        const userNameMap = new Map<string, { id: string; label: string }>();
+        users.forEach(u => {
+          const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`;
+          if (!userNameMap.has(name)) {
+            userNameMap.set(name, { id: name, label: name });
+          } else {
+            // If duplicate name exists, use name with user ID to make it unique
+            userNameMap.set(`${name}_${u.id}`, {
+              id: name, // Still use name for filtering
+              label: `${name} (${u.id})`
+            });
+          }
+        });
+        const previousTeleoperatorOptions = Array.from(userNameMap.values());
+        options.push(...previousTeleoperatorOptions);
+        break;
       default:
         return [{ id: '__empty__', label: '(Vides)' }];
     }
@@ -1342,11 +1483,12 @@ export function ContactList({
   }, [statusViewPermissions, getContactStatusType]);
 
   // Filter contacts based on status view permissions
-  // Backend handles filtering, but we also filter by status view permissions on client side
-  // With server-side pagination, contacts already represent the current page
+  // Backend handles filtering and sorting, but we also filter by status view permissions on client side
+  // With server-side pagination, contacts already represent the current page and are already sorted by the backend
   const displayedContacts = React.useMemo(() => {
+    // Backend handles all sorting, so we just use contacts as-is
+    // Only filter by permissions on client side
     const filtered = contacts.filter(contact => canViewContact(contact));
-    
     
     return filtered;
   }, [contacts, canViewContact]);
@@ -1659,12 +1801,17 @@ export function ContactList({
                     setSelectedContact(freshContact);
                     setSelectedStatusId(freshContact.statusId || '');
                     setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
                     // Set filter type based on current status
                     const currentStatus = statuses.find(s => s.id === freshContact.statusId);
                     if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
                       setStatusModalFilterType(currentStatus.type);
                     } else {
                       setStatusModalFilterType('lead'); // Default to lead if status not found
+                    }
+                    // Prefill client form if status is client default
+                    if (currentStatus?.clientDefault === true) {
+                      prefillClientForm(freshContact);
                     }
                     setIsStatusModalOpen(true);
                   } catch (error) {
@@ -1673,12 +1820,17 @@ export function ContactList({
                     setSelectedContact(contact);
                     setSelectedStatusId(contact.statusId || '');
                     setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
                     // Set filter type based on current status
                     const currentStatus = statuses.find(s => s.id === contact.statusId);
                     if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
                       setStatusModalFilterType(currentStatus.type);
                     } else {
                       setStatusModalFilterType('lead'); // Default to lead if status not found
+                    }
+                    // Prefill client form if status is client default
+                    if (currentStatus?.clientDefault === true) {
+                      prefillClientForm(contact);
                     }
                     setIsStatusModalOpen(true);
                   }
@@ -1725,6 +1877,29 @@ export function ContactList({
         return <td key={columnId} title={contact.creatorName || ''}>{truncateText(contact.creatorName || '-')}</td>;
       case 'managerTeam':
         return <td key={columnId} title={contact.managerTeamName || ''}>{truncateText(contact.managerTeamName || '-')}</td>;
+      case 'previousStatus':
+        const previousStatus = contact.previousStatus;
+        if (!previousStatus) return <td key={columnId}>-</td>;
+        const prevStatus = statuses.find(s => s.name === previousStatus);
+        return (
+          <td key={columnId} onClick={stopPropagation}>
+            {prevStatus ? (
+              <span 
+                className="contacts-status-badge"
+                style={{
+                  backgroundColor: prevStatus.color || '#e5e7eb',
+                  color: prevStatus.color ? '#000000' : '#374151'
+                }}
+              >
+                {previousStatus}
+              </span>
+            ) : (
+              previousStatus
+            )}
+          </td>
+        );
+      case 'previousTeleoperator':
+        return <td key={columnId} title={contact.previousTeleoperator || ''}>{truncateText(contact.previousTeleoperator || '-')}</td>;
       case 'notes':
         const notesCount = contact.notesCount || 0;
         const notesText = contact.notesLatestText || '';
@@ -2030,7 +2205,6 @@ export function ContactList({
         setEventDate('');
         setEventHour('09');
         setEventMinute('00');
-        setEventComment('');
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2074,12 +2248,36 @@ export function ContactList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStatusModalOpen, statuses, statusViewPermissions, selectedContact]);
   
+  // Prefill client form when modal opens if selected status is client default
+  React.useEffect(() => {
+    if (isStatusModalOpen && selectedContact && selectedStatusId) {
+      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
+      if (selectedStatus?.clientDefault === true) {
+        prefillClientForm(selectedContact);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStatusModalOpen, selectedContact, selectedStatusId, statuses]);
+
+  // Ensure first category is selected when modal opens and categories are available
+  React.useEffect(() => {
+    if (isStatusModalOpen && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+      setStatusChangeNoteCategoryId(accessibleCategories[0].id);
+    }
+  }, [isStatusModalOpen, accessibleCategories, statusChangeNoteCategoryId]);
+  
   async function handleUpdateStatus() {
     if (!selectedContact) return;
     
-    // Validate note is provided only if permission requires it
-    if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
+    // Validate note is provided only if permission requires it (and not client default status)
+    if (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) {
       toast.error('Veuillez saisir une note pour changer le statut');
+      return;
+    }
+    
+    // Validate that a category is selected if note is provided and categories are available
+    if (statusChangeNote.trim() && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+      toast.error('Veuillez sélectionner une catégorie pour la note');
       return;
     }
     
@@ -2119,13 +2317,51 @@ export function ContactList({
       }
     }
     
+    setIsSavingClientForm(true);
     try {
-      // Update status
-      await apiCall(`/api/contacts/${selectedContact.id}/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ statusId: selectedStatusId || '' })
-      });
+      // If status is client default, validate and include client form data
+      if (selectedStatusIsClientDefault) {
+        // Validate required client form fields
+        if (!clientFormData.platformId || !clientFormData.teleoperatorId || !clientFormData.nomDeScene || 
+            !clientFormData.firstName || !clientFormData.emailClient || !clientFormData.contrat || 
+            !clientFormData.sourceId || clientFormData.montantEncaisse === '' || clientFormData.bonus === '' || 
+            !clientFormData.paiement) {
+          toast.error('Veuillez remplir tous les champs obligatoires de la fiche client');
+          return;
+        }
+        
+        // Prepare update payload with client form data
+        const payload: any = {
+          statusId: selectedStatusId || '',
+          platformId: clientFormData.platformId || null,
+          teleoperatorId: clientFormData.teleoperatorId || null,
+          nomDeScene: clientFormData.nomDeScene,
+          firstName: clientFormData.firstName,
+          lastName: clientFormData.lastName,
+          email: clientFormData.emailClient,
+          phone: clientFormData.telephoneClient ? clientFormData.telephoneClient.replace(/\s/g, '') : null,
+          mobile: clientFormData.portableClient ? clientFormData.portableClient.replace(/\s/g, '') : null,
+          contrat: clientFormData.contrat,
+          sourceId: clientFormData.sourceId || null,
+          montantEncaisse: clientFormData.montantEncaisse ? parseFloat(clientFormData.montantEncaisse) : null,
+          bonus: clientFormData.bonus ? parseFloat(clientFormData.bonus) : null,
+          paiement: clientFormData.paiement
+        };
+        
+        // Update contact with client form data
+        await apiCall(`/api/contacts/${selectedContact.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        // Update status only (non-client default status)
+        await apiCall(`/api/contacts/${selectedContact.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ statusId: selectedStatusId || '' })
+        });
+      }
       
       // Create event if status has isEvent=true
       if (isEventStatus && canCreatePlanning && eventDate) {
@@ -2136,24 +2372,26 @@ export function ContactList({
             datetime: `${eventDate}T${timeString}`,
             contactId: selectedContact.id,
             userId: currentUser?.id || null,
-            comment: eventComment || ''
+            comment: ''
           }),
         });
       }
       
-      // Create note with teleoperateur category only if note was provided
+      // Create note with selected category if note was provided
       if (statusChangeNote.trim()) {
-        const teleoperateurCategory = noteCategories.find(
-          cat => cat.name.toLowerCase() === 'téléopérateur' || cat.name.toLowerCase() === 'teleoperateur'
-        );
+        // Validate that a category is selected if categories are available
+        if (accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+          toast.error('Veuillez sélectionner une catégorie pour la note');
+          return;
+        }
         
         const notePayload: any = {
           text: statusChangeNote.trim(),
           contactId: selectedContact.id
         };
         
-        if (teleoperateurCategory) {
-          notePayload.categId = teleoperateurCategory.id;
+        if (statusChangeNoteCategoryId) {
+          notePayload.categId = statusChangeNoteCategoryId;
         }
         
         await apiCall('/api/notes/create/', {
@@ -2163,21 +2401,44 @@ export function ContactList({
         });
       }
       
-      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : 'Statut mis à jour avec succès');
+      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
       setIsStatusModalOpen(false);
       setSelectedContact(null);
       setSelectedStatusId('');
       setStatusChangeNote('');
+      setStatusChangeNoteCategoryId('');
       setStatusModalFilterType('lead');
       // Reset event fields
       setEventDate('');
       setEventHour('09');
       setEventMinute('00');
-      setEventComment('');
+      // Reset client form
+      setClientFormData({
+        platformId: '',
+        teleoperatorId: '',
+        nomDeScene: '',
+        firstName: '',
+        lastName: '',
+        emailClient: '',
+        telephoneClient: '',
+        portableClient: '',
+        contrat: '',
+        sourceId: '',
+        montantEncaisse: '',
+        bonus: '',
+        paiement: '',
+        noteGestionnaire: '',
+        noteCategoryId: ''
+      });
+      setSelectedNoteCategoryId('');
       // Wait for loadData to complete to ensure fresh data for next modal open
       await loadData();
     } catch (error: any) {
-      toast.error(error.message || 'Erreur lors de la mise à jour du statut');
+      console.error('Error updating status:', error);
+      const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
+      toast.error(errorMessage);
+    } finally {
+      setIsSavingClientForm(false);
     }
   }
 
@@ -2222,6 +2483,22 @@ export function ContactList({
                         <Popover 
                           open={openFilterColumn === columnId}
                           onOpenChange={(open) => {
+                            // Prevent opening filter if it's forced with 'defined' type
+                            if (open && isFossePage && fosseSettings) {
+                              const forcedFilters = fosseSettings.forcedFilters || {};
+                              const filterConfig = forcedFilters[columnId];
+                              if (filterConfig && filterConfig.type === 'defined') {
+                                // Check if filter has any value (multi-select, text, or date range)
+                                const hasValue = (filterConfig.values && filterConfig.values.length > 0) ||
+                                               (filterConfig.value !== undefined && filterConfig.value !== '') ||
+                                               (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
+                                if (hasValue) {
+                                  toast.error('Ce filtre est forcé et ne peut pas être modifié');
+                                  return;
+                                }
+                              }
+                            }
+                            
                             setOpenFilterColumn(open ? columnId : null);
                             // Clear search term and status type filter when closing
                             if (!open) {
@@ -2271,6 +2548,37 @@ export function ContactList({
                           <PopoverTrigger asChild>
                             <button
                               className="contacts-column-header-button"
+                              disabled={(() => {
+                                // Disable button if filter is forced with 'defined' type
+                                if (isFossePage && fosseSettings) {
+                                  const forcedFilters = fosseSettings.forcedFilters || {};
+                                  const filterConfig = forcedFilters[columnId];
+                                  if (filterConfig && filterConfig.type === 'defined') {
+                                    // Check if filter has any value (multi-select, text, or date range)
+                                    return (filterConfig.values && filterConfig.values.length > 0) ||
+                                           (filterConfig.value !== undefined && filterConfig.value !== '') ||
+                                           (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
+                                  }
+                                }
+                                return false;
+                              })()}
+                              title={(() => {
+                                // Show tooltip if filter is forced
+                                if (isFossePage && fosseSettings) {
+                                  const forcedFilters = fosseSettings.forcedFilters || {};
+                                  const filterConfig = forcedFilters[columnId];
+                                  if (filterConfig && filterConfig.type === 'defined') {
+                                    // Check if filter has any value (multi-select, text, or date range)
+                                    const hasValue = (filterConfig.values && filterConfig.values.length > 0) ||
+                                                   (filterConfig.value !== undefined && filterConfig.value !== '') ||
+                                                   (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
+                                    if (hasValue) {
+                                      return 'Ce filtre est forcé et ne peut pas être modifié';
+                                    }
+                                  }
+                                }
+                                return '';
+                              })()}
                             >
                               <span>{getColumnLabel(columnId)}</span>
                               {(pendingColumnFilters[columnId] || columnFilters[columnId]) && (
@@ -2474,6 +2782,16 @@ export function ContactList({
                                               style={{
                                                 backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
                                                 color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
+                                              }}
+                                            >
+                                              {option.label}
+                                            </span>
+                                          ) : columnId === 'previousStatus' ? (
+                                            <span 
+                                              className="inline-block px-2 py-1 rounded text-sm"
+                                              style={{
+                                                backgroundColor: statuses.find(s => s.name === option.id)?.color || '#e5e7eb',
+                                                color: statuses.find(s => s.name === option.id)?.color ? '#000000' : '#374151'
                                               }}
                                             >
                                               {option.label}
@@ -2839,6 +3157,34 @@ export function ContactList({
             </div>
 
             <div className="contacts-filter-section">
+              <Label>Ordre</Label>
+              <Select 
+                value={isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' ? fosseSettings.defaultOrder : selectedOrder}
+                disabled={isFossePage && fosseSettings?.defaultOrder !== undefined && fosseSettings.defaultOrder !== 'none'}
+                onValueChange={(value) => {
+                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+                  setSelectedOrder(orderValue);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent style={{ zIndex: 10001 }}>
+                  <SelectItem value="created_at_asc">Date de création (ancien à nouveau)</SelectItem>
+                  <SelectItem value="created_at_desc">Date de création (nouveau à ancien)</SelectItem>
+                  <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
+                  <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
+                  <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
+                </SelectContent>
+              </Select>
+              {isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Ordre défini dans les paramètres de la fosse
+                </p>
+              )}
+            </div>
+
+            <div className="contacts-filter-section">
               <Label>Affichage par</Label>
               <Select 
                 value={itemsPerPage.toString()} 
@@ -3093,28 +3439,81 @@ export function ContactList({
           setSelectedContact(null);
           setSelectedStatusId('');
           setStatusChangeNote('');
+          setStatusChangeNoteCategoryId('');
           setStatusModalFilterType('lead');
+          // Reset client form
+          setClientFormData({
+            platformId: '',
+            teleoperatorId: '',
+            nomDeScene: '',
+            firstName: '',
+            lastName: '',
+            emailClient: '',
+            telephoneClient: '',
+            portableClient: '',
+            contrat: '',
+            sourceId: '',
+            montantEncaisse: '',
+            bonus: '',
+            paiement: '',
+            noteGestionnaire: '',
+            noteCategoryId: ''
+          });
+          setSelectedNoteCategoryId('');
         }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Modifier le statut</h2>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="modal-close"
-                onClick={() => {
-                  setIsStatusModalOpen(false);
-                  setSelectedContact(null);
-                  setSelectedStatusId('');
-                  setStatusChangeNote('');
-                  setStatusModalFilterType('lead');
-                }}
-              >
-                <X className="planning-icon-md" />
-              </Button>
-            </div>
-            <div className="modal-form">
+          <div 
+            className="modal-content" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              maxWidth: selectedStatusIsClientDefault ? '1200px' : '600px', 
+              maxHeight: '90vh', 
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'row',
+              gap: '20px'
+            }}
+          >
+            {/* Left Column - Status Selection */}
+            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0 }}>
+              <div className="modal-header">
+                <h2 className="modal-title">Modifier le statut</h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="modal-close"
+                  onClick={() => {
+                    setIsStatusModalOpen(false);
+                    setSelectedContact(null);
+                    setSelectedStatusId('');
+                    setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId('');
+                    setStatusModalFilterType('lead');
+                    // Reset client form
+                    setClientFormData({
+                      platformId: '',
+                      teleoperatorId: '',
+                      nomDeScene: '',
+                      firstName: '',
+                      lastName: '',
+                      emailClient: '',
+                      telephoneClient: '',
+                      portableClient: '',
+                      contrat: '',
+                      sourceId: '',
+                      montantEncaisse: '',
+                      bonus: '',
+                      paiement: '',
+                      noteGestionnaire: '',
+                      noteCategoryId: ''
+                    });
+                    setSelectedNoteCategoryId('');
+                  }}
+                >
+                  <X className="planning-icon-md" />
+                </Button>
+              </div>
+              <div className="modal-form">
               <div className="modal-form-field">
                 <Label htmlFor="statusSelect">Statut</Label>
                 {(() => {
@@ -3170,7 +3569,57 @@ export function ContactList({
                 })()}
                 <Select
                   value={selectedStatusId ? selectedStatusId.toString() : undefined}
-                  onValueChange={(value) => setSelectedStatusId(value)}
+                  onValueChange={(value) => {
+                    setSelectedStatusId(value);
+                    // Check if selected status is client default
+                    const selectedStatus = statuses.find(s => s.id === value);
+                    if (selectedStatus?.clientDefault === true) {
+                      // Pre-fill form with existing contact data
+                      // Prefill teleoperatorId with current user if they are a teleoperateur
+                      const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                        ? currentUser.id 
+                        : (selectedContact.teleoperatorId || selectedContact.managerId || '');
+                      
+                      setClientFormData({
+                        platformId: selectedContact.platformId || '',
+                        teleoperatorId: defaultTeleoperatorId,
+                        nomDeScene: selectedContact.nomDeScene || '',
+                        firstName: selectedContact.firstName || '',
+                        lastName: selectedContact.lastName || '',
+                        emailClient: selectedContact.email || '',
+                        telephoneClient: selectedContact.phone || '',
+                        portableClient: selectedContact.mobile || '',
+                        contrat: selectedContact.contrat || '',
+                        sourceId: selectedContact.sourceId || '',
+                        montantEncaisse: selectedContact.montantEncaisse || '',
+                        bonus: selectedContact.bonus || '',
+                        paiement: selectedContact.paiement || '',
+                        noteGestionnaire: '',
+                        noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                      });
+                      setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                    } else {
+                      // Reset client form if not client default
+                      setClientFormData({
+                        platformId: '',
+                        teleoperatorId: '',
+                        nomDeScene: '',
+                        firstName: '',
+                        lastName: '',
+                        emailClient: '',
+                        telephoneClient: '',
+                        portableClient: '',
+                        contrat: '',
+                        sourceId: '',
+                        montantEncaisse: '',
+                        bonus: '',
+                        paiement: '',
+                        noteGestionnaire: '',
+                        noteCategoryId: ''
+                      });
+                      setSelectedNoteCategoryId('');
+                    }
+                  }}
                 >
                   <SelectTrigger id="statusSelect">
                     {selectedStatusId ? (() => {
@@ -3255,6 +3704,30 @@ export function ContactList({
                             if (statusModalFilterType !== 'client') {
                               setStatusModalFilterType('client');
                             }
+                            // Pre-fill form with existing contact data
+                            // Prefill teleoperatorId with current user if they are a teleoperateur
+                            const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                              ? currentUser.id 
+                              : (selectedContact.teleoperatorId || selectedContact.managerId || '');
+                            
+                            setClientFormData({
+                              platformId: selectedContact.platformId || '',
+                              teleoperatorId: defaultTeleoperatorId,
+                              nomDeScene: selectedContact.nomDeScene || '',
+                              firstName: selectedContact.firstName || '',
+                              lastName: selectedContact.lastName || '',
+                              emailClient: selectedContact.email || '',
+                              telephoneClient: selectedContact.phone || '',
+                              portableClient: selectedContact.mobile || '',
+                              contrat: selectedContact.contrat || '',
+                              sourceId: selectedContact.sourceId || '',
+                              montantEncaisse: selectedContact.montantEncaisse || '',
+                              bonus: selectedContact.bonus || '',
+                              paiement: selectedContact.paiement || '',
+                              noteGestionnaire: '',
+                              noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                            });
+                            setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
                           }}
                           className="mt-2"
                           title={`Définir comme statut par défaut client: ${clientDefaultStatus.name}`}
@@ -3270,35 +3743,46 @@ export function ContactList({
                   return null;
                 })()}
               </div>
-              {requiresNoteForStatusChange && (
-                <div className="modal-form-field">
-                  <Label htmlFor="statusNote">Note <span style={{ color: '#ef4444' }}>*</span></Label>
-                  <Textarea
-                    id="statusNote"
-                    placeholder="Saisissez une note expliquant le changement de statut..."
-                    value={statusChangeNote}
-                    onChange={(e) => setStatusChangeNote(e.target.value)}
-                    rows={4}
-                    className="resize-none"
-                  />
+              <div className="modal-form-field">
+                <Label htmlFor="statusNote">
+                  Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
+                </Label>
+                {/* Show category tabs if user has permission and categories are available */}
+                {accessibleCategories.length > 0 && (
+                  <div className="mb-2 flex gap-2">
+                    {accessibleCategories.map((category) => (
+                      <Button
+                        key={category.id}
+                        type="button"
+                        variant={statusChangeNoteCategoryId === category.id ? 'default' : 'outline'}
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => {
+                          setStatusChangeNoteCategoryId(category.id);
+                        }}
+                      >
+                        {category.name}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                <Textarea
+                  id="statusNote"
+                  placeholder={requiresNoteForStatusChange 
+                    ? "Saisissez une note expliquant le changement de statut..."
+                    : "Saisissez une note expliquant le changement de statut (optionnel)..."
+                  }
+                  value={statusChangeNote}
+                  onChange={(e) => setStatusChangeNote(e.target.value)}
+                  rows={4}
+                  className="resize-none"
+                />
+                {requiresNoteForStatusChange && (
                   <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
                     Une note est obligatoire pour changer le statut.
                   </p>
-                </div>
-              )}
-              {!requiresNoteForStatusChange && (
-                <div className="modal-form-field">
-                  <Label htmlFor="statusNote">Note (optionnel)</Label>
-                  <Textarea
-                    id="statusNote"
-                    placeholder="Saisissez une note expliquant le changement de statut (optionnel)..."
-                    value={statusChangeNote}
-                    onChange={(e) => setStatusChangeNote(e.target.value)}
-                    rows={4}
-                    className="resize-none"
-                  />
-                </div>
-              )}
+                )}
+              </div>
               {/* Event fields - show when selected status has isEvent=true */}
               {(() => {
                 const selectedStatus = statuses.find(s => s.id === selectedStatusId);
@@ -3360,17 +3844,6 @@ export function ContactList({
                         </Select>
                       </div>
                     </div>
-                    <div className="modal-form-field">
-                      <Label htmlFor="eventComment">Commentaire (optionnel)</Label>
-                      <Textarea
-                        id="eventComment"
-                        value={eventComment}
-                        onChange={(e) => setEventComment(e.target.value)}
-                        placeholder="Ajoutez un commentaire..."
-                        rows={3}
-                        className="resize-none"
-                      />
-                    </div>
                   </>
                 );
               })()}
@@ -3383,12 +3856,31 @@ export function ContactList({
                     setSelectedContact(null);
                     setSelectedStatusId('');
                     setStatusChangeNote('');
+                    setStatusChangeNoteCategoryId('');
                     setStatusModalFilterType('lead');
                     // Reset event fields
                     setEventDate('');
                     setEventHour('09');
                     setEventMinute('00');
-                    setEventComment('');
+                    // Reset client form
+                    setClientFormData({
+                      platformId: '',
+                      teleoperatorId: '',
+                      nomDeScene: '',
+                      firstName: '',
+                      lastName: '',
+                      emailClient: '',
+                      telephoneClient: '',
+                      portableClient: '',
+                      contrat: '',
+                      sourceId: '',
+                      montantEncaisse: '',
+                      bonus: '',
+                      paiement: '',
+                      noteGestionnaire: '',
+                      noteCategoryId: ''
+                    });
+                    setSelectedNoteCategoryId('');
                   }}
                 >
                   Annuler
@@ -3398,7 +3890,8 @@ export function ContactList({
                     type="button" 
                     onClick={handleUpdateStatus}
                     disabled={
-                      (requiresNoteForStatusChange && !statusChangeNote.trim()) ||
+                      isSavingClientForm ||
+                      (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) ||
                       ((() => {
                         const selectedStatus = statuses.find(s => s.id === selectedStatusId);
                         const isEventStatus = selectedStatus && selectedStatus.isEvent;
@@ -3407,11 +3900,244 @@ export function ContactList({
                     }
                   >
                     <Send className="w-4 h-4 mr-2" />
-                    Enregistrer
+                    {isSavingClientForm ? 'Enregistrement...' : 'Enregistrer'}
                   </Button>
                 )}
               </div>
+              </div>
             </div>
+
+            {/* Right Column - Client Form (shown when client default status is selected) */}
+            {selectedStatusIsClientDefault && (
+              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px' }}>
+                <div className="modal-header">
+                  <h2 className="modal-title">Fiche client</h2>
+                </div>
+                <div className="modal-form">
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-sm text-blue-800">
+                    <p className="font-semibold mb-2">Pour que le gestionnaire de compte reçoive toutes les informations nécessaires, merci de remplir la fiche de manière exacte, complète et en vous assurant qu'elle correspond exactement.</p>
+                    <p className="mb-2">L'objectif : une fiche claire et fidèle aux échanges avec le client afin que le profil client sur la plateforme soit également en correspondance avec son identité.</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-platform">Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.platformId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, platformId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-platform">
+                            <SelectValue placeholder="Sélectionner une plateforme" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {platforms
+                              .filter((platform) => platform.id && platform.id.trim() !== '')
+                              .map((platform) => (
+                                <SelectItem key={platform.id} value={platform.id}>
+                                  {platform.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-teleoperator">Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.teleoperatorId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, teleoperatorId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-teleoperator">
+                            <SelectValue placeholder="Sélectionner un téléopérateur" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            {users
+                              ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                              .map((user) => {
+                                const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                                return (
+                                  <SelectItem key={user.id} value={user.id}>
+                                    {displayName}
+                                  </SelectItem>
+                                );
+                              })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-nom-scene">Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-nom-scene"
+                        value={clientFormData.nomDeScene}
+                        onChange={(e) => setClientFormData({ ...clientFormData, nomDeScene: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-prenom">Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-prenom"
+                          value={clientFormData.firstName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, firstName: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-nom">Nom du client</Label>
+                        <Input
+                          id="client-nom"
+                          value={clientFormData.lastName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, lastName: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-email">E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-email"
+                        type="email"
+                        value={clientFormData.emailClient}
+                        onChange={(e) => setClientFormData({ ...clientFormData, emailClient: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-telephone">Téléphone du client</Label>
+                        <Input
+                          id="client-telephone"
+                          type="number"
+                          value={clientFormData.telephoneClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, telephoneClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-portable">Portable du client</Label>
+                        <Input
+                          id="client-portable"
+                          type="number"
+                          value={clientFormData.portableClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, portableClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-contrat">Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.contrat || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, contrat: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-contrat">
+                            <SelectValue placeholder="Sélectionner un statut de contrat" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
+                            <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
+                            <SelectItem value="PAS DE CONTRAT ENVOYÉ">PAS DE CONTRAT ENVOYÉ</SelectItem>
+                            <SelectItem value="J'AI SIGNÉ LE CONTRAT POUR LE CLIENT">J'AI SIGNÉ LE CONTRAT POUR LE CLIENT</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-source">Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.sourceId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, sourceId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-source">
+                            <SelectValue placeholder="Sélectionner une source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {sources
+                              .filter((source) => source.id && source.id.trim() !== '')
+                              .map((source) => (
+                                <SelectItem key={source.id} value={source.id}>
+                                  {source.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-montant">Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-montant"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.montantEncaisse}
+                          onChange={(e) => setClientFormData({ ...clientFormData, montantEncaisse: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                          Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
+                        </p>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-bonus">Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-bonus"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.bonus}
+                          onChange={(e) => setClientFormData({ ...clientFormData, bonus: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-paiement">Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Select
+                        value={clientFormData.paiement || 'none'}
+                        onValueChange={(value) => setClientFormData({ ...clientFormData, paiement: value === 'none' ? '' : value })}
+                        disabled={isSavingClientForm}
+                      >
+                        <SelectTrigger id="client-paiement">
+                          <SelectValue placeholder="Sélectionner un mode de paiement" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          <SelectItem value="carte">Carte</SelectItem>
+                          <SelectItem value="virement">Virement</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div style={{ paddingBottom: '1rem' }}></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3531,9 +4257,241 @@ export function ContactList({
                       </Label>
                     </div>
                   );
-                })}
+                }                )}
               </div>
             </div>
+
+            {/* Right Column - Client Form (shown when client default status is selected) */}
+            {selectedStatusIsClientDefault && (
+              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px' }}>
+                <div className="modal-header">
+                  <h2 className="modal-title">Fiche client</h2>
+                </div>
+                <div className="modal-form">
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-sm text-blue-800">
+                    <p className="font-semibold mb-2">Pour que le gestionnaire de compte reçoive toutes les informations nécessaires, merci de remplir la fiche de manière exacte, complète et en vous assurant qu'elle correspond exactement.</p>
+                    <p className="mb-2">L'objectif : une fiche claire et fidèle aux échanges avec le client afin que le profil client sur la plateforme soit également en correspondance avec son identité.</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-platform">Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.platformId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, platformId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-platform">
+                            <SelectValue placeholder="Sélectionner une plateforme" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {platforms
+                              .filter((platform) => platform.id && platform.id.trim() !== '')
+                              .map((platform) => (
+                                <SelectItem key={platform.id} value={platform.id}>
+                                  {platform.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-teleoperator">Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.teleoperatorId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, teleoperatorId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-teleoperator">
+                            <SelectValue placeholder="Sélectionner un téléopérateur" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            {users
+                              ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                              .map((user) => {
+                                const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                                return (
+                                  <SelectItem key={user.id} value={user.id}>
+                                    {displayName}
+                                  </SelectItem>
+                                );
+                              })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-nom-scene">Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-nom-scene"
+                        value={clientFormData.nomDeScene}
+                        onChange={(e) => setClientFormData({ ...clientFormData, nomDeScene: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-prenom">Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-prenom"
+                          value={clientFormData.firstName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, firstName: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-nom">Nom du client</Label>
+                        <Input
+                          id="client-nom"
+                          value={clientFormData.lastName}
+                          onChange={(e) => setClientFormData({ ...clientFormData, lastName: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-email">E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Input
+                        id="client-email"
+                        type="email"
+                        value={clientFormData.emailClient}
+                        onChange={(e) => setClientFormData({ ...clientFormData, emailClient: e.target.value })}
+                        disabled={isSavingClientForm}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-telephone">Téléphone du client</Label>
+                        <Input
+                          id="client-telephone"
+                          type="number"
+                          value={clientFormData.telephoneClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, telephoneClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-portable">Portable du client</Label>
+                        <Input
+                          id="client-portable"
+                          type="number"
+                          value={clientFormData.portableClient}
+                          onChange={(e) => setClientFormData({ ...clientFormData, portableClient: e.target.value })}
+                          disabled={isSavingClientForm}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-contrat">Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.contrat || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, contrat: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-contrat">
+                            <SelectValue placeholder="Sélectionner un statut de contrat" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucun</SelectItem>
+                            <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
+                            <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
+                            <SelectItem value="PAS DE CONTRAT ENVOYÉ">PAS DE CONTRAT ENVOYÉ</SelectItem>
+                            <SelectItem value="J'AI SIGNÉ LE CONTRAT POUR LE CLIENT">J'AI SIGNÉ LE CONTRAT POUR LE CLIENT</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-source">Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Select
+                          value={clientFormData.sourceId || 'none'}
+                          onValueChange={(value) => setClientFormData({ ...clientFormData, sourceId: value === 'none' ? '' : value })}
+                          disabled={isSavingClientForm}
+                        >
+                          <SelectTrigger id="client-source">
+                            <SelectValue placeholder="Sélectionner une source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Aucune</SelectItem>
+                            {sources
+                              .filter((source) => source.id && source.id.trim() !== '')
+                              .map((source) => (
+                                <SelectItem key={source.id} value={source.id}>
+                                  {source.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-montant">Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-montant"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.montantEncaisse}
+                          onChange={(e) => setClientFormData({ ...clientFormData, montantEncaisse: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                          Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
+                        </p>
+                      </div>
+
+                      <div className="modal-form-field">
+                        <Label htmlFor="client-bonus">Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Input
+                          id="client-bonus"
+                          type="number"
+                          step="0.01"
+                          value={clientFormData.bonus}
+                          onChange={(e) => setClientFormData({ ...clientFormData, bonus: e.target.value })}
+                          disabled={isSavingClientForm}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-form-field">
+                        <Label htmlFor="client-paiement">Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Select
+                        value={clientFormData.paiement || 'none'}
+                        onValueChange={(value) => setClientFormData({ ...clientFormData, paiement: value === 'none' ? '' : value })}
+                        disabled={isSavingClientForm}
+                      >
+                        <SelectTrigger id="client-paiement">
+                          <SelectValue placeholder="Sélectionner un mode de paiement" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          <SelectItem value="carte">Carte</SelectItem>
+                          <SelectItem value="virement">Virement</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div style={{ paddingBottom: '1rem' }}></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

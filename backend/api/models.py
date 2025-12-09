@@ -13,6 +13,17 @@ class Source(models.Model):
     def __str__(self):
         return self.name
 
+class Platform(models.Model):
+    """Platforms for contacts"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    name = models.CharField(max_length=100, unique=True, default="")
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_platforms')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return self.name
+
 class Contact(models.Model):
     # Identifiant
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
@@ -40,6 +51,27 @@ class Contact(models.Model):
     confirmateur = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmateur_contacts')
     creator = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_contacts')
     
+    # Confirmateur fields
+    platform = models.ForeignKey('Platform', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
+    montant_encaisse = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    bonus = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    PAIEMENT_CHOICES = [
+        ('carte', 'Carte'),
+        ('virement', 'Virement'),
+    ]
+    paiement = models.CharField(max_length=20, choices=PAIEMENT_CHOICES, blank=True, default="")
+    CONTRAT_CHOICES = [
+        ('CONTRAT SIGNÉ', 'CONTRAT SIGNÉ'),
+        ('CONTRAT ENVOYÉ MAIS PAS SIGNÉ', 'CONTRAT ENVOYÉ MAIS PAS SIGNÉ'),
+        ('PAS DE CONTRAT ENVOYÉ', 'PAS DE CONTRAT ENVOYÉ'),
+        ("J'AI SIGNÉ LE CONTRAT POUR LE CLIENT", "J'AI SIGNÉ LE CONTRAT POUR LE CLIENT"),
+    ]
+    contrat = models.CharField(max_length=100, choices=CONTRAT_CHOICES, blank=True, default="")
+    nom_de_scene = models.CharField(max_length=200, default="", blank=True)
+    date_pro_tr = models.CharField(max_length=100, default="", blank=True)
+    potentiel = models.CharField(max_length=200, default="", blank=True)
+    produit = models.CharField(max_length=200, default="", blank=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
@@ -51,6 +83,7 @@ class Contact(models.Model):
             models.Index(fields=['creator_id', '-created_at']),  # Optimize queries filtering by creator
             models.Index(fields=['status_id', '-created_at']),  # Optimize queries filtering by status
             models.Index(fields=['source_id', '-created_at']),  # Optimize queries filtering by source
+            models.Index(fields=['platform_id', '-created_at']),  # Optimize queries filtering by platform
             models.Index(fields=['fname', 'lname']),  # Optimize search queries
             models.Index(fields=['email']),  # Optimize email search
             models.Index(fields=['phone']),  # Optimize phone search
@@ -222,7 +255,7 @@ class NotificationPreference(models.Model):
 class FosseSettings(models.Model):
     """Fosse page settings per role - forced columns, filters, and ordering"""
     ORDER_CHOICES = [
-        ('default', 'Par défaut (nom complet)'),
+        ('none', 'Non défini (personnalisable)'),
         ('created_at_asc', 'Date de création (ancien à nouveau)'),
         ('created_at_desc', 'Date de création (nouveau à ancien)'),
         ('updated_at_asc', 'Date de modification (ancien à nouveau)'),

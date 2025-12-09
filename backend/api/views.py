@@ -11,11 +11,11 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
+from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
-    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, LogSerializer, DocumentSerializer,
+    RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, PlatformSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
     NotificationPreferenceSerializer, FosseSettingsSerializer
 )
@@ -26,8 +26,8 @@ from rest_framework.response import Response
 import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
-from django.db.models import Count, Q, Sum
-from django.db.models.functions import Cast, MD5, Substr
+from django.db.models import Count, Q, Sum, F
+from django.db.models.functions import Cast, MD5, Substr, Coalesce
 from django.db.models import CharField
 import boto3
 from botocore.exceptions import ClientError
@@ -1144,6 +1144,35 @@ class ContactView(generics.ListAPIView):
                 logger.warning(f"Invalid date format in filter {column_id}: {e}")
                 pass
         
+        # Apply ordering from query parameter
+        order_param = request.query_params.get('order')
+        if order_param:
+            # Clear any existing ordering from get_queryset
+            queryset = queryset.order_by()
+            
+            if order_param == 'created_at_asc':
+                queryset = queryset.order_by('created_at')
+            elif order_param == 'created_at_desc':
+                queryset = queryset.order_by('-created_at')
+            elif order_param == 'updated_at_asc':
+                # Use last_log_date annotation if available, otherwise fallback to updated_at
+                # Coalesce automatically infers output field from its arguments
+                queryset = queryset.order_by().annotate(
+                    sort_date=Coalesce(F('last_log_date'), F('updated_at'))
+                ).order_by('sort_date', 'updated_at')
+            elif order_param == 'updated_at_desc':
+                # Use last_log_date annotation if available, otherwise fallback to updated_at
+                # Coalesce automatically infers output field from its arguments
+                queryset = queryset.order_by().annotate(
+                    sort_date=Coalesce(F('last_log_date'), F('updated_at'))
+                ).order_by('-sort_date', '-updated_at')
+            elif order_param == 'email_asc':
+                queryset = queryset.order_by('email')
+            else:
+                # Fallback to default ordering (creation date, most recent first)
+                queryset = queryset.order_by('-created_at')
+        # If no order parameter, keep the ordering from get_queryset (-created_at)
+        
         return queryset
     
     def list(self, request, *args, **kwargs):
@@ -1331,8 +1360,18 @@ class FosseContactView(generics.ListAPIView):
             'creator'
         )
         
+        # Annotate with most recent log date to avoid N+1 queries
+        # This annotation is needed for updated_at ordering in _apply_filters_fosse
+        from django.db.models import Prefetch, Subquery, OuterRef
+        latest_log = Log.objects.filter(
+            contact_id=OuterRef('pk')
+        ).order_by('-created_at').values('created_at')[:1]
+        
+        queryset = queryset.annotate(
+            last_log_date=Subquery(latest_log)
+        )
+        
         # Prefetch related team_memberships for teleoperator's user_details
-        from django.db.models import Prefetch
         queryset = queryset.prefetch_related(
             Prefetch(
                 'teleoperator__user_details__team_memberships',
@@ -1344,7 +1383,8 @@ class FosseContactView(generics.ListAPIView):
             )
         )
         
-        # Order by created_at descending (most recent first) - same as ContactView
+        # Default order by created_at descending (most recent first)
+        # This will be overridden by FosseSettings.default_order in _apply_filters_fosse if settings exist
         queryset = queryset.order_by('-created_at')
         
         return queryset
@@ -1353,6 +1393,7 @@ class FosseContactView(generics.ListAPIView):
         """Helper method to apply all filters to a Fosse queryset"""
         # Apply forced filters from FosseSettings (server-side enforcement)
         user = request.user
+        default_order = None
         try:
             from .models import UserDetails, FosseSettings
             user_details = UserDetails.objects.select_related('role').get(django_user=user)
@@ -1360,6 +1401,10 @@ class FosseContactView(generics.ListAPIView):
                 try:
                     fosse_setting = FosseSettings.objects.get(role=user_details.role)
                     forced_filters = fosse_setting.forced_filters or {}
+                    # Get default_order from settings - preserve 'none' value, don't convert None to 'created_at_desc'
+                    # This allows the order query parameter to be used when default_order is 'none' or not set
+                    # Handle empty string as None
+                    default_order = fosse_setting.default_order if fosse_setting.default_order and fosse_setting.default_order.strip() else None
                     
                     # Apply forced 'defined' type filters server-side
                     # This ensures forced filters are always applied even if frontend doesn't send them
@@ -1381,6 +1426,34 @@ class FosseContactView(generics.ListAPIView):
                                 queryset = queryset.filter(campaign__in=values)
                             elif column_id == 'civility':
                                 queryset = queryset.filter(civility__in=values)
+                        elif config.get('type') == 'open':
+                            # Apply 'open' type filters server-side if they have values
+                            # These are pre-filled but users can modify them
+                            value = config.get('value')
+                            if value and isinstance(value, str) and value.strip():
+                                value = value.strip()
+                                if column_id == 'email':
+                                    queryset = queryset.filter(email__icontains=value)
+                                elif column_id == 'fullName':
+                                    queryset = queryset.filter(
+                                        models.Q(fname__icontains=value) |
+                                        models.Q(lname__icontains=value)
+                                    )
+                            date_range = config.get('dateRange')
+                            if date_range and isinstance(date_range, dict):
+                                if date_range.get('from') or date_range.get('to'):
+                                    if column_id == 'createdAt':
+                                        if date_range.get('from'):
+                                            queryset = queryset.filter(created_at__gte=date_range.get('from'))
+                                        if date_range.get('to'):
+                                            queryset = queryset.filter(created_at__lte=date_range.get('to'))
+                                    elif column_id == 'updatedAt':
+                                        # For updatedAt, we need to check the last log date
+                                        # This is already annotated in get_queryset
+                                        if date_range.get('from'):
+                                            queryset = queryset.filter(last_log_date__gte=date_range.get('from'))
+                                        if date_range.get('to'):
+                                            queryset = queryset.filter(last_log_date__lte=date_range.get('to'))
                 except FosseSettings.DoesNotExist:
                     pass
         except (UserDetails.DoesNotExist, Exception):
@@ -1428,7 +1501,7 @@ class FosseContactView(generics.ListAPIView):
                             date_range_filters[base_column]['to'] = value
                 else:
                     column_id = key.replace('filter_', '')
-                    if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam']:
+                    if column_id in ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam', 'previousStatus', 'previousTeleoperator']:
                         values = request.query_params.getlist(key)
                         if values:
                             multi_select_filters[column_id] = values
@@ -1489,6 +1562,35 @@ class FosseContactView(generics.ListAPIView):
                     elif column_id == 'managerTeam':
                         # For Fosse, contacts have no team
                         pass
+                    elif column_id == 'previousStatus':
+                        # Empty previousStatus means no previous status (contact never had a status change)
+                        # This is tricky - we need to find contacts that have no status change logs
+                        from .models import Log
+                        # Get all contact IDs that have status change logs
+                        contacts_with_status_changes = Log.objects.filter(
+                            contact_id__isnull=False,
+                            old_value__statusName__isnull=False,
+                            new_value__statusName__isnull=False
+                        ).exclude(
+                            old_value__statusName=models.F('new_value__statusName')
+                        ).values_list('contact_id_id', flat=True).distinct()
+                        
+                        # Contacts without status changes (empty previousStatus)
+                        q_objects.append(~models.Q(id__in=contacts_with_status_changes))
+                    elif column_id == 'previousTeleoperator':
+                        # Empty previousTeleoperator means no previous teleoperator (contact never had a teleoperator change)
+                        from .models import Log
+                        # Get all contact IDs that have teleoperator change logs
+                        contacts_with_teleoperator_changes = Log.objects.filter(
+                            contact_id__isnull=False,
+                            old_value__teleoperatorName__isnull=False,
+                            new_value__teleoperatorName__isnull=False
+                        ).exclude(
+                            old_value__teleoperatorName=models.F('new_value__teleoperatorName')
+                        ).values_list('contact_id_id', flat=True).distinct()
+                        
+                        # Contacts without teleoperator changes (empty previousTeleoperator)
+                        q_objects.append(~models.Q(id__in=contacts_with_teleoperator_changes))
                 
                 # Add regular value filters if any
                 if regular_values:
@@ -1521,6 +1623,73 @@ class FosseContactView(generics.ListAPIView):
                         # For Fosse, contacts have no team, so regular values would exclude all
                         queryset = queryset.none()
                         break
+                    elif column_id == 'previousStatus':
+                        # Filter by previous status from logs
+                        # The serializer finds the most recent status change log (ordered by -created_at)
+                        # where old_value.statusName != new_value.statusName
+                        # We'll find contacts that have at least one status change log with matching old_value.statusName
+                        # This is an approximation - ideally we'd match exactly the most recent one, but that's complex
+                        from .models import Log
+                        from django.db.models import OuterRef, Exists
+                        
+                        # Find contacts that have logs with old_value.statusName matching filter values
+                        # where status actually changed (old != new)
+                        matching_contact_ids = set()
+                        for status_name in regular_values:
+                            # Find logs where status changed and old_value.statusName matches
+                            matching_logs = Log.objects.filter(
+                                contact_id=OuterRef('pk'),
+                                old_value__statusName=status_name,
+                                new_value__statusName__isnull=False
+                            ).exclude(
+                                old_value__statusName=models.F('new_value__statusName')
+                            )
+                            
+                            # Get contacts that have at least one matching log
+                            # Note: This finds contacts with ANY matching status change, not necessarily the most recent
+                            # For exact matching, we'd need to check the most recent one, but that's very complex
+                            contacts = Contact.objects.filter(
+                                Exists(matching_logs)
+                            ).values_list('id', flat=True)
+                            
+                            matching_contact_ids.update(contacts)
+                        
+                        if matching_contact_ids:
+                            q_objects.append(models.Q(id__in=matching_contact_ids))
+                        elif not has_empty:
+                            # No matches and no empty option - exclude all
+                            queryset = queryset.none()
+                            break
+                    elif column_id == 'previousTeleoperator':
+                        # Filter by previous teleoperator from logs
+                        # Similar to previousStatus - find contacts with matching old_value.teleoperatorName
+                        from .models import Log
+                        from django.db.models import OuterRef, Exists
+                        
+                        matching_contact_ids = set()
+                        for teleoperator_name in regular_values:
+                            # Find logs where teleoperator changed and old_value.teleoperatorName matches
+                            matching_logs = Log.objects.filter(
+                                contact_id=OuterRef('pk'),
+                                old_value__teleoperatorName=teleoperator_name,
+                                new_value__teleoperatorName__isnull=False
+                            ).exclude(
+                                old_value__teleoperatorName=models.F('new_value__teleoperatorName')
+                            )
+                            
+                            # Get contacts that have at least one matching log
+                            contacts = Contact.objects.filter(
+                                Exists(matching_logs)
+                            ).values_list('id', flat=True)
+                            
+                            matching_contact_ids.update(contacts)
+                        
+                        if matching_contact_ids:
+                            q_objects.append(models.Q(id__in=matching_contact_ids))
+                        elif not has_empty:
+                            # No matches and no empty option - exclude all
+                            queryset = queryset.none()
+                            break
                 
                 # Apply combined filter
                 if q_objects:
@@ -1583,6 +1752,46 @@ class FosseContactView(generics.ListAPIView):
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Invalid date format in filter {column_id}: {e}")
                 pass
+        
+        # Apply ordering: first check FosseSettings.default_order, then check order query parameter
+        order_to_apply = None
+        
+        # Priority 1: Use forced order from FosseSettings if set and not 'none'
+        if default_order and default_order != 'none':
+            order_to_apply = default_order
+        # Priority 2: Use order from query parameter (from select dropdown)
+        elif request.query_params.get('order'):
+            order_to_apply = request.query_params.get('order')
+        
+        # Apply the determined order
+        if order_to_apply:
+            try:
+                # Clear any existing ordering first
+                queryset = queryset.order_by()
+                
+                if order_to_apply == 'created_at_asc':
+                    queryset = queryset.order_by('created_at')
+                elif order_to_apply == 'created_at_desc':
+                    queryset = queryset.order_by('-created_at')
+                elif order_to_apply == 'updated_at_asc':
+                    # For Fosse, use updated_at directly (simpler and more reliable)
+                    queryset = queryset.order_by('updated_at')
+                elif order_to_apply == 'updated_at_desc':
+                    # For Fosse, use updated_at directly (simpler and more reliable)
+                    queryset = queryset.order_by('-updated_at')
+                elif order_to_apply == 'email_asc':
+                    queryset = queryset.order_by('email')
+                else:
+                    # Fallback to default ordering (creation date, most recent first)
+                    queryset = queryset.order_by('-created_at')
+            except Exception as e:
+                # Log the error and fall back to default ordering
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error applying order '{order_to_apply}' in FosseContactView: {e}")
+                # Fall back to default ordering
+                queryset = queryset.order_by('-created_at')
+        # If no order specified, keep the ordering from get_queryset (-created_at)
         
         return queryset
     
@@ -2242,6 +2451,7 @@ def contact_detail(request, contact_id):
         contact = Contact.objects.select_related(
             'status',
             'source',
+            'platform',
             'teleoperator',
             'confirmateur',
             'creator'
@@ -2530,6 +2740,58 @@ def contact_detail(request, contact_id):
                         pass
                 else:
                     contact.source = None
+            
+            # Update platform if provided
+            if 'platformId' in request.data:
+                platform_id = request.data.get('platformId')
+                if platform_id:
+                    try:
+                        platform_obj = Platform.objects.filter(id=platform_id).first()
+                        if platform_obj:
+                            contact.platform = platform_obj
+                    except Exception:
+                        pass
+                else:
+                    contact.platform = None
+            
+            # Update confirmateur fields if provided
+            if 'montantEncaisse' in request.data:
+                montant_encaisse = request.data.get('montantEncaisse')
+                if montant_encaisse:
+                    try:
+                        contact.montant_encaisse = float(montant_encaisse)
+                    except (ValueError, TypeError):
+                        contact.montant_encaisse = None
+                else:
+                    contact.montant_encaisse = None
+            
+            if 'bonus' in request.data:
+                bonus = request.data.get('bonus')
+                if bonus:
+                    try:
+                        contact.bonus = float(bonus)
+                    except (ValueError, TypeError):
+                        contact.bonus = None
+                else:
+                    contact.bonus = None
+            
+            if 'paiement' in request.data:
+                contact.paiement = request.data.get('paiement', '') or ''
+            
+            if 'contrat' in request.data:
+                contact.contrat = request.data.get('contrat', '') or ''
+            
+            if 'nomDeScene' in request.data:
+                contact.nom_de_scene = request.data.get('nomDeScene', '') or ''
+            
+            if 'dateProTr' in request.data:
+                contact.date_pro_tr = request.data.get('dateProTr', '') or ''
+            
+            if 'potentiel' in request.data:
+                contact.potentiel = request.data.get('potentiel', '') or ''
+            
+            if 'produit' in request.data:
+                contact.produit = request.data.get('produit', '') or ''
             
             # Update teleoperator if provided
             if 'teleoperatorId' in request.data:
@@ -3916,6 +4178,62 @@ def source_delete(request, source_id):
     """Delete a source"""
     source_obj = get_object_or_404(Source, id=source_id)
     source_obj.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+# Platforms endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def platform_list(request):
+    """List all platforms"""
+    platforms = Platform.objects.all().order_by('name')
+    serializer = PlatformSerializer(platforms, many=True)
+    return Response({'platforms': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def platform_create(request):
+    """Create a new platform"""
+    platform_id = uuid.uuid4().hex[:12]
+    while Platform.objects.filter(id=platform_id).exists():
+        platform_id = uuid.uuid4().hex[:12]
+    
+    # Get name from request data
+    name = request.data.get('name', '').strip()
+    if not name:
+        return Response({'error': 'Le nom de la plateforme est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if platform with same name already exists
+    if Platform.objects.filter(name=name).exists():
+        return Response({'error': 'Une plateforme avec ce nom existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Create platform directly (bypass serializer for creation to avoid issues)
+    try:
+        platform = Platform.objects.create(id=platform_id, name=name, created_by=request.user if request.user.is_authenticated else None)
+        serializer = PlatformSerializer(platform)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error creating platform: {error_details}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def platform_update(request, platform_id):
+    """Update a platform"""
+    platform_obj = get_object_or_404(Platform, id=platform_id)
+    serializer = PlatformSerializer(platform_obj, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(PlatformSerializer(platform_obj).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def platform_delete(request, platform_id):
+    """Delete a platform"""
+    platform_obj = get_object_or_404(Platform, id=platform_id)
+    platform_obj.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 # Note Categories endpoints

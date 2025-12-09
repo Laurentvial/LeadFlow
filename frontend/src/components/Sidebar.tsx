@@ -17,7 +17,8 @@ import {
   Mail,
   MessageSquare,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { UnreadMessagesContext } from '../contexts/UnreadMessagesContext';
@@ -43,6 +44,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     return saved === 'true';
   });
+  const [expandedSubmenu, setExpandedSubmenu] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STORAGE_KEY, String(isCollapsed));
@@ -121,6 +123,19 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     });
   })();
   
+  // Check fosse settings permission (same logic as useHasFosseSettingsPermission)
+  const hasFosseSettingsPermission = (() => {
+    if (!currentUser || !currentUser.permissions || !Array.isArray(currentUser.permissions)) {
+      return false;
+    }
+    return currentUser.permissions.some((perm: any) => {
+      return perm.component === 'permissions' && 
+             perm.action === 'view' && 
+             !perm.fieldName &&
+             !perm.statusId;
+    });
+  })();
+  
   // Settings page is accessible if user has access to permissions, statuses, note categories, or notifications
   const hasSettingsPermission = hasPermissionsPermission || hasStatusesPermission || hasNoteCategoriesPermission || hasNotificationsPermission;
   // Chat doesn't require permission check - available to all authenticated users
@@ -165,6 +180,16 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       requiresPermission: true,
       permissionComponent: 'fosse',
       permissionAction: 'view' as const,
+      submenu: hasFosseSettingsPermission ? [
+        {
+          id: 'fosse-configuration',
+          label: 'Configuration de la fosse',
+          path: '/fosse/configuration',
+          requiresPermission: true,
+          permissionComponent: 'permissions',
+          permissionAction: 'view' as const,
+        }
+      ] : undefined,
     },
     { 
       id: 'mails', 
@@ -292,27 +317,60 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
           <nav className="p-4 space-y-1 flex-1">
             {visibleItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path || currentPage === item.id;
+              const hasSubmenu = item.submenu && item.submenu.length > 0 && !isCollapsed;
+              
+              // Filter submenu items based on permissions
+              const visibleSubmenuItems = hasSubmenu ? item.submenu!.filter((subItem: any) => {
+                if (subItem.requiresPermission) {
+                  return checkUserPermission(subItem.permissionComponent, subItem.permissionAction);
+                }
+                return true;
+              }) : [];
+              
+              // Check if any submenu item is active
+              const isSubmenuItemActive = hasSubmenu && visibleSubmenuItems.some((subItem: any) => location.pathname === subItem.path);
+              
+              // Parent is active only if no submenu item is active and path matches exactly (not just starts with)
+              const isActive = !isSubmenuItemActive && location.pathname === item.path;
+              
+              // Auto-expand submenu if a submenu item is active
+              const isSubmenuExpanded = expandedSubmenu === item.id || isSubmenuItemActive;
+              
               const showUnreadBadge = item.id === 'chat' && totalUnreadCount > 0;
               
               const buttonContent = (
-                <Button
-                  key={item.id}
-                  variant={isActive ? 'default' : 'ghost'}
-                  className={`w-full ${isCollapsed ? 'justify-center px-0' : 'justify-start'} relative`}
-                  onClick={() => handleNavigation(item)}
-                >
-                  <Icon className={`w-5 h-5 ${isCollapsed ? '' : 'mr-3'}`} />
-                  {!isCollapsed && <span>{item.label}</span>}
-                  {showUnreadBadge && (
-                    <Badge 
-                      variant="destructive" 
-                      className={`absolute ${isCollapsed ? 'top-0 right-0 h-5 w-5 p-0 flex items-center justify-center text-xs' : 'ml-auto'} rounded-full`}
+                <div className="flex items-center w-full">
+                  <Button
+                    key={item.id}
+                    variant={isActive ? 'default' : 'ghost'}
+                    className={`flex-1 ${isCollapsed ? 'justify-center px-0' : 'justify-start'} relative`}
+                    onClick={() => handleNavigation(item)}
+                  >
+                    <Icon className={`w-5 h-5 ${isCollapsed ? '' : 'mr-3'}`} />
+                    {!isCollapsed && <span>{item.label}</span>}
+                    {showUnreadBadge && (
+                      <Badge 
+                        variant="destructive" 
+                        className={`absolute ${isCollapsed ? 'top-0 right-0 h-5 w-5 p-0 flex items-center justify-center text-xs' : 'ml-auto'} rounded-full`}
+                      >
+                        {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+                      </Badge>
+                    )}
+                  </Button>
+                  {hasSubmenu && !isCollapsed && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 flex-shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedSubmenu(isSubmenuExpanded ? null : item.id);
+                      }}
                     >
-                      {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-                    </Badge>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isSubmenuExpanded ? 'rotate-180' : ''}`} />
+                    </Button>
                   )}
-                </Button>
+                </div>
               );
 
               if (isCollapsed) {
@@ -328,7 +386,28 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
                 );
               }
 
-              return buttonContent;
+              return (
+                <div key={item.id} className="space-y-1">
+                  {buttonContent}
+                  {hasSubmenu && isSubmenuExpanded && visibleSubmenuItems.length > 0 && (
+                    <div className="ml-4 space-y-1 border-l-2 border-slate-200 -mr-9">
+                      {visibleSubmenuItems.map((subItem: any) => {
+                        const isSubActive = location.pathname === subItem.path;
+                        return (
+                          <Button
+                            key={subItem.id}
+                            variant={isSubActive ? 'default' : 'ghost'}
+                            className="w-full justify-start text-sm"
+                            onClick={() => navigate(subItem.path)}
+                          >
+                            <span>{subItem.label}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
             })}
           </nav>
         </div>

@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
@@ -406,6 +406,18 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['city'] = ret.get('city', '') or ''
         ret['nationality'] = ret.get('nationality', '') or ''
         
+        # Confirmateur fields
+        ret['platformId'] = instance.platform_id if hasattr(instance, 'platform_id') else (instance.platform.id if instance.platform else None)
+        ret['platform'] = instance.platform.name if instance.platform else ''
+        ret['montantEncaisse'] = str(instance.montant_encaisse) if instance.montant_encaisse is not None else ''
+        ret['bonus'] = str(instance.bonus) if instance.bonus is not None else ''
+        ret['paiement'] = instance.paiement or ''
+        ret['contrat'] = instance.contrat or ''
+        ret['nomDeScene'] = instance.nom_de_scene or ''
+        ret['dateProTr'] = instance.date_pro_tr or ''
+        ret['potentiel'] = instance.potentiel or ''
+        ret['produit'] = instance.produit or ''
+        
         # Add notes information
         # Use prefetched data if available, otherwise query
         if hasattr(instance, '_prefetched_objects_cache') and 'contact_notes' in instance._prefetched_objects_cache:
@@ -459,6 +471,40 @@ class ContactSerializer(serializers.ModelSerializer):
             from .models import Log
             latest_log = Log.objects.filter(contact_id=instance).order_by('-created_at').first()
             ret['lastLogDate'] = latest_log.created_at if latest_log else None
+        
+        # Add previous status and previous teleoperator from logs
+        from .models import Log
+        logs = Log.objects.filter(
+            contact_id=instance,
+            event_type='editContact'
+        ).order_by('-created_at')
+        
+        previous_status = None
+        previous_teleoperator = None
+        
+        for log in logs:
+            # Check for previous status - look for logs where statusName changed
+            if previous_status is None and log.old_value and log.new_value:
+                old_status = log.old_value.get('statusName', '')
+                new_status = log.new_value.get('statusName', '')
+                # If status changed (different values), old_value contains the previous status
+                if old_status and old_status != new_status:
+                    previous_status = old_status
+            
+            # Check for previous teleoperator - look for logs where teleoperatorName changed
+            if previous_teleoperator is None and log.old_value and log.new_value:
+                old_teleoperator = log.old_value.get('teleoperatorName', '')
+                new_teleoperator = log.new_value.get('teleoperatorName', '')
+                # If teleoperator changed (different values), old_value contains the previous teleoperator
+                if old_teleoperator and old_teleoperator != new_teleoperator:
+                    previous_teleoperator = old_teleoperator
+            
+            # Stop if we found both
+            if previous_status is not None and previous_teleoperator is not None:
+                break
+        
+        ret['previousStatus'] = previous_status or ''
+        ret['previousTeleoperator'] = previous_teleoperator or ''
         
         return ret
 
@@ -764,6 +810,21 @@ class SourceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Source
+        fields = ['id', 'name', 'createdAt', 'updatedAt']
+        read_only_fields = ['createdAt', 'updatedAt']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
+        return ret
+
+class PlatformSerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+
+    class Meta:
+        model = Platform
         fields = ['id', 'name', 'createdAt', 'updatedAt']
         read_only_fields = ['createdAt', 'updatedAt']
 

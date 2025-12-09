@@ -41,7 +41,7 @@
 /* Status Field Container - Prevent overflow */
 .contact-status-field-container {
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible; /* Allow dropdown to overflow */
   min-width: 0; /* Allow flex item to shrink below content size */
 }
 
@@ -200,7 +200,7 @@
   align-items: center;
   min-height: 2.5rem;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible; /* Allow dropdown to overflow */
 }
 
 .contact-field-input-wrapper input,

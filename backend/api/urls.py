@@ -72,6 +72,11 @@ urlpatterns = [
     path('sources/create/', api_views.source_create, name='source-create'),
     path('sources/<str:source_id>/', api_views.source_update, name='source-update'),
     path('sources/<str:source_id>/delete/', api_views.source_delete, name='source-delete'),
+    # Platforms endpoints
+    path('platforms/', api_views.platform_list, name='platform-list'),
+    path('platforms/create/', api_views.platform_create, name='platform-create'),
+    path('platforms/<str:platform_id>/', api_views.platform_update, name='platform-update'),
+    path('platforms/<str:platform_id>/delete/', api_views.platform_delete, name='platform-delete'),
     # Note Categories endpoints
     path('note-categories/', api_views.note_category_list, name='note-category-list'),
     path('note-categories/create/', api_views.note_category_create, name='note-category-create'),

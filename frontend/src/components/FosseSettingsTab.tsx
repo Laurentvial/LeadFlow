@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
-import { Checkbox } from './ui/checkbox';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { MultiSelect } from './ui/multi-select';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Input } from './ui/input';
+import { DateInput } from './ui/date-input';
+import { Search, Check, ChevronDown } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
@@ -13,23 +17,18 @@ import { useSources } from '../hooks/useSources';
 import { useUsers } from '../hooks/useUsers';
 import { useTeams } from '../hooks/useTeams';
 import { ACCESS_TOKEN } from '../utils/constants';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from './ui/table';
 import { Separator } from './ui/separator';
+import { formatPhoneNumber } from '../utils/phoneNumber';
+import { Filter } from 'lucide-react';
+import '../styles/Contacts.css';
 
 interface FosseSettings {
   id: string;
   roleId: string;
   roleName: string;
   forcedColumns: string[];
-  forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[] }>;
-  defaultOrder: 'default' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+  forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
+  defaultOrder: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
   defaultStatusId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -62,6 +61,8 @@ const AVAILABLE_COLUMNS = [
   { id: 'confirmateur', label: 'Confirmateur' },
   { id: 'creator', label: 'Créateur' },
   { id: 'managerTeam', label: 'Équipe' },
+  { id: 'previousStatus', label: 'Statut précédent' },
+  { id: 'previousTeleoperator', label: 'Téléopérateur précédent' },
 ];
 
 // Columns that support filtering
@@ -71,6 +72,8 @@ const FILTERABLE_COLUMNS = [
   { id: 'source', label: 'Source', optionsType: 'sources' as const },
   { id: 'creator', label: 'Créateur', optionsType: 'users' as const },
   { id: 'managerTeam', label: 'Équipe', optionsType: 'teams' as const },
+  { id: 'previousStatus', label: 'Statut précédent', optionsType: 'statuses' as const },
+  { id: 'previousTeleoperator', label: 'Téléopérateur précédent', optionsType: 'users' as const },
 ];
 
 export function FosseSettingsTab() {
@@ -86,6 +89,15 @@ export function FosseSettingsTab() {
   const [expandedRole, setExpandedRole] = useState<string | null>(null);
   const [fosseDefaultStatusId, setFosseDefaultStatusId] = useState<string>('');
   const [savingFosseDefaults, setSavingFosseDefaults] = useState(false);
+  const [openColumnsPopover, setOpenColumnsPopover] = useState<string | null>(null);
+  const [columnSearchTerm, setColumnSearchTerm] = useState<string>('');
+  const [previewContacts, setPreviewContacts] = useState<any[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
+  const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
+  const [statusColumnFilterType, setStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
+  const [pendingTextFilterValues, setPendingTextFilterValues] = useState<Record<string, string>>({});
+  const [pendingDateRangeFilters, setPendingDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>({});
 
   // Load Fosse default status
   const loadFosseDefaultStatus = async () => {
@@ -221,7 +233,7 @@ export function FosseSettingsTab() {
         roleName: roles.find(r => r.id === roleId)?.name || '',
         forcedColumns: [],
         forcedFilters: {},
-        defaultOrder: 'default',
+        defaultOrder: 'created_at_desc',
         defaultStatusId: null,
         createdAt: '',
         updatedAt: '',
@@ -262,7 +274,7 @@ export function FosseSettingsTab() {
       const updatedData = {
         forcedColumns: updates.forcedColumns !== undefined ? updates.forcedColumns : (currentSetting?.forcedColumns ?? []),
         forcedFilters: updates.forcedFilters !== undefined ? updates.forcedFilters : (currentSetting?.forcedFilters ?? {}),
-        defaultOrder: updates.defaultOrder !== undefined ? updates.defaultOrder : (currentSetting?.defaultOrder ?? 'default'),
+        defaultOrder: updates.defaultOrder !== undefined ? updates.defaultOrder : (currentSetting?.defaultOrder ?? 'created_at_desc'),
         defaultStatusId: updates.defaultStatusId !== undefined ? updates.defaultStatusId : (currentSetting?.defaultStatusId ?? null),
       };
 
@@ -274,6 +286,13 @@ export function FosseSettingsTab() {
       // If we got here without an error, the update succeeded
       // Response can be null for 204 No Content, but that's still success
       toast.success('Paramètres Fosse mis à jour avec succès');
+      
+      // Reload preview to reflect filter changes if this role is expanded
+      if (expandedRole === roleId) {
+        // Use the updated order from updates or current setting
+        const orderToUse = updates.defaultOrder !== undefined ? updates.defaultOrder : (currentSetting?.defaultOrder || 'created_at_desc');
+        loadPreviewContacts(roleId, [], orderToUse);
+      }
       
       // Don't reload - we already have the updated state locally
       // Only reload if there's an error to sync with server
@@ -361,36 +380,6 @@ export function FosseSettingsTab() {
     }
   };
 
-  // Toggle column in forced columns
-  const toggleColumn = (roleId: string, columnId: string) => {
-    // Get current setting and calculate new columns
-    const currentSetting = settings.get(roleId);
-    if (!currentSetting) {
-      // If no setting, load it first then retry
-      loadSettingForRole(roleId).then(() => {
-        toggleColumn(roleId, columnId);
-      });
-      return;
-    }
-
-    const currentColumns = currentSetting.forcedColumns || [];
-    const newColumns = currentColumns.includes(columnId)
-      ? currentColumns.filter(id => id !== columnId)
-      : [...currentColumns, columnId];
-
-    // Update local state immediately
-    setSettings(prev => {
-      const newMap = new Map(prev);
-      const setting = newMap.get(roleId);
-      if (setting) {
-        newMap.set(roleId, { ...setting, forcedColumns: newColumns });
-      }
-      return newMap;
-    });
-    
-    // Save to server
-    updateSettings(roleId, { forcedColumns: newColumns });
-  };
 
   // Update filter type for a column
   const updateFilterType = (roleId: string, columnId: string, type: 'open' | 'defined') => {
@@ -426,21 +415,6 @@ export function FosseSettingsTab() {
     updateSettings(roleId, { forcedFilters: newFilters });
   };
 
-  // Toggle a value in filter values
-  const toggleFilterValue = (roleId: string, columnId: string, value: string) => {
-    const setting = settings.get(roleId);
-    if (!setting) return;
-
-    const currentFilter = setting.forcedFilters[columnId];
-    if (!currentFilter || currentFilter.type !== 'defined') return;
-
-    const currentValues = currentFilter.values || [];
-    const newValues = currentValues.includes(value)
-      ? currentValues.filter(v => v !== value)
-      : [...currentValues, value];
-
-    updateFilterValues(roleId, columnId, newValues);
-  };
 
   // Get options for a filterable column
   const getFilterOptions = (columnId: string) => {
@@ -449,10 +423,46 @@ export function FosseSettingsTab() {
 
     switch (column.optionsType) {
       case 'statuses':
+        if (columnId === 'previousStatus') {
+          // For previousStatus, use status names (since it stores names, not IDs)
+          // Deduplicate by status name
+          const statusNameMap = new Map<string, { id: string; label: string }>();
+          statuses.forEach(status => {
+            const name = status.name;
+            if (!statusNameMap.has(name)) {
+              statusNameMap.set(name, { id: name, label: name });
+            } else {
+              // If duplicate name exists, use name with status ID to make it unique
+              statusNameMap.set(`${name}_${status.id}`, {
+                id: name, // Still use name for filtering
+                label: `${name} (${status.id})`
+              });
+            }
+          });
+          return Array.from(statusNameMap.values());
+        }
         return statuses.map(s => ({ id: s.id, label: s.name }));
       case 'sources':
         return sources.map(s => ({ id: s.id, label: s.name }));
       case 'users':
+        if (columnId === 'previousTeleoperator') {
+          // For previousTeleoperator, use user names (since it stores names, not IDs)
+          // Deduplicate by user name
+          const userNameMap = new Map<string, { id: string; label: string }>();
+          users.forEach(u => {
+            const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`;
+            if (!userNameMap.has(name)) {
+              userNameMap.set(name, { id: name, label: name });
+            } else {
+              // If duplicate name exists, use name with user ID to make it unique
+              userNameMap.set(`${name}_${u.id}`, {
+                id: name, // Still use name for filtering
+                label: `${name} (${u.id})`
+              });
+            }
+          });
+          return Array.from(userNameMap.values());
+        }
         return users.map(u => ({
           id: u.id,
           label: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`,
@@ -483,12 +493,1481 @@ export function FosseSettingsTab() {
     }
   }, [expandedRole]);
 
+  // Load preview contacts when forced columns change
+  const loadPreviewContacts = React.useCallback(async (roleId: string, columns: string[], order?: string) => {
+    // Always load contacts for preview, even if no columns are selected
+    // This allows users to see all columns and configure filters
+    try {
+      setLoadingPreview(true);
+      // Get order from settings or use default
+      const setting = settings.get(roleId);
+      // Get order from settings or use 'created_at_desc' as default
+      const orderParam = order || setting?.defaultOrder || 'created_at_desc';
+      
+      // Load contacts - we'll filter and sort them client-side
+      const data = await apiCall(`/api/contacts/fosse/?page=1&page_size=100`);
+      let contacts = data?.results || data?.contacts || [];
+      
+      // Apply forced filters if they exist
+      const forcedFilters = setting?.forcedFilters || {};
+      
+      // Filter contacts based on forced filters
+      contacts = contacts.filter((contact: any) => {
+        // Apply each filter
+        for (const [columnId, filterConfig] of Object.entries(forcedFilters)) {
+          const config = filterConfig as { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } };
+          
+          if ((config.type === 'defined' || config.type === 'open') && config.values && config.values.length > 0) {
+            // Multi-select filter (status, source, creator, etc.) - works for both 'defined' and 'open' types
+            const values = config.values;
+            const hasEmpty = values.includes('__empty__');
+            const regularValues = values.filter(v => v !== '__empty__');
+            
+            let matches = false;
+            
+            if (columnId === 'status') {
+              // If no regular values selected, only check empty option
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !contact.statusId;
+              } else {
+                // Check if contact matches regular values or empty option
+                matches = regularValues.includes(contact.statusId);
+                if (hasEmpty && !contact.statusId) matches = true;
+              }
+            } else if (columnId === 'source') {
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !contact.sourceId;
+              } else {
+                matches = regularValues.includes(contact.sourceId);
+                if (hasEmpty && !contact.sourceId) matches = true;
+              }
+            } else if (columnId === 'creator') {
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !contact.creatorId;
+              } else {
+                matches = regularValues.includes(contact.creatorId);
+                if (hasEmpty && !contact.creatorId) matches = true;
+              }
+            } else if (columnId === 'managerTeam') {
+              const contactTeamId = contact.managerTeamId;
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !contactTeamId;
+              } else {
+                matches = regularValues.includes(contactTeamId);
+                if (hasEmpty && !contactTeamId) matches = true;
+              }
+            } else if (columnId === 'previousStatus') {
+              const previousStatus = contact.previousStatus || '';
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !previousStatus;
+              } else {
+                matches = regularValues.includes(previousStatus);
+                if (hasEmpty && !previousStatus) matches = true;
+              }
+            } else if (columnId === 'previousTeleoperator') {
+              const previousTeleoperator = contact.previousTeleoperator || '';
+              if (regularValues.length === 0) {
+                matches = hasEmpty && !previousTeleoperator;
+              } else {
+                matches = regularValues.includes(previousTeleoperator);
+                if (hasEmpty && !previousTeleoperator) matches = true;
+              }
+            }
+            
+            if (!matches) return false;
+          } else if (config.type === 'open') {
+            // Text filter or date range filter
+            if (config.value !== undefined && config.value !== '') {
+              // Text filter (email, fullName, etc.)
+              const filterValue = config.value.toLowerCase();
+              
+              if (columnId === 'email') {
+                const email = (contact.email || '').toLowerCase();
+                if (!email.includes(filterValue)) return false;
+              } else if (columnId === 'fullName') {
+                const fullName = (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '').toLowerCase();
+                if (!fullName.includes(filterValue)) return false;
+              } else if (columnId === 'phone') {
+                const phone = (contact.phone || '').toString().replace(/\s/g, '');
+                const filterPhone = filterValue.replace(/\s/g, '');
+                if (!phone.includes(filterPhone)) return false;
+              } else if (columnId === 'mobile') {
+                const mobile = (contact.mobile || '').toString().replace(/\s/g, '');
+                const filterMobile = filterValue.replace(/\s/g, '');
+                if (!mobile.includes(filterMobile)) return false;
+              } else if (columnId === 'firstName') {
+                const firstName = (contact.firstName || '').toLowerCase();
+                if (!firstName.includes(filterValue)) return false;
+              } else if (columnId === 'lastName') {
+                const lastName = (contact.lastName || '').toLowerCase();
+                if (!lastName.includes(filterValue)) return false;
+              } else if (columnId === 'city') {
+                const city = (contact.city || '').toLowerCase();
+                if (!city.includes(filterValue)) return false;
+              } else if (columnId === 'address') {
+                const address = (contact.address || '').toLowerCase();
+                if (!address.includes(filterValue)) return false;
+              }
+            } else if (config.dateRange) {
+              // Date range filter
+              const dateRange = config.dateRange;
+              
+              if (columnId === 'createdAt' && dateRange.from) {
+                const contactDate = contact.createdAt ? new Date(contact.createdAt).getTime() : 0;
+                const fromDate = new Date(dateRange.from + 'T00:00:00').getTime();
+                if (contactDate < fromDate) return false;
+              }
+              if (columnId === 'createdAt' && dateRange.to) {
+                const contactDate = contact.createdAt ? new Date(contact.createdAt).getTime() : 0;
+                const toDate = new Date(dateRange.to + 'T23:59:59').getTime();
+                if (contactDate > toDate) return false;
+              }
+              if (columnId === 'updatedAt' && dateRange.from) {
+                const contactDate = contact.lastLogDate ? new Date(contact.lastLogDate).getTime() : (contact.updatedAt ? new Date(contact.updatedAt).getTime() : 0);
+                const fromDate = new Date(dateRange.from + 'T00:00:00').getTime();
+                if (contactDate < fromDate) return false;
+              }
+              if (columnId === 'updatedAt' && dateRange.to) {
+                const contactDate = contact.lastLogDate ? new Date(contact.lastLogDate).getTime() : (contact.updatedAt ? new Date(contact.updatedAt).getTime() : 0);
+                const toDate = new Date(dateRange.to + 'T23:59:59').getTime();
+                if (contactDate > toDate) return false;
+              }
+            }
+          }
+        }
+        
+        return true;
+      });
+      
+      // Sort contacts based on order setting
+      switch (orderParam) {
+        case 'created_at_asc':
+          contacts = [...contacts].sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return dateA - dateB;
+          });
+          break;
+        case 'created_at_desc':
+          contacts = [...contacts].sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return dateB - dateA;
+          });
+          break;
+        case 'updated_at_asc':
+          contacts = [...contacts].sort((a, b) => {
+            const dateA = a.lastLogDate ? new Date(a.lastLogDate).getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+            const dateB = b.lastLogDate ? new Date(b.lastLogDate).getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+            return dateA - dateB;
+          });
+          break;
+        case 'updated_at_desc':
+          contacts = [...contacts].sort((a, b) => {
+            const dateA = a.lastLogDate ? new Date(a.lastLogDate).getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+            const dateB = b.lastLogDate ? new Date(b.lastLogDate).getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+            return dateB - dateA;
+          });
+          break;
+        case 'email_asc':
+          contacts = [...contacts].sort((a, b) => {
+            const emailA = (a.email || '').trim().toLowerCase();
+            const emailB = (b.email || '').trim().toLowerCase();
+            // Empty emails go to the end
+            if (!emailA && !emailB) return 0;
+            if (!emailA) return 1;
+            if (!emailB) return -1;
+            return emailA.localeCompare(emailB, 'fr', { numeric: true, sensitivity: 'base' });
+          });
+          break;
+        default:
+          // Default: sort by creation date, most recent first (same as created_at_desc)
+          contacts = [...contacts].sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return dateB - dateA;
+          });
+      }
+      
+      setPreviewContacts(contacts.slice(0, 10)); // Show 10 contacts for preview
+    } catch (error: any) {
+      console.error('Error loading preview contacts:', error);
+      setPreviewContacts([]);
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, [settings, statuses, sources, users, teams]);
+
+  // Helper function to get column label
+  const getColumnLabel = (columnId: string) => {
+    const column = AVAILABLE_COLUMNS.find(col => col.id === columnId);
+    return column?.label || columnId;
+  };
+
+  // Helper function to truncate text
+  const truncateText = (text: string, maxLength: number = 20): string => {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+  };
+
+  // Helper function to determine if a column should use multi-select filter
+  const shouldUseMultiSelectFilter = (columnId: string): boolean => {
+    return ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam', 'previousStatus', 'previousTeleoperator'].includes(columnId);
+  };
+
+  const isDateColumn = (columnId: string): boolean => {
+    return ['createdAt', 'updatedAt', 'birthDate'].includes(columnId);
+  };
+
+  // Helper function to get filter options for preview
+  const getPreviewFilterOptions = (columnId: string, statusTypeFilter: 'lead' | 'client' = 'lead') => {
+    const options: Array<{ id: string; label: string }> = [];
+    
+    // Add empty option first
+    options.push({ id: '__empty__', label: '(Vides)' });
+    
+    switch (columnId) {
+      case 'status':
+        const statusOptions = statuses
+          .filter((status) => {
+            if (!status.id || status.id.trim() === '') return false;
+            return status.type === statusTypeFilter;
+          })
+          .map(status => ({
+            id: status.id,
+            label: status.name
+          }));
+        options.push(...statusOptions);
+        break;
+      case 'source':
+        const sourceOptions = sources.map(s => ({ id: s.id, label: s.name }));
+        options.push(...sourceOptions);
+        break;
+      case 'creator':
+        const creatorOptions = users.map(u => ({
+          id: u.id,
+          label: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`,
+        }));
+        options.push(...creatorOptions);
+        break;
+      case 'managerTeam':
+        const teamOptions = teams.map(t => ({ id: t.id, label: t.name }));
+        options.push(...teamOptions);
+        break;
+      case 'previousStatus':
+        // Show all statuses (both lead and client) for previous status filter
+        // Deduplicate by status name since multiple statuses might have the same name
+        const statusNameMap = new Map<string, { id: string; label: string }>();
+        statuses
+          .filter((status) => {
+            if (!status.id || status.id.trim() === '') return false;
+            return true; // Include all statuses
+          })
+          .forEach(status => {
+            // Use name as key, but if duplicate, append status ID to make it unique
+            const name = status.name;
+            if (!statusNameMap.has(name)) {
+              statusNameMap.set(name, {
+                id: name, // Use name since previousStatus stores the name, not ID
+                label: name
+              });
+            } else {
+              // If duplicate name exists, use name with status ID to make it unique
+              statusNameMap.set(`${name}_${status.id}`, {
+                id: name, // Still use name for filtering (stores name in DB)
+                label: `${name} (${status.id})` // Show both in label for clarity
+              });
+            }
+          });
+        options.push(...Array.from(statusNameMap.values()));
+        break;
+      case 'previousTeleoperator':
+        // Show all users for previous teleoperator filter
+        // Deduplicate by user name since multiple users might have the same name
+        const userNameMap = new Map<string, { id: string; label: string }>();
+        users.forEach(u => {
+          const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`;
+          if (!userNameMap.has(name)) {
+            userNameMap.set(name, {
+              id: name, // Use name since previousTeleoperator stores the name
+              label: name
+            });
+          } else {
+            // If duplicate name exists, use name with user ID to make it unique
+            userNameMap.set(`${name}_${u.id}`, {
+              id: name, // Still use name for filtering (stores name in DB)
+              label: `${name} (${u.id})` // Show both in label for clarity
+            });
+          }
+        });
+        options.push(...Array.from(userNameMap.values()));
+        break;
+      default:
+        break;
+    }
+    
+    return options;
+  };
+
+  // Helper function to render cell content (using same style as ContactList)
+  const renderPreviewCellContent = (contact: any, columnId: string) => {
+    switch (columnId) {
+      case 'id':
+        return <span className="contacts-table-id">{contact.id?.substring(0, 8) || '-'}</span>;
+      case 'fullName':
+        return <span>{truncateText(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-')}</span>;
+      case 'firstName':
+        return <span>{truncateText(contact.firstName || '-')}</span>;
+      case 'lastName':
+        return <span>{truncateText(contact.lastName || '-')}</span>;
+      case 'civility':
+        return <span>{contact.civility || '-'}</span>;
+      case 'phone':
+        return <span>{formatPhoneNumber(contact.phone) || '-'}</span>;
+      case 'mobile':
+        return <span>{formatPhoneNumber(contact.mobile) || '-'}</span>;
+      case 'email':
+        return <span className="contacts-table-email">{contact.email || '-'}</span>;
+      case 'status':
+        const status = statuses.find(s => s.id === contact.statusId);
+        return status ? (
+          <span 
+            className="contacts-status-badge"
+            style={{
+              backgroundColor: status.color || '#e5e7eb',
+              color: status.color ? '#000000' : '#374151'
+            }}
+          >
+                      {status.name}
+          </span>
+        ) : <span>-</span>;
+      case 'source':
+        return <span>{truncateText(contact.source || '-')}</span>;
+      case 'createdAt':
+        return (
+          <span>
+            {contact.createdAt 
+              ? new Date(contact.createdAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+              : '-'
+            }
+          </span>
+        );
+      case 'updatedAt':
+        return (
+          <span>
+            {contact.lastLogDate 
+              ? new Date(contact.lastLogDate).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+              : '-'
+            }
+          </span>
+        );
+      case 'birthDate':
+        return (
+          <span>
+            {contact.birthDate ? new Date(contact.birthDate).toLocaleDateString('fr-FR') : '-'}
+          </span>
+        );
+      case 'birthPlace':
+        return <span>{truncateText(contact.birthPlace || '-')}</span>;
+      case 'address':
+        return <span>{truncateText(contact.address || '-')}</span>;
+      case 'addressComplement':
+        return <span>{truncateText(contact.addressComplement || '-')}</span>;
+      case 'postalCode':
+        return <span>{contact.postalCode || '-'}</span>;
+      case 'city':
+        return <span>{truncateText(contact.city || '-')}</span>;
+      case 'nationality':
+        return <span>{truncateText(contact.nationality || '-')}</span>;
+      case 'campaign':
+        return <span>{truncateText(contact.campaign || '-')}</span>;
+      case 'teleoperator':
+        return <span>{truncateText(contact.managerName || contact.teleoperatorName || '-')}</span>;
+      case 'confirmateur':
+        return <span>{truncateText(contact.confirmateurName || '-')}</span>;
+      case 'creator':
+        const creator = users.find(u => u.id === contact.creatorId);
+        return (
+          <span>
+            {creator ? `${creator.firstName || ''} ${creator.lastName || ''}`.trim() || creator.username || '-' : '-'}
+          </span>
+        );
+      case 'managerTeam':
+        const team = teams.find(t => t.id === contact.managerTeamId);
+        return <span>{team?.name || '-'}</span>;
+      case 'notes':
+        return <span>{contact.notesCount > 0 ? `${contact.notesCount} note(s)` : '-'}</span>;
+      case 'previousStatus':
+        const previousStatus = contact.previousStatus;
+        if (!previousStatus) return <span>-</span>;
+        const prevStatus = statuses.find(s => s.name === previousStatus);
+        return prevStatus ? (
+          <span 
+            className="contacts-status-badge"
+            style={{
+              backgroundColor: prevStatus.color || '#e5e7eb',
+              color: prevStatus.color ? '#000000' : '#374151'
+            }}
+          >
+            {previousStatus}
+          </span>
+        ) : <span>{previousStatus}</span>;
+      case 'previousTeleoperator':
+        return <span>{truncateText(contact.previousTeleoperator || '-')}</span>;
+      default:
+        return <span>-</span>;
+    }
+  };
+
+  // Handle filter change for forced filters
+  const handleFilterChange = (roleId: string, columnId: string, filterType: 'open' | 'defined', values?: string[]) => {
+    const setting = settings.get(roleId);
+    const currentFilters = setting?.forcedFilters || {};
+    
+    if (filterType === 'open') {
+      // Set filter to open - include values if provided (for multi-select filters)
+      const newFilters = {
+        ...currentFilters,
+        [columnId]: values !== undefined && values.length > 0 
+          ? { type: 'open' as const, values }
+          : { type: 'open' as const }
+      };
+      if (setting) {
+        updateSettings(roleId, { forcedFilters: newFilters });
+      } else {
+        loadSettingForRole(roleId).then(() => {
+          updateSettings(roleId, { forcedFilters: newFilters });
+        });
+      }
+    } else if (filterType === 'defined' && values !== undefined) {
+      // Set filter to defined with values
+      const newFilters = {
+        ...currentFilters,
+        [columnId]: { type: 'defined' as const, values }
+      };
+      if (setting) {
+        updateSettings(roleId, { forcedFilters: newFilters });
+      } else {
+        loadSettingForRole(roleId).then(() => {
+          updateSettings(roleId, { forcedFilters: newFilters });
+        });
+      }
+    }
+  };
+
+  // Load preview when role is expanded or settings change
+  useEffect(() => {
+    if (expandedRole) {
+      // Always load preview contacts when a role is expanded, even if no columns are selected
+      // This allows users to see all columns and configure filters
+      const setting = settings.get(expandedRole);
+      loadPreviewContacts(expandedRole, [], setting?.defaultOrder);
+    } else {
+      setPreviewContacts([]);
+    }
+  }, [expandedRole, loadPreviewContacts, settings]);
+
+  // Sync scrollbars for preview table
+  useEffect(() => {
+    if (!expandedRole) return;
+
+    const wrapper = document.getElementById(`preview-scroll-wrapper-${expandedRole}`);
+    const topScrollbar = document.getElementById(`preview-scroll-top-${expandedRole}`);
+    const scrollContent = document.getElementById(`preview-scroll-content-${expandedRole}`);
+    
+    if (!wrapper || !topScrollbar || !scrollContent) return;
+
+    // Sync scrollbar width
+    const syncScrollbarWidth = () => {
+      scrollContent.style.width = wrapper.scrollWidth + 'px';
+    };
+    
+    // Sync scroll position from wrapper to top scrollbar
+    const syncScroll = () => {
+      topScrollbar.scrollLeft = wrapper.scrollLeft;
+    };
+    
+    // Sync scroll position from top scrollbar to wrapper
+    const syncScrollFromTop = () => {
+      wrapper.scrollLeft = topScrollbar.scrollLeft;
+    };
+
+    syncScrollbarWidth();
+    wrapper.addEventListener('scroll', syncScroll);
+    topScrollbar.addEventListener('scroll', syncScrollFromTop);
+    
+    // Sync on resize
+    const resizeObserver = new ResizeObserver(syncScrollbarWidth);
+    resizeObserver.observe(wrapper);
+
+    return () => {
+      wrapper.removeEventListener('scroll', syncScroll);
+      topScrollbar.removeEventListener('scroll', syncScrollFromTop);
+      resizeObserver.disconnect();
+    };
+  }, [expandedRole, previewContacts]);
+
   if (loading || rolesLoading || statusesLoading || sourcesLoading || usersLoading || teamsLoading) {
     return <LoadingIndicator />;
   }
 
   return (
     <div className="space-y-6">
+      {/* Role-specific Fosse Settings */}
+      <Card className="rounded-none">
+        <CardHeader>
+          <CardTitle>Paramètres Fosse par rôle</CardTitle>
+          <p className="text-sm text-slate-500 mt-2">
+            Configurez les colonnes forcées et les filtres pour chaque rôle sur la page Fosse.
+            Les colonnes forcées seront toujours visibles et ne pourront pas être masquées.
+            Les filtres forcés peuvent être ouverts (l'utilisateur peut filtrer) ou définis (valeurs prédéfinies).
+          </p>
+        </CardHeader>
+        <CardContent className="px-6 pr-0">
+          {roles.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              Aucun rôle disponible. Créez d'abord des rôles dans l'onglet Permissions.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {[...roles].reverse().map((role, index) => {
+                const setting = settings.get(role.id);
+                const isSaving = saving.get(role.id) || false;
+                const isExpanded = expandedRole === role.id;
+                const forcedColumns = setting?.forcedColumns || [];
+                const forcedFilters = setting?.forcedFilters || {};
+
+                return (
+                  <React.Fragment key={role.id}>
+                    {index > 0 && <Separator className="my-3" />}
+                    <Card className="border-2 border-slate-500 border-solid rounded-none shadow-md overflow-hidden">
+                    <CardHeader 
+                      className="p-4 gap-0 border-2 border-slate-600 border-solid rounded-none ml-0 mt-0 mb-0 mr-0 cursor-pointer hover:bg-slate-50 hover:border-slate-400 transition-all duration-200"
+                      onClick={() => setExpandedRole(isExpanded ? null : role.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <CardTitle 
+                          className="text-lg hover:text-slate-700 transition-colors"
+                        >
+                          {role.name}
+                        </CardTitle>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setExpandedRole(isExpanded ? null : role.id)}
+                        >
+                          {isExpanded ? 'Réduire' : 'Développer'}
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    {isExpanded && (
+                      <CardContent className="space-y-6 px-2 pb-2">
+                        {/* Forced Columns Section */}
+                        <div className="p-4">
+                          <h3 className="text-sm font-semibold mb-3">Colonnes forcées</h3>
+                          <p className="text-sm text-slate-500 mb-4">
+                            Sélectionnez les colonnes qui seront toujours visibles sur la page Fosse pour ce rôle.
+                          </p>
+                          <Popover 
+                            open={openColumnsPopover === role.id}
+                            onOpenChange={(open) => {
+                              setOpenColumnsPopover(open ? role.id : null);
+                              if (!open) {
+                                setColumnSearchTerm('');
+                              }
+                            }}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="w-full justify-between"
+                                disabled={isSaving}
+                              >
+                                <span className={forcedColumns.length === 0 ? 'text-muted-foreground' : ''}>
+                                  {forcedColumns.length === 0 
+                                    ? 'Sélectionner les colonnes...' 
+                                    : `${forcedColumns.length} colonne${forcedColumns.length > 1 ? 's' : ''} sélectionnée${forcedColumns.length > 1 ? 's' : ''}`
+                                  }
+                                </span>
+                                <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-80 p-4" align="start" style={{ zIndex: 10001 }}>
+                              <div className="flex flex-col gap-3">
+                                <Label className="text-sm font-semibold">
+                                  Sélectionner les colonnes
+                                </Label>
+                                <div className="border-b border-border pb-2 space-y-2">
+                                  <div className="relative">
+                                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                                    <Input
+                                      className="pl-8 h-8 text-sm"
+                                      placeholder="Rechercher..."
+                                      value={columnSearchTerm}
+                                      onChange={(e) => setColumnSearchTerm(e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onKeyDown={(e) => e.stopPropagation()}
+                                      autoFocus
+                                    />
+                                  </div>
+                                  {(() => {
+                                    const searchTerm = columnSearchTerm.toLowerCase();
+                                    const filteredOptions = searchTerm
+                                      ? AVAILABLE_COLUMNS.filter(col =>
+                                          col.label.toLowerCase().includes(searchTerm)
+                                        )
+                                      : AVAILABLE_COLUMNS;
+                                    const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(col => forcedColumns.includes(col.id));
+                                    
+                                    return (
+                                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                        <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const filteredIds = filteredOptions.map(col => col.id);
+                                            let newColumns: string[];
+                                            if (allFilteredSelected) {
+                                              newColumns = forcedColumns.filter(id => !filteredIds.includes(id));
+                                            } else {
+                                              newColumns = [...new Set([...forcedColumns, ...filteredIds])];
+                                            }
+                                            if (setting) {
+                                              updateSettings(role.id, { forcedColumns: newColumns });
+                                            } else {
+                                              loadSettingForRole(role.id).then(() => {
+                                                updateSettings(role.id, { forcedColumns: newColumns });
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                        </Button>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                                <div 
+                                  className="contacts-column-filter-scroll overflow-y-auto overflow-x-hidden" 
+                                  style={{ height: '150px' }}
+                                >
+                                  {(() => {
+                                    const searchTerm = columnSearchTerm.toLowerCase();
+                                    const filteredOptions = searchTerm
+                                      ? AVAILABLE_COLUMNS.filter(col =>
+                                          col.label.toLowerCase().includes(searchTerm)
+                                        )
+                                      : AVAILABLE_COLUMNS;
+                                    
+                                    if (filteredOptions.length === 0) {
+                                      return (
+                                        <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                          Aucun résultat
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    return filteredOptions.map(column => {
+                              const isChecked = forcedColumns.includes(column.id);
+                                      
+                              return (
+                                        <div
+                                          key={column.id}
+                                          className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                          onClick={() => {
+                                            const newColumns = isChecked
+                                              ? forcedColumns.filter(id => id !== column.id)
+                                              : [...forcedColumns, column.id];
+                                      if (setting) {
+                                              updateSettings(role.id, { forcedColumns: newColumns });
+                                      } else {
+                                        loadSettingForRole(role.id).then(() => {
+                                                updateSettings(role.id, { forcedColumns: newColumns });
+                                        });
+                                      }
+                                    }}
+                                        >
+                                          <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+                                            {isChecked && (
+                                              <Check className="h-4 w-4" />
+                                            )}
+                                          </span>
+                                          <span>{column.label}</span>
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                          
+                          {/* Preview Table */}
+                          {(
+                            <div className="mt-6 border border-slate-200 rounded-none">
+                              <div className="p-3 bg-slate-50 border-b border-slate-200">
+                                <h4 className="text-xs font-semibold text-slate-700">Aperçu des colonnes</h4>
+                                <p className="text-xs text-slate-500 mt-1">
+                                  Toutes les colonnes sont affichées. Les colonnes en surbrillance ne seront pas visibles pour ce rôle mais vous pouvez configurer des filtres forcés dessus.
+                                </p>
+                              </div>
+                              {loadingPreview ? (
+                                <div className="p-8 text-center text-sm text-slate-500">
+                                  Chargement de l'aperçu...
+                                </div>
+                              ) : (
+                                <div style={{ position: 'relative', width: '100%' }}>
+                                  {/* Horizontal scrollbar on top */}
+                                  <div 
+                                    id={`preview-scroll-top-${role.id}`}
+                                    style={{
+                                      width: '100%',
+                                      height: '12px',
+                                      overflowX: 'auto',
+                                      overflowY: 'hidden',
+                                      marginBottom: '0',
+                                      backgroundColor: '#f8fafc',
+                                      borderBottom: '1px solid #e2e8f0'
+                                    }}
+                                  >
+                                    <div id={`preview-scroll-content-${role.id}`} style={{ height: '1px' }}></div>
+                                  </div>
+                                  {/* Table wrapper with scrollbars */}
+                                  <div 
+                                    id={`preview-scroll-wrapper-${role.id}`}
+                                    className="contacts-table-wrapper" 
+                                    style={{ 
+                                      height: '300px', 
+                                      maxHeight: '300px',
+                                      overflowX: 'auto',
+                                      overflowY: 'auto',
+                                      position: 'relative'
+                                    }}
+                                    onScroll={(e) => {
+                                      // Sync top scrollbar with table scroll
+                                      const topScrollbar = document.getElementById(`preview-scroll-top-${role.id}`);
+                                      if (topScrollbar) {
+                                        topScrollbar.scrollLeft = e.currentTarget.scrollLeft;
+                                      }
+                                    }}
+                                  >
+                                    <table className="contacts-table">
+                                    <thead>
+                                      <tr>
+                                        {AVAILABLE_COLUMNS.map((column) => {
+                                          const columnId = column.id;
+                                          const isColumnEnabled = forcedColumns.includes(columnId);
+                                          const filter = forcedFilters[columnId];
+                                          const hasFilter = filter && (
+                                            filter.type === 'defined' 
+                                              ? (filter.values?.length || 0) > 0 
+                                              : filter.type === 'open' && (
+                                                (filter.value !== undefined && filter.value !== '') ||
+                                                (filter.dateRange !== undefined && (filter.dateRange.from || filter.dateRange.to))
+                                              )
+                                          );
+                                          
+                                          return (
+                                            <th 
+                                              key={columnId} 
+                                              style={{ 
+                                                position: 'relative',
+                                                backgroundColor: isColumnEnabled ? '#f8fafc' : '#fef3c7',
+                                                opacity: isColumnEnabled ? 1 : 0.8
+                                              }}
+                                            >
+                                              <Popover 
+                                                open={openFilterColumn === `${role.id}-${columnId}`}
+                                                onOpenChange={(open) => {
+                                                  setOpenFilterColumn(open ? `${role.id}-${columnId}` : null);
+                                                  if (open) {
+                                                    // Initialize pending filter values when opening
+                                                    if (isDateColumn(columnId)) {
+                                                      const setting = settings.get(role.id);
+                                                      const currentFilters = setting?.forcedFilters || {};
+                                                      const filter = currentFilters[columnId];
+                                                      // Load existing date range if available
+                                                      const existingRange = filter?.dateRange || { from: '', to: '' };
+                                                      setPendingDateRangeFilters(prev => ({
+                                                        ...prev,
+                                                        [`${role.id}-${columnId}`]: existingRange
+                                                      }));
+                                                    } else if (!shouldUseMultiSelectFilter(columnId)) {
+                                                      const setting = settings.get(role.id);
+                                                      const currentFilters = setting?.forcedFilters || {};
+                                                      const filter = currentFilters[columnId];
+                                                      // Load existing filter value if available
+                                                      const existingValue = filter?.value || '';
+                                                      setPendingTextFilterValues(prev => ({
+                                                        ...prev,
+                                                        [`${role.id}-${columnId}`]: existingValue
+                                                      }));
+                                                    }
+                                                  } else {
+                                                    // Clear search terms and pending values when closing
+                                                    setColumnFilterSearchTerms(prev => {
+                                                      const newTerms = { ...prev };
+                                                      delete newTerms[`${role.id}-${columnId}`];
+                                                      return newTerms;
+                                                    });
+                                                    setPendingTextFilterValues(prev => {
+                                                      const newValues = { ...prev };
+                                                      delete newValues[`${role.id}-${columnId}`];
+                                                      return newValues;
+                                                    });
+                                                    setPendingDateRangeFilters(prev => {
+                                                      const newValues = { ...prev };
+                                                      delete newValues[`${role.id}-${columnId}`];
+                                                      return newValues;
+                                                    });
+                                                    if (columnId === 'status') {
+                                                      setStatusColumnFilterType('lead');
+                                                    }
+                                                  }
+                                                }}
+                                              >
+                                                <PopoverTrigger asChild>
+                                                  <button 
+                                                    className="contacts-column-header-button"
+                                                    style={{
+                                                      backgroundColor: isColumnEnabled ? '#f1f5f9' : '#fde68a',
+                                                      borderColor: isColumnEnabled ? '#cbd5e1' : '#f59e0b',
+                                                      opacity: isColumnEnabled ? 1 : 0.9
+                                                    }}
+                                                  >
+                                                    <span>{getColumnLabel(columnId)}</span>
+                                                    {!isColumnEnabled && (
+                                                      <span className="text-xs ml-1" style={{ color: '#92400e' }}>(Masquée)</span>
+                                                    )}
+                                                    {hasFilter && (
+                                                      <Filter className="w-3 h-3" style={{ color: '#3b82f6' }} />
+                                                    )}
+                                                  </button>
+                                                </PopoverTrigger>
+                                                <PopoverContent 
+                                                  className="w-80 p-4" 
+                                                  align="start"
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  style={{ zIndex: 10001 }}
+                                                >
+                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                      <Label className="text-sm font-semibold">
+                                                        Filtrer par {getColumnLabel(columnId)}
+                                  </Label>
+                                                    </div>
+                                                    {shouldUseMultiSelectFilter(columnId) ? (
+                                                      <>
+                                                        {columnId === 'status' && (
+                                                          <div className="mb-2 flex gap-2">
+                                                            <Button
+                                                              type="button"
+                                                              variant={statusColumnFilterType === 'lead' ? 'default' : 'outline'}
+                                                              size="sm"
+                                                              className="flex-1 h-8 text-xs"
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setStatusColumnFilterType('lead');
+                                                              }}
+                                                            >
+                                                              Lead
+                                                            </Button>
+                                                            <Button
+                                                              type="button"
+                                                              variant={statusColumnFilterType === 'client' ? 'default' : 'outline'}
+                                                              size="sm"
+                                                              className="flex-1 h-8 text-xs"
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setStatusColumnFilterType('client');
+                                                              }}
+                                                            >
+                                                              Client
+                                                            </Button>
+                                                          </div>
+                                                        )}
+                                                        <div className="mb-2 border-b border-border pb-2 space-y-2">
+                                                          <div className="relative">
+                                                            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                                                            <Input
+                                                              className="pl-8 h-8 text-sm"
+                                                              placeholder="Rechercher..."
+                                                              value={columnFilterSearchTerms[`${role.id}-${columnId}`] || ''}
+                                                              onChange={(e) => {
+                                                                setColumnFilterSearchTerms(prev => ({
+                                                                  ...prev,
+                                                                  [`${role.id}-${columnId}`]: e.target.value
+                                                                }));
+                                                              }}
+                                                              onClick={(e) => e.stopPropagation()}
+                                                              onKeyDown={(e) => e.stopPropagation()}
+                                                              autoFocus
+                                                            />
+                                                          </div>
+                                                          {(() => {
+                                                            const searchTerm = (columnFilterSearchTerms[`${role.id}-${columnId}`] || '').toLowerCase();
+                                                            const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                                            const allOptions = getPreviewFilterOptions(columnId, statusTypeFilter);
+                                                            const emptyOption = allOptions.find(opt => opt.id === '__empty__');
+                                                            const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
+                                                            const filteredOtherOptions = searchTerm
+                                                              ? otherOptions.filter(option =>
+                                                                  option.label.toLowerCase().includes(searchTerm)
+                                                                )
+                                                              : otherOptions;
+                                                            const filteredOptions = emptyOption 
+                                                              ? [emptyOption, ...filteredOtherOptions]
+                                                              : filteredOtherOptions;
+                                                            
+                                                            const currentFilter = forcedFilters[columnId];
+                                                            const selectedValues = currentFilter?.values || [];
+                                                            const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
+                                                            
+                                                            return (
+                                                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                                                <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
+                                                                <Button
+                                                                  type="button"
+                                                                  variant="ghost"
+                                                                  size="sm"
+                                                                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                                                  onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const filteredIds = filteredOptions.map(opt => opt.id);
+                                                                    let newValues: string[];
+                                                                    if (allFilteredSelected) {
+                                                                      newValues = selectedValues.filter(id => !filteredIds.includes(id));
+                                                                    } else {
+                                                                      newValues = [...new Set([...selectedValues, ...filteredIds])];
+                                                                    }
+                                                                    handleFilterChange(role.id, columnId, 'defined', newValues);
+                                                                  }}
+                                                                >
+                                                                  {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                                                </Button>
+                                </div>
+                                                            );
+                                                          })()}
+                                                        </div>
+                                                        <div 
+                                                          className="contacts-column-filter-scroll overflow-y-auto overflow-x-hidden" 
+                                                          style={{ height: '150px' }}
+                                                        >
+                                                          {(() => {
+                                                            const searchTerm = (columnFilterSearchTerms[`${role.id}-${columnId}`] || '').toLowerCase();
+                                                            const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                                            const allOptions = getPreviewFilterOptions(columnId, statusTypeFilter);
+                                                            const emptyOption = allOptions.find(opt => opt.id === '__empty__');
+                                                            const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
+                                                            const filteredOtherOptions = searchTerm
+                                                              ? otherOptions.filter(option =>
+                                                                  option.label.toLowerCase().includes(searchTerm)
+                                                                )
+                                                              : otherOptions;
+                                                            const filteredOptions = emptyOption 
+                                                              ? [emptyOption, ...filteredOtherOptions]
+                                                              : filteredOtherOptions;
+                                                            
+                                                            if (filteredOptions.length === 0) {
+                                                              return (
+                                                                <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                                                  Aucun résultat
+                                                                </div>
+                                                              );
+                                                            }
+                                                            
+                                                            const currentFilter = forcedFilters[columnId];
+                                                            const selectedValues = currentFilter?.values || [];
+                                                            
+                                                            return filteredOptions.map((option, index) => {
+                                                              const isChecked = selectedValues.includes(option.id);
+                                                              // Use a combination of option.id and index to ensure unique keys
+                                                              const uniqueKey = `${option.id}_${index}_${columnId}`;
+                                                              
+                                                              return (
+                                                                <div
+                                                                  key={uniqueKey}
+                                                                  className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                                                  onClick={() => {
+                                                                    let newValues: string[];
+                                                                    if (isChecked) {
+                                                                      newValues = selectedValues.filter(id => id !== option.id);
+                                                                    } else {
+                                                                      newValues = [...selectedValues, option.id];
+                                                                    }
+                                                                    handleFilterChange(role.id, columnId, 'defined', newValues);
+                                                                  }}
+                                                                >
+                                                                  <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+                                                                    {isChecked && (
+                                                                      <Check className="h-4 w-4" />
+                                                                    )}
+                                                                  </span>
+                                                                  {option.id === '__empty__' ? (
+                                                                    <span className="text-muted-foreground italic">{option.label}</span>
+                                                                  ) : columnId === 'status' ? (
+                                                                    <span 
+                                                                      className="inline-block px-2 py-1 rounded text-sm"
+                                                                      style={{
+                                                                        backgroundColor: statuses.find(s => s.id === option.id)?.color || '#e5e7eb',
+                                                                        color: statuses.find(s => s.id === option.id)?.color ? '#000000' : '#374151'
+                                                                      }}
+                                                                    >
+                                                                      {option.label}
+                                                                    </span>
+                                                                  ) : columnId === 'previousStatus' ? (
+                                                                    <span 
+                                                                      className="inline-block px-2 py-1 rounded text-sm"
+                                                                      style={{
+                                                                        backgroundColor: statuses.find(s => s.name === option.id)?.color || '#e5e7eb',
+                                                                        color: statuses.find(s => s.name === option.id)?.color ? '#000000' : '#374151'
+                                                                      }}
+                                                                    >
+                                                                      {option.label}
+                                                                    </span>
+                                                                  ) : (
+                                                                    <span>{option.label}</span>
+                                                                  )}
+                                                                </div>
+                                                              );
+                                                            });
+                                                          })()}
+                                                        </div>
+                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+                                                          <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              // Reset filter - remove it from forced filters
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const newFilters = { ...currentFilters };
+                                                              delete newFilters[columnId];
+                                                              if (setting) {
+                                                                updateSettings(role.id, { forcedFilters: newFilters });
+                                                              } else {
+                                                                loadSettingForRole(role.id).then(() => {
+                                                                  updateSettings(role.id, { forcedFilters: newFilters });
+                                                                });
+                                                              }
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                            disabled={(() => {
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              return !currentFilters[columnId];
+                                                            })()}
+                                                          >
+                                                            Réinitialiser
+                                                          </Button>
+                                                          <Button
+                                                            variant="default"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                          >
+                                                            Appliquer
+                                                          </Button>
+                                                        </div>
+                                                      </>
+                                                    ) : isDateColumn(columnId) ? (
+                                                      <>
+                                                        <div 
+                                                          style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
+                                                          onClick={(e) => e.stopPropagation()}
+                                                          onPointerDown={(e) => e.stopPropagation()}
+                                                        >
+                                                          <div 
+                                                            style={{ position: 'relative', zIndex: 1 }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onPointerDown={(e) => e.stopPropagation()}
+                                                          >
+                                                            <Label className="text-xs text-slate-600 mb-1 block">Du</Label>
+                                                            <DateInput
+                                                              value={(() => {
+                                                                const pendingValue = pendingDateRangeFilters[`${role.id}-${columnId}`];
+                                                                const setting = settings.get(role.id);
+                                                                const currentFilters = setting?.forcedFilters || {};
+                                                                const currentFilter = currentFilters[columnId];
+                                                                if (pendingValue?.from !== undefined) {
+                                                                  return pendingValue.from || '';
+                                                                }
+                                                                if (currentFilter?.dateRange?.from) {
+                                                                  return currentFilter.dateRange.from;
+                                                                }
+                                                                return '';
+                                                              })()}
+                                                              onChange={(value) => {
+                                                                // Get current pending state first, then update only the 'from' field
+                                                                setPendingDateRangeFilters(prev => {
+                                                                  const currentPending = prev[`${role.id}-${columnId}`] || {};
+                                                                  const setting = settings.get(role.id);
+                                                                  const currentFilters = setting?.forcedFilters || {};
+                                                                  const currentFilter = currentFilters[columnId];
+                                                                  const existingTo = currentPending.to !== undefined 
+                                                                    ? currentPending.to 
+                                                                    : (currentFilter?.dateRange?.to || '');
+                                                                  
+                                                                  return {
+                                                                    ...prev,
+                                                                    [`${role.id}-${columnId}`]: {
+                                                                      from: value,
+                                                                      to: existingTo
+                                                                    }
+                                                                  };
+                                                                });
+                                                              }}
+                                                              className="w-full"
+                                                              autoInitialize={false}
+                                                            />
+                                                          </div>
+                                                          <div 
+                                                            style={{ position: 'relative', zIndex: 1 }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onPointerDown={(e) => e.stopPropagation()}
+                                                          >
+                                                            <Label className="text-xs text-slate-600 mb-1 block">Au</Label>
+                                                            <DateInput
+                                                              value={(() => {
+                                                                const pendingValue = pendingDateRangeFilters[`${role.id}-${columnId}`];
+                                                                const setting = settings.get(role.id);
+                                                                const currentFilters = setting?.forcedFilters || {};
+                                                                const currentFilter = currentFilters[columnId];
+                                                                if (pendingValue?.to !== undefined) {
+                                                                  return pendingValue.to || '';
+                                                                }
+                                                                if (currentFilter?.dateRange?.to) {
+                                                                  return currentFilter.dateRange.to;
+                                                                }
+                                                                return '';
+                                                              })()}
+                                                              onChange={(value) => {
+                                                                // Get current pending state first, then update only the 'to' field
+                                                                setPendingDateRangeFilters(prev => {
+                                                                  const currentPending = prev[`${role.id}-${columnId}`] || {};
+                                                                  const setting = settings.get(role.id);
+                                                                  const currentFilters = setting?.forcedFilters || {};
+                                                                  const currentFilter = currentFilters[columnId];
+                                                                  const existingFrom = currentPending.from !== undefined 
+                                                                    ? currentPending.from 
+                                                                    : (currentFilter?.dateRange?.from || '');
+                                                                  
+                                                                  return {
+                                                                    ...prev,
+                                                                    [`${role.id}-${columnId}`]: {
+                                                                      from: existingFrom,
+                                                                      to: value
+                                                                    }
+                                                                  };
+                                                                });
+                                                              }}
+                                                              className="w-full"
+                                                              autoInitialize={false}
+                                                            />
+                                                          </div>
+                                                        </div>
+                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+                                                          <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              // Reset filter - remove it from forced filters
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const newFilters = { ...currentFilters };
+                                                              delete newFilters[columnId];
+                                                              // Clear pending date range
+                                                              setPendingDateRangeFilters(prev => {
+                                                                const newValues = { ...prev };
+                                                                delete newValues[`${role.id}-${columnId}`];
+                                                                return newValues;
+                                                              });
+                                                              if (setting) {
+                                                                updateSettings(role.id, { forcedFilters: newFilters });
+                                                              } else {
+                                                                loadSettingForRole(role.id).then(() => {
+                                                                  updateSettings(role.id, { forcedFilters: newFilters });
+                                                                });
+                                                              }
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                            disabled={(() => {
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const currentFilter = currentFilters[columnId];
+                                                              const hasFilter = currentFilter !== undefined;
+                                                              const pendingRange = pendingDateRangeFilters[`${role.id}-${columnId}`];
+                                                              const hasPendingRange = pendingRange && (pendingRange.from || pendingRange.to);
+                                                              return !hasFilter && !hasPendingRange;
+                                                            })()}
+                                                          >
+                                                            Réinitialiser
+                                                          </Button>
+                                                          <Button
+                                                            variant="default"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              // Apply filter - set to 'open' type with the date range
+                                                              const pendingRange = pendingDateRangeFilters[`${role.id}-${columnId}`] || {};
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const dateRange = {
+                                                                from: pendingRange.from?.trim() || undefined,
+                                                                to: pendingRange.to?.trim() || undefined,
+                                                              };
+                                                              
+                                                              const newFilters = {
+                                                                ...currentFilters,
+                                                                [columnId]: {
+                                                                  type: 'open' as const,
+                                                                  dateRange: (dateRange.from || dateRange.to) ? dateRange : undefined,
+                                                                },
+                                                              };
+                                                              
+                                                              if (setting) {
+                                                                updateSettings(role.id, { forcedFilters: newFilters });
+                                                              } else {
+                                                                loadSettingForRole(role.id).then(() => {
+                                                                  updateSettings(role.id, { forcedFilters: newFilters });
+                                                                });
+                                                              }
+                                                              
+                                                              // Clear pending date range
+                                                              setPendingDateRangeFilters(prev => {
+                                                                const newValues = { ...prev };
+                                                                delete newValues[`${role.id}-${columnId}`];
+                                                                return newValues;
+                                                              });
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                            disabled={(() => {
+                                                              const pendingRange = pendingDateRangeFilters[`${role.id}-${columnId}`] || {};
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const currentFilter = currentFilters[columnId];
+                                                              const currentRange = currentFilter?.dateRange || {};
+                                                              const pendingFrom = pendingRange.from?.trim() || '';
+                                                              const pendingTo = pendingRange.to?.trim() || '';
+                                                              const currentFrom = currentRange.from?.trim() || '';
+                                                              const currentTo = currentRange.to?.trim() || '';
+                                                              return pendingFrom === currentFrom && pendingTo === currentTo;
+                                                            })()}
+                                                          >
+                                                            Appliquer
+                                                          </Button>
+                                                        </div>
+                                                      </>
+                                                    ) : (
+                                                      <>
+                                                        <Input
+                                                          type="text"
+                                                          placeholder={`Rechercher dans ${getColumnLabel(columnId).toLowerCase()}...`}
+                                                          autoFocus
+                                                          value={pendingTextFilterValues[`${role.id}-${columnId}`] || ''}
+                                                          onChange={(e) => {
+                                                            setPendingTextFilterValues(prev => ({
+                                                              ...prev,
+                                                              [`${role.id}-${columnId}`]: e.target.value
+                                                            }));
+                                                          }}
+                                                          onClick={(e) => e.stopPropagation()}
+                                                          onKeyDown={(e) => e.stopPropagation()}
+                                                        />
+                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+                                                          <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              // Reset filter - remove it from forced filters
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const newFilters = { ...currentFilters };
+                                                              delete newFilters[columnId];
+                                                              // Clear pending value
+                                                              setPendingTextFilterValues(prev => {
+                                                                const newValues = { ...prev };
+                                                                delete newValues[`${role.id}-${columnId}`];
+                                                                return newValues;
+                                                              });
+                                                              if (setting) {
+                                                                updateSettings(role.id, { forcedFilters: newFilters });
+                                                              } else {
+                                                                loadSettingForRole(role.id).then(() => {
+                                                                  updateSettings(role.id, { forcedFilters: newFilters });
+                                                                });
+                                                              }
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                            disabled={(() => {
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const hasFilter = currentFilters[columnId] !== undefined;
+                                                              const hasPendingValue = pendingTextFilterValues[`${role.id}-${columnId}`] !== undefined && pendingTextFilterValues[`${role.id}-${columnId}`] !== '';
+                                                              return !hasFilter && !hasPendingValue;
+                                                            })()}
+                                                          >
+                                                            Réinitialiser
+                                                          </Button>
+                                                          <Button
+                                                            variant="default"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              // Apply filter - set to 'open' type with the text value
+                                                              const textValue = pendingTextFilterValues[`${role.id}-${columnId}`] || '';
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const newFilters = {
+                                                                ...currentFilters,
+                                                                [columnId]: {
+                                                                  type: 'open' as const,
+                                                                  value: textValue.trim() || undefined, // Store text value if provided
+                                                                },
+                                                              };
+                                                              
+                                                              if (setting) {
+                                                                updateSettings(role.id, { forcedFilters: newFilters });
+                                                              } else {
+                                                                loadSettingForRole(role.id).then(() => {
+                                                                  updateSettings(role.id, { forcedFilters: newFilters });
+                                                                });
+                                                              }
+                                                              
+                                                              // Clear pending value
+                                                              setPendingTextFilterValues(prev => {
+                                                                const newValues = { ...prev };
+                                                                delete newValues[`${role.id}-${columnId}`];
+                                                                return newValues;
+                                                              });
+                                                              setOpenFilterColumn(null);
+                                                            }}
+                                                            disabled={(() => {
+                                                              const textValue = pendingTextFilterValues[`${role.id}-${columnId}`] || '';
+                                                              const setting = settings.get(role.id);
+                                                              const currentFilters = setting?.forcedFilters || {};
+                                                              const currentFilter = currentFilters[columnId];
+                                                              const currentValue = currentFilter?.value || '';
+                                                              return textValue.trim() === currentValue.trim();
+                                                            })()}
+                                                          >
+                                                            Appliquer
+                                                          </Button>
+                                                        </div>
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                </PopoverContent>
+                                              </Popover>
+                                            </th>
+                              );
+                            })}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {previewContacts.length === 0 ? (
+                                        <tr>
+                                          <td 
+                                            colSpan={AVAILABLE_COLUMNS.length}
+                                            className="p-8 text-center text-sm text-slate-500"
+                                            style={{ backgroundColor: 'transparent' }}
+                                          >
+                                            Aucun contact disponible pour l'aperçu
+                                          </td>
+                                        </tr>
+                                      ) : (
+                                        previewContacts.map((contact) => (
+                                          <tr key={contact.id}>
+                                            {AVAILABLE_COLUMNS.map((column) => {
+                                              const columnId = column.id;
+                                              const isColumnEnabled = forcedColumns.includes(columnId);
+                                              return (
+                                                <td 
+                                                  key={columnId}
+                                                  style={{
+                                                    backgroundColor: isColumnEnabled ? 'transparent' : '#fef3c7',
+                                                    opacity: isColumnEnabled ? 1 : 0.7
+                                                  }}
+                                                >
+                                                  {renderPreviewCellContent(contact, columnId)}
+                                                </td>
+                                              );
+                                            })}
+                                          </tr>
+                                        ))
+                                      )}
+                                    </tbody>
+                                  </table>
+                          </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <Separator />
+
+                        {/* Default Order Section */}
+                        <div className="p-4">
+                          <h3 className="text-sm font-semibold mb-3">Ordre des contacts</h3>
+                          <p className="text-sm text-slate-500 mb-4">
+                            Choisissez comment les contacts seront organisés sur la page Fosse pour ce rôle. Cet ordre s'applique également à l'aperçu ci-dessus.
+                          </p>
+                          <div className="flex items-center space-x-4">
+                            <Select
+                              value={setting?.defaultOrder || 'created_at_desc'}
+                              disabled={isSaving || !setting}
+                              onValueChange={(value: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc') => {
+                                if (setting) {
+                                  updateSettings(role.id, { defaultOrder: value });
+                                  // Reload preview with new order (use 'created_at_desc' if 'none' is selected)
+                                  const orderForPreview = value === 'none' ? 'created_at_desc' : value;
+                                  loadPreviewContacts(role.id, [], orderForPreview);
+                                } else {
+                                  loadSettingForRole(role.id).then(() => {
+                                    updateSettings(role.id, { defaultOrder: value });
+                                    // Reload preview with new order (use 'created_at_desc' if 'none' is selected)
+                                    const orderForPreview = value === 'none' ? 'created_at_desc' : value;
+                                    loadPreviewContacts(role.id, [], orderForPreview);
+                                  });
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="w-[300px]">
+                                <SelectValue placeholder="Sélectionner un ordre" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Non défini (personnalisable)</SelectItem>
+                                <SelectItem value="created_at_asc">Date de création (ancien à nouveau)</SelectItem>
+                                <SelectItem value="created_at_desc">Date de création (nouveau à ancien)</SelectItem>
+                                <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
+                                <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
+                                <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                      </CardContent>
+                    )}
+                  </Card>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* General Fosse Settings - Default Status */}
       <Card className="rounded-none">
         <CardHeader>
@@ -505,7 +1984,7 @@ export function FosseSettingsTab() {
             </div>
           ) : (
             <div className="flex items-center space-x-4">
-              <Select
+                                    <Select
                 value={fosseDefaultStatusId || 'none'}
                 disabled={savingFosseDefaults}
                 onValueChange={(value) => {
@@ -514,233 +1993,19 @@ export function FosseSettingsTab() {
               >
                 <SelectTrigger className="w-[300px]">
                   <SelectValue placeholder="Sélectionner un statut" />
-                </SelectTrigger>
-                <SelectContent>
+                                      </SelectTrigger>
+                                      <SelectContent>
                   <SelectItem value="none">Aucun (désactiver)</SelectItem>
                   {statuses.map((status) => (
                     <SelectItem key={status.id} value={status.id}>
                       {status.name}
                     </SelectItem>
                   ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Role-specific Fosse Settings */}
-      <Card className="rounded-none">
-        <CardHeader>
-          <CardTitle>Paramètres Fosse par rôle</CardTitle>
-          <p className="text-sm text-slate-500 mt-2">
-            Configurez les colonnes forcées et les filtres pour chaque rôle sur la page Fosse.
-            Les colonnes forcées seront toujours visibles et ne pourront pas être masquées.
-            Les filtres forcés peuvent être ouverts (l'utilisateur peut filtrer) ou définis (valeurs prédéfinies).
-          </p>
-        </CardHeader>
-        <CardContent>
-          {roles.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              Aucun rôle disponible. Créez d'abord des rôles dans l'onglet Permissions.
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {roles.map((role) => {
-                const setting = settings.get(role.id);
-                const isSaving = saving.get(role.id) || false;
-                const isExpanded = expandedRole === role.id;
-                const forcedColumns = setting?.forcedColumns || [];
-                const forcedFilters = setting?.forcedFilters || {};
-
-                return (
-                  <Card key={role.id} className="border-2 border-slate-300 rounded-none">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg">{role.name}</CardTitle>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setExpandedRole(isExpanded ? null : role.id)}
-                        >
-                          {isExpanded ? 'Réduire' : 'Développer'}
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    {isExpanded && (
-                      <CardContent className="space-y-6">
-                        {/* Forced Columns Section */}
-                        <div>
-                          <h3 className="text-sm font-semibold mb-3">Colonnes forcées</h3>
-                          <p className="text-sm text-slate-500 mb-4">
-                            Sélectionnez les colonnes qui seront toujours visibles sur la page Fosse pour ce rôle.
-                          </p>
-                          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                            {AVAILABLE_COLUMNS.map((column) => {
-                              const isChecked = forcedColumns.includes(column.id);
-                              return (
-                                <div key={column.id} className="flex items-center space-x-3">
-                                  <Checkbox
-                                    id={`${role.id}-column-${column.id}`}
-                                    checked={isChecked}
-                                    disabled={isSaving}
-                                    onCheckedChange={() => {
-                                      if (setting) {
-                                        toggleColumn(role.id, column.id);
-                                      } else {
-                                        loadSettingForRole(role.id).then(() => {
-                                          toggleColumn(role.id, column.id);
-                                        });
-                                      }
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`${role.id}-column-${column.id}`}
-                                    className="text-sm font-normal cursor-pointer"
-                                  >
-                                    {column.label}
-                                  </Label>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        <Separator />
-
-                        {/* Default Order Section */}
-                        <div>
-                          <h3 className="text-sm font-semibold mb-3">Ordre par défaut</h3>
-                          <p className="text-sm text-slate-500 mb-4">
-                            Choisissez comment les contacts seront organisés sur la page Fosse pour ce rôle.
-                          </p>
-                          <div className="flex items-center space-x-4">
-                            <Select
-                              value={setting?.defaultOrder || 'default'}
-                              disabled={isSaving || !setting}
-                              onValueChange={(value: 'default' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc') => {
-                                if (setting) {
-                                  updateSettings(role.id, { defaultOrder: value });
-                                } else {
-                                  loadSettingForRole(role.id).then(() => {
-                                    updateSettings(role.id, { defaultOrder: value });
-                                  });
-                                }
-                              }}
-                            >
-                              <SelectTrigger className="w-[300px]">
-                                <SelectValue placeholder="Sélectionner un ordre" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="default">Par défaut (nom complet)</SelectItem>
-                                <SelectItem value="created_at_asc">Date de création (ancien à nouveau)</SelectItem>
-                                <SelectItem value="created_at_desc">Date de création (nouveau à ancien)</SelectItem>
-                                <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
-                                <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
-                                <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-
-                        <Separator />
-
-                        {/* Forced Filters Section */}
-                        <div>
-                          <h3 className="text-sm font-semibold mb-3">Filtres forcés</h3>
-                          <p className="text-sm text-slate-500 mb-4">
-                            Configurez les filtres pour chaque colonne. "Ouvert" permet à l'utilisateur de filtrer librement.
-                            "Défini" permet de pré-sélectionner des valeurs spécifiques.
-                          </p>
-                          <div className="space-y-4">
-                            {FILTERABLE_COLUMNS.map((column) => {
-                              const filter = forcedFilters[column.id];
-                              const filterType = filter?.type || 'open';
-                              const filterValues = filter?.values || [];
-                              const options = getFilterOptions(column.id);
-
-                              return (
-                                <div key={column.id} className="border rounded-none p-4 space-y-3">
-                                  <div className="flex items-center justify-between">
-                                    <Label className="text-sm font-semibold">{column.label}</Label>
-                                    <Select
-                                      value={filterType}
-                                      disabled={isSaving}
-                                      onValueChange={(value: 'open' | 'defined') => {
-                                        if (setting) {
-                                          updateFilterType(role.id, column.id, value);
-                                        } else {
-                                          loadSettingForRole(role.id).then(() => {
-                                            updateFilterType(role.id, column.id, value);
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      <SelectTrigger className="w-[150px]">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="open">Ouvert</SelectItem>
-                                        <SelectItem value="defined">Défini</SelectItem>
                                       </SelectContent>
                                     </Select>
                                   </div>
-                                  
-                                  {filterType === 'defined' && (
-                                    <div className="space-y-2">
-                                      <Label className="text-xs text-slate-500">
-                                        Sélectionnez les valeurs à afficher :
-                                      </Label>
-                                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-48 overflow-y-auto">
-                                        {options.map((option) => {
-                                          const isChecked = filterValues.includes(option.id);
-                                          return (
-                                            <div key={option.id} className="flex items-center space-x-3">
-                                              <Checkbox
-                                                id={`${role.id}-filter-${column.id}-${option.id}`}
-                                                checked={isChecked}
-                                                disabled={isSaving}
-                                                onCheckedChange={() => {
-                                                  if (setting) {
-                                                    toggleFilterValue(role.id, column.id, option.id);
-                                                  } else {
-                                                    loadSettingForRole(role.id).then(() => {
-                                                      toggleFilterValue(role.id, column.id, option.id);
-                                                    });
-                                                  }
-                                                }}
-                                              />
-                                              <Label
-                                                htmlFor={`${role.id}-filter-${column.id}-${option.id}`}
-                                                className="text-xs font-normal cursor-pointer truncate"
-                                                title={option.label}
-                                              >
-                                                {option.label}
-                                              </Label>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                      {options.length === 0 && (
-                                        <p className="text-xs text-slate-400 italic">
-                                          Aucune option disponible pour ce filtre.
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </CardContent>
-                    )}
-                  </Card>
-                );
-              })}
-            </div>
           )}
-        </CardContent>
+                      </CardContent>
       </Card>
     </div>
   );

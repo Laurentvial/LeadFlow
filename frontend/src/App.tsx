@@ -13,6 +13,7 @@ import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
 import Chat from './components/Chat';
+import FosseConfiguration from './Pages/FosseConfiguration';
 import { UserProvider } from './contexts/UserContext';
 import { UnreadMessagesProvider } from './contexts/UnreadMessagesContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -43,11 +44,12 @@ function App() {
     return (
         <Router>
             <UserProvider>
-                <UnreadMessagesProvider>
-                    <Toaster />
-                    <MessagePopupWrapper />
-                    <EventPopupWrapper />
-                    <Routes>
+                <UnreadMessagesProvider children={
+                    <>
+                        <Toaster />
+                        <MessagePopupWrapper />
+                        <EventPopupWrapper />
+                        <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/logout" element={<Logout />} />
                     <Route path="/" element={
@@ -100,6 +102,15 @@ function App() {
                             <PermissionProtectedRoute component="fosse" action="view">
                                 <Layout>
                                     <Fosse onSelectContact={() => {}} />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/fosse/configuration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="permissions" action="view">
+                                <Layout>
+                                    <FosseConfiguration />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>
@@ -162,7 +173,8 @@ function App() {
                         </ProtectedRoute>
                     } />
                     </Routes>
-                </UnreadMessagesProvider>
+                    </>
+                } />
             </UserProvider>
         </Router>
     );
