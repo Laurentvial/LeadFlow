@@ -28,29 +28,27 @@ websocket_router = AuthMiddlewareStack(
 # If ALLOWED_HOSTS contains '*', skip origin validation (allow all)
 # Otherwise, use AllowedHostsOriginValidator which validates against ALLOWED_HOSTS
 
+# Define custom validator class at module level (not inside if block)
+class CustomOriginValidator(AllowedHostsOriginValidator):
+    """Custom origin validator that allows localhost in addition to ALLOWED_HOSTS"""
+    def __init__(self, application):
+        # Call parent __init__ - AllowedHostsOriginValidator reads from settings.ALLOWED_HOSTS
+        super().__init__(application)
+    
+    def validate_origin(self, parsed_origin):
+        # Always allow localhost origins (for local development)
+        if parsed_origin.hostname in ['localhost', '127.0.0.1']:
+            return True
+        # Use parent validation for other origins
+        return super().validate_origin(parsed_origin)
+
 # Check if ALLOWED_HOSTS contains '*' - if so, skip origin validation
 if settings.ALLOWED_HOSTS and '*' in settings.ALLOWED_HOSTS:
     # Allow all origins when ALLOWED_HOSTS contains '*'
     # Don't wrap with origin validator - websocket_router will accept all origins
     pass
 else:
-    # Use AllowedHostsOriginValidator which validates against ALLOWED_HOSTS
-    # It automatically reads from settings.ALLOWED_HOSTS
-    # We also need to allow localhost, so we'll create a custom validator
-    class CustomOriginValidator(AllowedHostsOriginValidator):
-        """Custom origin validator that allows localhost in addition to ALLOWED_HOSTS"""
-        def __init__(self, application):
-            # Call parent __init__ - AllowedHostsOriginValidator reads from settings.ALLOWED_HOSTS
-            super().__init__(application)
-        
-        def validate_origin(self, parsed_origin):
-            # Always allow localhost origins (for local development)
-            if parsed_origin.hostname in ['localhost', '127.0.0.1']:
-                return True
-            # Use parent validation for other origins
-            return super().validate_origin(parsed_origin)
-    
-    # AllowedHostsOriginValidator reads from settings.ALLOWED_HOSTS automatically
+    # Use custom validator which validates against ALLOWED_HOSTS and allows localhost
     websocket_router = CustomOriginValidator(websocket_router)
 
 application = ProtocolTypeRouter({
