@@ -17,17 +17,53 @@ from api import routing
 from django.conf import settings
 
 # Wrap WebSocket router with origin validator based on ALLOWED_HOSTS
-# If ALLOWED_HOSTS contains '*', allow all origins (for development/production flexibility)
 websocket_router = AuthMiddlewareStack(
     URLRouter(
         routing.websocket_urlpatterns
     )
 )
 
-# Only use AllowedHostsOriginValidator if ALLOWED_HOSTS doesn't allow all hosts
-# This allows WebSocket connections from any origin when ALLOWED_HOSTS=['*']
+# WebSocket origin validation
+# We need to allow localhost origins for local frontend development connecting to production backend
+# If ALLOWED_HOSTS contains '*', allow all origins
 if settings.ALLOWED_HOSTS and '*' not in settings.ALLOWED_HOSTS:
-    websocket_router = AllowedHostsOriginValidator(websocket_router)
+    # Create a custom validator that allows localhost and production domains
+    from channels.security.websocket import OriginValidator
+    
+    def allowed_origin(scope):
+        # Get origin from headers
+        headers = dict(scope.get('headers', []))
+        origin_bytes = headers.get(b'origin', b'')
+        if not origin_bytes:
+            return True  # Allow if no origin header
+        
+        origin = origin_bytes.decode('utf-8')
+        
+        # Extract hostname from origin URL (e.g., "http://localhost:5173" -> "localhost")
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            origin_host = parsed.hostname
+            
+            # Allow localhost origins (for local development)
+            if origin_host in ['localhost', '127.0.0.1']:
+                return True
+            
+            # Allow origins matching ALLOWED_HOSTS
+            for allowed_host in settings.ALLOWED_HOSTS:
+                if allowed_host == '*' or origin_host == allowed_host:
+                    return True
+                # Also check if origin_host ends with allowed_host (for subdomains)
+                if origin_host.endswith('.' + allowed_host):
+                    return True
+            
+            return False
+        except Exception:
+            # If we can't parse origin, allow it (fail open for WebSocket)
+            return True
+    
+    # Use custom origin validator
+    websocket_router = OriginValidator(websocket_router, allowed_origin)
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
