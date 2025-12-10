@@ -70,9 +70,17 @@ export function useWebSocket({
       const host = backendUrl.host;
       const fullUrl = `${protocol}//${host}${wsUrl}`;
 
+      // Log WebSocket connection details for debugging
+      const maskedUrl = fullUrl.replace(/token=[^&]+/, 'token=***');
+      console.log('[useWebSocket] Connecting to:', maskedUrl);
+      console.log('[useWebSocket] Backend URL from VITE_URL:', apiUrl);
+      console.log('[useWebSocket] Protocol:', protocol);
+      console.log('[useWebSocket] Host:', host);
+
       const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {
+        console.log('[useWebSocket] ✅ WebSocket connected successfully');
         setIsConnected(true);
         setReconnectAttempts(0);
         consecutiveFailuresRef.current = 0; // Reset failure count on successful connection
@@ -89,7 +97,13 @@ export function useWebSocket({
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error('[useWebSocket] ❌ WebSocket error:', error);
+        console.error('[useWebSocket] Failed URL:', maskedUrl);
+        console.error('[useWebSocket] Check:');
+        console.error('  1. Is VITE_URL set correctly? Current:', apiUrl);
+        console.error('  2. Is the backend running and accessible?');
+        console.error('  3. Are WebSocket routes configured correctly?');
+        console.error('  4. Check browser console for CORS or network errors');
         // Increment failure count on error
         consecutiveFailuresRef.current += 1;
         if (consecutiveFailuresRef.current >= maxConsecutiveFailures) {
@@ -100,6 +114,7 @@ export function useWebSocket({
       };
 
       ws.onclose = (event) => {
+        console.log(`[useWebSocket] 🔌 WebSocket closed: code=${event.code}, reason="${event.reason}", wasClean=${event.wasClean}`);
         setIsConnected(false);
         onClose?.();
 
@@ -108,6 +123,14 @@ export function useWebSocket({
         const isServerError = event.code === 1006 || event.code === 1002 || 
                              (event.code >= 1002 && event.code <= 1015) ||
                              !event.wasClean;
+        
+        if (isServerError) {
+          console.error('[useWebSocket] Server error detected. Common causes:');
+          console.error('  - Backend not running or not accessible');
+          console.error('  - WebSocket route not configured (check /ws/notifications/ or /ws/chat/)');
+          console.error('  - CORS/origin validation failed');
+          console.error('  - SSL certificate issues (for wss://)');
+        }
         
         if (isServerError) {
           consecutiveFailuresRef.current += 1;
