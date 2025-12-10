@@ -101,15 +101,32 @@ REDIS_URL = os.getenv('REDIS_URL', None)
 if REDIS_URL:
     # Heroku Redis or other cloud Redis with URL
     # channels-redis 4.x supports Redis URLs directly, including SSL (rediss://)
-    # It will automatically handle SSL when it detects rediss:// scheme
+    # For Aiven Redis with self-signed certificates, we need to disable SSL verification
+    import ssl
+    
+    # Parse Redis URL to check if it's SSL and if it's Aiven (has ec2 in hostname)
+    is_ssl = REDIS_URL.startswith('rediss://')
+    is_aiven = 'ec2' in REDIS_URL or 'compute.amazonaws.com' in REDIS_URL
+    
+    # Configure Redis connection
+    redis_config = {
+        "hosts": [REDIS_URL],
+        "capacity": 1500,
+        "expiry": 10,
+    }
+    
+    # For Aiven Redis with self-signed certificates, disable SSL verification
+    if is_ssl and is_aiven:
+        # channels-redis passes connection_kwargs to redis.asyncio connection
+        # Disable SSL certificate verification for Aiven
+        redis_config["connection_kwargs"] = {
+            "ssl_cert_reqs": ssl.CERT_NONE,
+        }
+    
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {
-                "hosts": [REDIS_URL],  # Pass URL directly - channels-redis handles SSL automatically
-                "capacity": 1500,
-                "expiry": 10,
-            },
+            'CONFIG': redis_config,
         },
     }
 elif os.getenv('USE_REDIS', 'False') == 'True':
