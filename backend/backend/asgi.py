@@ -39,13 +39,15 @@ if settings.ALLOWED_HOSTS and '*' not in settings.ALLOWED_HOSTS:
         
         origin = origin_bytes.decode('utf-8')
         
-        # Extract hostname from origin URL (e.g., "http://localhost:5173" -> "localhost")
+        # Extract hostname from origin URL (e.g., "http://localhost:3000" -> "localhost")
         try:
             from urllib.parse import urlparse
             parsed = urlparse(origin)
             origin_host = parsed.hostname
+            origin_port = parsed.port
             
-            # Allow localhost origins (for local development)
+            # Allow localhost origins (for local development) - any port
+            # This covers: localhost, localhost:3000, localhost:5173, 127.0.0.1, etc.
             if origin_host in ['localhost', '127.0.0.1']:
                 return True
             
@@ -58,8 +60,12 @@ if settings.ALLOWED_HOSTS and '*' not in settings.ALLOWED_HOSTS:
                     return True
             
             return False
-        except Exception:
+        except Exception as e:
             # If we can't parse origin, allow it (fail open for WebSocket)
+            # Log the error for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error parsing WebSocket origin '{origin}': {e}")
             return True
     
     # Use custom origin validator
