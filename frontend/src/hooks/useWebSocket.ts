@@ -90,6 +90,10 @@ export function useWebSocket({
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
+          // Log event notifications for debugging
+          if (message.type === 'event_notification') {
+            console.log('[useWebSocket] Received event_notification message:', message);
+          }
           onMessage?.(message);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);

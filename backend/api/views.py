@@ -26,7 +26,7 @@ from rest_framework.response import Response
 import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
-from django.db.models import Count, Q, Sum, F
+from django.db.models import Count, Q, Sum, F, Case, When, IntegerField
 from django.db.models.functions import Cast, MD5, Substr, Coalesce, Concat
 from django.db.models import CharField, Value
 import boto3
@@ -69,12 +69,33 @@ def send_event_notification(event, notification_type='assigned', minutes_before=
         if not channel_layer:
             return
         
-        # Format event datetime
+        # Format event datetime - convert to Europe/Paris timezone for display
         event_datetime = event.datetime
-        if timezone.is_aware(event_datetime):
-            event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
+        if event_datetime:
+            try:
+                import pytz
+                paris_tz = pytz.timezone('Europe/Paris')
+                
+                # Convert to Europe/Paris timezone if datetime is timezone-aware
+                if timezone.is_aware(event_datetime):
+                    event_datetime_local = event_datetime.astimezone(paris_tz)
+                else:
+                    # If naive, assume it's UTC and convert
+                    utc_tz = pytz.UTC
+                    event_datetime_local = utc_tz.localize(event_datetime).astimezone(paris_tz)
+                
+                event_datetime_str = event_datetime_local.strftime('%d/%m/%Y à %H:%M')
+            except Exception as e:
+                # Fallback: use UTC if conversion fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to convert datetime to Paris timezone: {e}, using UTC")
+                if timezone.is_aware(event_datetime):
+                    event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
+                else:
+                    event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
         else:
-            event_datetime_str = event_datetime.strftime('%d/%m/%Y à %H:%M')
+            event_datetime_str = 'Date non définie'
         
         # Build notification message based on type
         if notification_type == 'assigned':
@@ -83,7 +104,11 @@ def send_event_notification(event, notification_type='assigned', minutes_before=
         elif notification_type == '30min_before':
             title = 'Rappel événement'
             message = f"Votre événement commence dans 30 minutes ({event_datetime_str})"
+        elif notification_type == '10min_before':
+            title = 'Rappel événement'
+            message = f"Votre événement commence dans 10 minutes ({event_datetime_str})"
         elif notification_type == '5min_before':
+            # Keep for backward compatibility
             title = 'Rappel événement'
             message = f"Votre événement commence dans 5 minutes ({event_datetime_str})"
         else:
@@ -117,6 +142,10 @@ def send_event_notification(event, notification_type='assigned', minutes_before=
         }
         
         # Send via WebSocket
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[send_event_notification] Sending {notification_type} notification for event {event.id} to user {event.userId.id}")
+        
         async_to_sync(channel_layer.group_send)(
             f'notifications_{event.userId.id}',
             {
@@ -124,6 +153,8 @@ def send_event_notification(event, notification_type='assigned', minutes_before=
                 'notification': notification_data,
             }
         )
+        
+        logger.info(f"[send_event_notification] WebSocket event sent to group notifications_{event.userId.id}")
         
         # Also create a database notification for persistence
         try:
@@ -3929,8 +3960,83 @@ def event_list(request):
             # If user has no UserDetails, show no events (safety default)
             events = Event.objects.none()
     
-    serializer = EventSerializer(events, many=True)
-    return Response({'events': serializer.data})
+    # Order events: future events first (ascending), then past events (descending)
+    # This ensures future events appear at the top when paginated
+    # Past events should show most recent first
+    now = timezone.now()
+    # Use raw SQL to properly order: future events ASC, past events DESC
+    # For past events, we'll use a large timestamp minus the difference to invert order
+    from django.db import connection
+    if connection.vendor == 'postgresql':
+        # PostgreSQL: Use a computed sort_datetime
+        # For future events: use datetime as-is (sorts ASC - earliest first)
+        # For past events: use negative datetime to invert order (most recent = less negative = sorts first)
+        # Convert to epoch seconds for consistent numeric sorting
+        events = events.extra(
+            select={
+                'is_future': "CASE WHEN datetime > %s THEN 0 ELSE 1 END",
+                'sort_datetime': "CASE WHEN datetime > %s THEN EXTRACT(EPOCH FROM datetime) ELSE -EXTRACT(EPOCH FROM datetime) END"
+            },
+            select_params=[now, now],
+            order_by=['is_future', 'sort_datetime']
+        )
+    else:
+        # Fallback for other databases: just order future first, then datetime descending
+        # This means past events will be most recent first
+        events = events.annotate(
+            is_future=Case(
+                When(datetime__gt=now, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by('is_future', Case(
+            When(datetime__gt=now, then=F('datetime')),  # Future: ascending
+            default=F('datetime'),  # Past: ascending (not ideal, but frontend will fix)
+            output_field=models.DateTimeField()
+        ))
+    
+    # Apply pagination if requested (for all events or filtered events)
+    if requested_page or requested_page_size:
+        from rest_framework.pagination import PageNumberPagination
+        
+        page_size = int(requested_page_size) if requested_page_size else 10  # Default 10 events per page
+        page = int(requested_page) if requested_page else 1
+        
+        # Ensure reasonable page size (max 100 per page)
+        if page_size > 100:
+            page_size = 100
+        if page_size < 1:
+            page_size = 10
+        
+        # Create pagination class with proper page_size
+        def create_event_pagination(page_size_val):
+            class EventPagination(PageNumberPagination):
+                page_size = page_size_val
+                page_size_query_param = 'page_size'
+                max_page_size = 100
+            return EventPagination
+        
+        EventPagination = create_event_pagination(page_size)
+        paginator = EventPagination()
+        paginated_events = paginator.paginate_queryset(events, request)
+        
+        serializer = EventSerializer(paginated_events, many=True)
+        
+        # Return paginated response in consistent format
+        return Response({
+            'events': serializer.data,
+            'total': paginator.page.paginator.count,
+            'next': paginator.get_next_link(),
+            'previous': paginator.get_previous_link(),
+            'page': page,
+            'page_size': page_size,
+            'has_next': paginator.page.has_next(),
+            'has_previous': paginator.page.has_previous()
+        })
+    else:
+        # No pagination requested, return all events (backward compatibility)
+        serializer = EventSerializer(events, many=True)
+        return Response({'events': serializer.data})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -6384,8 +6490,23 @@ def chat_messages(request, chat_room_id):
                     # Send message notification via WebSocket (no database notification for messages)
                     # This allows real-time popup without cluttering notifications
                     participants = chat_room.participants.exclude(id=request.user.id)
+                    
                     for participant in participants:
                         try:
+                            # Check if this is the first message the recipient receives in this room
+                            # (excluding messages they sent themselves)
+                            recipient_message_count = Message.objects.filter(
+                                chat_room=chat_room
+                            ).exclude(sender=participant).count()
+                            is_first_message_for_recipient = recipient_message_count == 1
+                            
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.info(f"[chat_messages] Sending message to participant {participant.id}. "
+                                      f"Recipient message count: {recipient_message_count}, "
+                                      f"Is first message: {is_first_message_for_recipient}, "
+                                      f"Chat room ID: {chat_room.id}")
+                            
                             async_to_sync(channel_layer.group_send)(
                                 f'chat_message_{participant.id}',
                                 {
@@ -6399,8 +6520,29 @@ def chat_messages(request, chat_room_id):
                                         'createdAt': message.created_at.isoformat(),
                                     },
                                     'chat_room_id': chat_room.id,
+                                    'is_new_chat_room': is_first_message_for_recipient,
                                 }
                             )
+                            
+                            # If this is the first message for the recipient, also send a new_chat_room event
+                            # This ensures the chat appears in their list
+                            if is_first_message_for_recipient:
+                                from .serializer import ChatRoomSerializer
+                                # Create a mock request object for serializer context
+                                class MockRequest:
+                                    def __init__(self, user):
+                                        self.user = user
+                                
+                                mock_request = MockRequest(participant)
+                                chat_room_data = ChatRoomSerializer(chat_room, context={'request': mock_request}).data
+                                
+                                async_to_sync(channel_layer.group_send)(
+                                    f'chat_message_{participant.id}',
+                                    {
+                                        'type': 'new_chat_room',
+                                        'chat_room': chat_room_data,
+                                    }
+                                )
                         except Exception as ws_error:
                             # Log but don't fail - message is already saved
                             import traceback

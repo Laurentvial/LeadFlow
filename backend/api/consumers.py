@@ -185,15 +185,29 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': 'new_message',
             'message': event['message'],
-            'chat_room_id': event.get('chat_room_id')
+            'chat_room_id': event.get('chat_room_id'),
+            'is_new_chat_room': event.get('is_new_chat_room', False)
+        }))
+    
+    async def new_chat_room(self, event):
+        """Send new chat room notification to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'new_chat_room',
+            'chat_room': event['chat_room']
         }))
     
     async def event_notification(self, event):
         """Send event notification to WebSocket"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[NotificationConsumer] Sending event_notification to user {self.user_id}: {event.get('notification', {}).get('notification_type', 'unknown')}")
+        
         await self.send(text_data=json.dumps({
             'type': 'event_notification',
             'notification': event['notification']
         }))
+        
+        logger.info(f"[NotificationConsumer] Event notification sent successfully")
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -388,12 +402,29 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def create_notifications_for_participants(self, chat_room, message):
         """Send message notification via WebSocket (no database notification for messages)"""
         from channels.layers import get_channel_layer
+        from .serializer import ChatRoomSerializer
         channel_layer = get_channel_layer()
         
         participants = await database_sync_to_async(list)(chat_room.participants.all())
         
         for participant in participants:
             if participant.id != self.user.id:
+                # Check if this is the first message the recipient receives in this room
+                # (excluding messages they sent themselves)
+                recipient_message_count = await database_sync_to_async(
+                    lambda: Message.objects.filter(
+                        chat_room=chat_room
+                    ).exclude(sender=participant).count()
+                )()
+                is_first_message_for_recipient = recipient_message_count == 1
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"[ChatConsumer] Sending message to participant {participant.id}. "
+                          f"Recipient message count: {recipient_message_count}, "
+                          f"Is first message: {is_first_message_for_recipient}, "
+                          f"Chat room ID: {chat_room.id}")
+                
                 # Check if participant is currently viewing this chat room by checking if active_chat_group exists
                 # We'll send a test message to the active chat group and see if it's delivered
                 # If the group has members, user is viewing the chat
@@ -426,6 +457,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             'createdAt': message.created_at.isoformat(),
                         },
                         'chat_room_id': chat_room.id,
+                        'is_new_chat_room': is_first_message_for_recipient,
                     }
                 )
+                
+                # If this is the first message for the recipient, also send a new_chat_room event
+                # This ensures the chat appears in their list
+                if is_first_message_for_recipient:
+                    # Serialize chat room for the participant
+                    # Create a simple mock request object for serializer context
+                    class MockRequest:
+                        def __init__(self, user):
+                            self.user = user
+                    
+                    def serialize_chat_room():
+                        mock_request = MockRequest(participant)
+                        return ChatRoomSerializer(chat_room, context={'request': mock_request}).data
+                    
+                    chat_room_data = await database_sync_to_async(serialize_chat_room)()
+                    
+                    await self.channel_layer.group_send(
+                        f'chat_message_{participant.id}',
+                        {
+                            'type': 'new_chat_room',
+                            'chat_room': chat_room_data,
+                        }
+                    )
 

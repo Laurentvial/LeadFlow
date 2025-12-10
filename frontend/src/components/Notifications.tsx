@@ -5,6 +5,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Bell, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import '../styles/Notifications.css';
@@ -29,6 +30,7 @@ export default function Notifications() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'unread' | 'read'>('unread');
 
   // Load notifications
   const loadNotifications = useCallback(async (silent: boolean = false) => {
@@ -67,7 +69,12 @@ export default function Notifications() {
       setNotifications(prev =>
         prev.map(n => (n.id === notificationId ? { ...n, is_read: true } : n))
       );
-      setUnreadCount(prev => Math.max(0, prev - 1));
+      const newUnreadCount = Math.max(0, unreadCount - 1);
+      setUnreadCount(newUnreadCount);
+      // Switch to read tab if no more unread notifications
+      if (newUnreadCount === 0 && activeTab === 'unread') {
+        setActiveTab('read');
+      }
     } catch (error: any) {
       console.error('Error marking notification as read:', error);
     }
@@ -82,6 +89,8 @@ export default function Notifications() {
       
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
       setUnreadCount(0);
+      // Switch to read tab after marking all as read
+      setActiveTab('read');
     } catch (error: any) {
       console.error('Error marking all notifications as read:', error);
     }
@@ -171,6 +180,46 @@ export default function Notifications() {
         toast.info(message.notification.title, {
           description: message.notification.message,
         });
+      } else if (message.type === 'event_notification') {
+        // Handle event notifications (reminders, assignments)
+        const eventNotification = message.notification;
+        if (eventNotification) {
+          console.log('[Notifications] Received event_notification:', eventNotification);
+          console.log('[Notifications] Notification type:', eventNotification.notification_type);
+          console.log('[Notifications] Full notification object:', JSON.stringify(eventNotification, null, 2));
+          
+          // Event notifications are stored in the database, so reload to get the proper notification
+          // This ensures we have the correct ID and all fields from the database
+          // The reload will also update the unread count correctly
+          loadNotifications(true);
+          
+          // Skip toast notification for assignment notifications - only show for reminders
+          const notificationType = eventNotification.notification_type;
+          if (notificationType && notificationType !== 'assigned') {
+            console.log('[Notifications] Showing toast for reminder notification:', {
+              title: eventNotification.title,
+              message: eventNotification.message,
+              type: notificationType
+            });
+            
+            // Use setTimeout to ensure toast is called after current execution context
+            setTimeout(() => {
+              try {
+                toast.info(eventNotification.title || 'Notification événement', {
+                  description: eventNotification.message || '',
+                  duration: 5000, // Show for 5 seconds
+                });
+                console.log('[Notifications] Toast called successfully');
+              } catch (error) {
+                console.error('[Notifications] Error calling toast:', error);
+              }
+            }, 100);
+          } else {
+            console.log('[Notifications] Skipping toast - notification_type is:', notificationType);
+          }
+        } else {
+          console.warn('[Notifications] event_notification received but notification is missing');
+        }
       } else if (message.type === 'unread_count_updated') {
         setUnreadCount(message.unread_count || 0);
       } else if (message.type === 'connection_established') {
@@ -209,6 +258,14 @@ export default function Notifications() {
     return () => clearInterval(interval);
   }, [loading, loadNotifications, loadUnreadCount]);
 
+  // Set default tab when modal opens
+  useEffect(() => {
+    if (isOpen && !loading) {
+      // Default to unread tab if there are unread notifications, otherwise read tab
+      setActiveTab(unreadCount > 0 ? 'unread' : 'read');
+    }
+  }, [isOpen, loading, unreadCount]);
+
   // Mark as read via WebSocket when notification is clicked
   // Only use WebSocket if it's connected and not disabled
   useEffect(() => {
@@ -239,7 +296,7 @@ export default function Notifications() {
           <div className="notifications-header">
             <h3>Notifications</h3>
             <div className="notifications-header-actions">
-              {unreadCount > 0 && (
+              {unreadCount > 0 && activeTab === 'unread' && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -260,54 +317,104 @@ export default function Notifications() {
             </div>
           </div>
 
-          <ScrollArea className="notifications-list">
-            {loading ? (
-              <div className="notifications-loading">Chargement...</div>
-            ) : notifications.length === 0 ? (
-              <div className="notifications-empty">Aucune notification</div>
-            ) : (
-              notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className={`notification-item ${!notification.is_read ? 'unread' : ''}`}
-                >
-                  <div 
-                    className="notification-main-content"
-                    onClick={() => handleNotificationClick(notification)}
-                    style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
-                  >
-                    <div className="notification-icon">
-                      {getNotificationIcon(notification.type)}
-                    </div>
-                    <div className="notification-content">
-                      <div className="notification-title">{notification.title}</div>
-                      <div className="notification-message">{notification.message}</div>
-                      <div className="notification-time">
-                        {formatTime(notification.created_at)}
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'unread' | 'read')} className="notifications-tabs">
+            <TabsList className="notifications-tabs-list">
+              <TabsTrigger value="unread">
+                Non lu
+                {unreadCount > 0 && (
+                  <Badge className="notifications-tab-badge">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="read">Lu</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="unread" className="notifications-tab-content">
+              <ScrollArea className="notifications-list">
+                {loading ? (
+                  <div className="notifications-loading">Chargement...</div>
+                ) : notifications.filter(n => !n.is_read).length === 0 ? (
+                  <div className="notifications-empty">Aucune notification non lue</div>
+                ) : (
+                  notifications
+                    .filter(n => !n.is_read)
+                    .map((notification) => (
+                      <div
+                        key={notification.id}
+                        className="notification-item unread"
+                      >
+                        <div 
+                          className="notification-main-content"
+                          onClick={() => handleNotificationClick(notification)}
+                          style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
+                        >
+                          <div className="notification-icon">
+                            {getNotificationIcon(notification.type)}
+                          </div>
+                          <div className="notification-content">
+                            <div className="notification-title">{notification.title}</div>
+                            <div className="notification-message">{notification.message}</div>
+                            <div className="notification-time">
+                              {formatTime(notification.created_at)}
+                            </div>
+                          </div>
+                          <div className="notification-unread-indicator" />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="notification-mark-read-button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markAsRead(notification.id);
+                          }}
+                          title="Marquer comme lu"
+                        >
+                          <Check className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
-                    {!notification.is_read && (
-                      <div className="notification-unread-indicator" />
-                    )}
-                  </div>
-                  {!notification.is_read && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="notification-mark-read-button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        markAsRead(notification.id);
-                      }}
-                      title="Marquer comme lu"
-                    >
-                      <Check className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              ))
-            )}
-          </ScrollArea>
+                    ))
+                )}
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="read" className="notifications-tab-content">
+              <ScrollArea className="notifications-list">
+                {loading ? (
+                  <div className="notifications-loading">Chargement...</div>
+                ) : notifications.filter(n => n.is_read).length === 0 ? (
+                  <div className="notifications-empty">Aucune notification lue</div>
+                ) : (
+                  notifications
+                    .filter(n => n.is_read)
+                    .map((notification) => (
+                      <div
+                        key={notification.id}
+                        className="notification-item"
+                      >
+                        <div 
+                          className="notification-main-content"
+                          onClick={() => handleNotificationClick(notification)}
+                          style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
+                        >
+                          <div className="notification-icon">
+                            {getNotificationIcon(notification.type)}
+                          </div>
+                          <div className="notification-content">
+                            <div className="notification-title">{notification.title}</div>
+                            <div className="notification-message">{notification.message}</div>
+                            <div className="notification-time">
+                              {formatTime(notification.created_at)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </ScrollArea>
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>

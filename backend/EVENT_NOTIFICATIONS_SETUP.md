@@ -3,12 +3,12 @@
 This document explains how to set up event notifications that are sent via WebSocket when:
 1. A user is assigned to an event
 2. 30 minutes before an event
-3. 5 minutes before an event
+3. 10 minutes before an event
 
 ## Features
 
 - **Real-time notifications**: When a user is assigned to an event, they receive an immediate WebSocket notification
-- **Scheduled reminders**: Notifications are sent 30 minutes and 5 minutes before event start time
+- **Scheduled reminders**: Notifications are sent 30 minutes and 10 minutes before event start time
 - **Popup notifications**: Frontend displays popup notifications for event assignments and reminders
 - **Database persistence**: Notifications are also stored in the database for history
 
@@ -19,7 +19,7 @@ This document explains how to set up event notifications that are sent via WebSo
 The `send_event_notification()` function in `backend/api/views.py` handles sending notifications:
 - Creates WebSocket notifications via Django Channels
 - Creates database notifications for persistence
-- Supports different notification types: 'assigned', '30min_before', '5min_before'
+- Supports different notification types: 'assigned', '30min_before', '10min_before'
 
 ### 2. Event Creation/Update
 
@@ -31,7 +31,7 @@ When events are created or updated:
 
 A Django management command `check_event_notifications` checks for upcoming events:
 - Runs periodically (should be scheduled via cron or task scheduler)
-- Finds events 30 minutes and 5 minutes before their datetime
+- Finds events 30 minutes and 10 minutes before their datetime
 - Sends notifications to assigned users
 
 ## Frontend Implementation
@@ -112,8 +112,8 @@ app.conf.beat_schedule = {
    - Create an event scheduled for 35 minutes from now
    - Wait 5 minutes (or manually run the command)
    - The user should receive a 30-minute reminder
-   - Wait another 25 minutes (or manually run the command)
-   - The user should receive a 5-minute reminder
+   - Wait another 20 minutes (or manually run the command)
+   - The user should receive a 10-minute reminder
 
 ### 4. Manual Testing
 
@@ -136,10 +136,11 @@ python manage.py check_event_notifications
 - Title: "Rappel événement"
 - Message: "Votre événement commence dans 30 minutes"
 
-### 5-Minute Reminder (`5min_before`)
-- Sent 5 minutes before event start
+### 10-Minute Reminder (`10min_before`)
+- Sent 10 minutes before event start
 - Title: "Rappel événement"
-- Message: "Votre événement commence dans 5 minutes"
+- Message: "Votre événement commence dans 10 minutes"
+- **Note:** This is optimized for Heroku Scheduler which runs every 10 minutes minimum
 
 ## Preventing Duplicate Notifications
 

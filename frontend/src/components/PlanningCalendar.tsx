@@ -34,6 +34,9 @@ export function PlanningCalendar() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [eventsPage, setEventsPage] = useState(1);
+  const [eventsHasMore, setEventsHasMore] = useState(false);
+  const [loadingMoreEvents, setLoadingMoreEvents] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientSearchFocused, setClientSearchFocused] = useState(false);
   const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
@@ -71,21 +74,45 @@ export function PlanningCalendar() {
     loadData();
   }, []);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(page: number = 1, append: boolean = false) {
+    if (page === 1) {
+      setLoading(true);
+    } else {
+      setLoadingMoreEvents(true);
+    }
+    
     try {
       const [eventsData, contactsData] = await Promise.all([
-        apiCall('/api/events/'),
-        apiCall('/api/contacts/')
+        apiCall(`/api/events/?page=${page}&page_size=${page === 1 ? 6 : 10}`),
+        page === 1 ? apiCall('/api/contacts/') : Promise.resolve(null) // Only load contacts on first page
       ]);
       
-      setEvents(eventsData?.events || eventsData || []);
-      setContacts(contactsData?.contacts || contactsData || []);
+      const eventsArray = eventsData?.events || eventsData || [];
+      
+      if (append) {
+        setEvents(prev => [...prev, ...eventsArray]);
+      } else {
+        setEvents(eventsArray);
+      }
+      
+      // Update pagination state
+      setEventsHasMore(eventsData?.has_next || false);
+      setEventsPage(page);
+      
+      if (page === 1) {
+        setContacts(contactsData?.contacts || contactsData || []);
+      }
     } catch (error) {
       console.error('Error loading planning data:', error);
     } finally {
       setLoading(false);
+      setLoadingMoreEvents(false);
     }
+  }
+
+  async function handleLoadMore() {
+    const nextPage = eventsPage + 1;
+    await loadData(nextPage, true);
   }
 
   async function handleCreateEvent(e: React.FormEvent<HTMLFormElement>) {
@@ -748,7 +775,21 @@ export function PlanningCalendar() {
                     .sort((a, b) => {
                       const dateA = new Date(a.datetime).getTime();
                       const dateB = new Date(b.datetime).getTime();
-                      return dateB - dateA; // Descending order (most recent first)
+                      const now = new Date().getTime();
+                      const isAFuture = dateA > now;
+                      const isBFuture = dateB > now;
+                      
+                      // Future events come first
+                      if (isAFuture && !isBFuture) return -1;
+                      if (!isAFuture && isBFuture) return 1;
+                      
+                      // Both future: sort ascending (earliest first)
+                      if (isAFuture && isBFuture) {
+                        return dateA - dateB;
+                      }
+                      
+                      // Both past: sort descending (most recent first)
+                      return dateB - dateA;
                     })
                     .map((event) => {
                       const cardProps: any = {
@@ -765,6 +806,18 @@ export function PlanningCalendar() {
                         />
                       );
                     })}
+                  {selectedDay === null && eventsHasMore && (
+                    <div className="flex justify-center pt-4">
+                      <Button
+                        onClick={handleLoadMore}
+                        disabled={loadingMoreEvents}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        {loadingMoreEvents ? 'Chargement...' : 'Charger plus d\'événements'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="planning-empty-message">

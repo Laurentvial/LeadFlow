@@ -570,7 +570,49 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
   const roomsWs = useWebSocket({
     url: '/ws/notifications/',
     onMessage: (message) => {
-      if (message.type === 'notification' && message.notification?.type === 'message') {
+      if (message.type === 'new_message') {
+        // Reload chat rooms when a new message is received (especially for first-time messages)
+        // This ensures the chat appears in the recipient's list
+        console.log('[Chat] Received new_message event, reloading chat rooms', message);
+        loadChatRooms(0, false);
+        
+        const chatRoomId = message.chat_room_id || message.message?.chatRoomId;
+        
+        // If the message is for the currently selected room, reload messages immediately
+        if (selectedRoom && chatRoomId === selectedRoom.id) {
+          // Reload messages to get the latest, preserving pending messages
+          // Reset pagination when refreshing
+          setMessagesOffset(0);
+          loadMessages(selectedRoom.id, true, 0); // preservePending = true, offset = 0
+        }
+      } else if (message.type === 'new_chat_room') {
+        // Add new chat room to the list when it's created
+        console.log('[Chat] Received new_chat_room event', message);
+        const newChatRoom = message.chat_room;
+        if (newChatRoom) {
+          setChatRooms(prev => {
+            // Check if room already exists
+            const exists = prev.some(r => r.id === newChatRoom.id);
+            if (exists) {
+              // Update existing room
+              console.log('[Chat] Updating existing chat room', newChatRoom.id);
+              return prev.map(room => 
+                room.id === newChatRoom.id ? { ...room, ...newChatRoom } : room
+              ).sort((a, b) => 
+                new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+              );
+            } else {
+              // Add new room at the beginning
+              console.log('[Chat] Adding new chat room to list', newChatRoom.id);
+              return [newChatRoom, ...prev].sort((a, b) => 
+                new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+              );
+            }
+          });
+          // Also reload to ensure consistency
+          loadChatRooms(0, false);
+        }
+      } else if (message.type === 'notification' && message.notification?.type === 'message') {
         const notification = message.notification;
         const chatRoomId = notification.data?.chat_room_id;
         

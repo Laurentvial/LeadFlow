@@ -37,6 +37,13 @@
   overflow: hidden;
 }
 
+.notifications-dropdown > [data-slot="tabs"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
 .notifications-header {
   display: flex;
   align-items: center;
@@ -62,9 +69,45 @@
   padding: 4px 8px;
 }
 
+.notifications-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.notifications-tabs-list {
+  margin: 0 16px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  width: calc(100% - 32px);
+}
+
+.notifications-tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.notifications-tab-badge {
+  margin-left: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: 10px;
+  border-radius: 9px;
+  background-color: var(--destructive, #ef4444);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .notifications-list {
   max-height: 500px;
   overflow-y: auto;
+  flex: 1;
 }
 
 .notifications-loading,

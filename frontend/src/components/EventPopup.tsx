@@ -14,7 +14,7 @@ interface EventPopupProps {
       contactName?: string | null;
       comment?: string;
     };
-    notification_type: 'assigned' | '30min_before' | '5min_before';
+    notification_type: 'assigned' | '30min_before' | '10min_before' | '5min_before';
     title: string;
     message: string;
     minutes_before?: number;
@@ -62,31 +62,31 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
   const getNotificationIcon = () => {
     if (notification.notification_type === '5min_before') {
       return '🔴'; // Red circle for urgent
+    } else if (notification.notification_type === '10min_before') {
+      return '🟠'; // Orange circle for soon
     } else if (notification.notification_type === '30min_before') {
       return '🟡'; // Yellow circle for warning
     }
     return '📅'; // Calendar for assignment
   };
 
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[EventPopup] Component rendered with notification:', notification);
+    console.log('[EventPopup] Notification type:', notification?.notification_type);
+    console.log('[EventPopup] Title:', notification?.title);
+    console.log('[EventPopup] Message:', notification?.message);
+  }, [notification]);
+
+  if (!notification) {
+    console.error('[EventPopup] No notification provided!');
+    return null;
+  }
+
   return (
     <div 
       className="event-popup" 
       onClick={handleClick}
-      style={{
-        position: 'fixed',
-        bottom: '20px',
-        right: '20px',
-        zIndex: 9999,
-        minWidth: '320px',
-        maxWidth: '420px',
-        background: 'white',
-        borderRadius: '8px',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-        cursor: 'pointer',
-        display: 'block',
-        visibility: 'visible',
-        opacity: 1,
-      }}
     >
       <div className="event-popup-content">
         <div className="event-popup-icon">

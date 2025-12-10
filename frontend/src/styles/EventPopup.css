@@ -2,19 +2,19 @@
   position: fixed !important;
   bottom: 20px !important;
   right: 20px !important;
-  z-index: 9999 !important;
-  min-width: 320px;
-  max-width: 420px;
+  z-index: 10000 !important;
+  min-width: 300px;
+  max-width: 500px;
   background: white;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   cursor: pointer;
-  animation: slideIn 0.3s ease-out;
+  animation: slideInFromRight 0.3s ease-out;
   transition: transform 0.2s ease-out;
   display: block !important;
   visibility: visible !important;
   opacity: 1 !important;
-  border-left: 4px solid #3b82f6;
+  border-left: 4px solid #ef4444;
 }
 
 .event-popup:hover {
@@ -85,7 +85,7 @@
   opacity: 1;
 }
 
-@keyframes slideIn {
+@keyframes slideInFromRight {
   from {
     transform: translateX(100%);
     opacity: 0;

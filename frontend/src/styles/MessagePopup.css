@@ -4,7 +4,7 @@
   right: 20px !important;
   z-index: 9999 !important;
   min-width: 300px;
-  max-width: 400px;
+  max-width: 500px;
   background: white;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -30,8 +30,24 @@
 
 .message-popup-avatar {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+  max-width: 40px !important;
+  max-height: 40px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  aspect-ratio: 1 / 1 !important;
+}
+
+.message-popup-avatar > *,
+.message-popup-avatar [data-slot="avatar"],
+.message-popup-avatar [data-slot="avatar-fallback"] {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1 !important;
 }
 
 .message-popup-text {

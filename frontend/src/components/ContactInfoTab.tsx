@@ -1996,7 +1996,7 @@ export function ContactInfoTab({
                             key={apt.id} 
                             className="contact-appointment-card"
                           >
-                            <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-2">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-1">
                                   <Calendar className="contact-icon-calendar" />
@@ -2014,20 +2014,46 @@ export function ContactInfoTab({
                                   </p>
                                 )}
                                 <div className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="contact-text-meta">
-                                      {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
-                                        day: '2-digit', 
-                                        month: '2-digit', 
-                                        year: 'numeric',
-                                        hour: '2-digit', 
-                                        minute: '2-digit'
-                                      }) : '-'}
-                                    </span>
-                                    {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
                                       <span className="contact-text-meta">
-                                        • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                                        {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
+                                          day: '2-digit', 
+                                          month: '2-digit', 
+                                          year: 'numeric',
+                                          hour: '2-digit', 
+                                          minute: '2-digit'
+                                        }) : '-'}
                                       </span>
+                                      {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
+                                        <span className="contact-text-meta">
+                                          • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {(canEditPlanning || canDeletePlanning) && (
+                                      <div className="flex gap-2 flex-shrink-0">
+                                        {canEditPlanning && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handleEditAppointment(apt)}
+                                            className="contact-tab-button-modify cursor-pointer text-slate-600"
+                                          >
+                                            Modifier
+                                          </Button>
+                                        )}
+                                        {canDeletePlanning && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handleDeleteAppointment(apt.id)}
+                                            className="contact-tab-button-delete text-red-600 cursor-pointer"
+                                          >
+                                            Supprimer
+                                          </Button>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                   {apt.assignedTo && (
@@ -2039,30 +2065,6 @@ export function ContactInfoTab({
                                   )}
                                 </div>
                               </div>
-                              {(canEditPlanning || canDeletePlanning) && (
-                                <div className="flex gap-2 flex-shrink-0">
-                                  {canEditPlanning && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleEditAppointment(apt)}
-                                      className="contact-tab-button-modify cursor-pointer text-slate-600"
-                                    >
-                                      Modifier
-                                    </Button>
-                                  )}
-                                  {canDeletePlanning && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleDeleteAppointment(apt.id)}
-                                      className="contact-tab-button-delete text-red-600 cursor-pointer"
-                                    >
-                                      Supprimer
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           </div>
                         );

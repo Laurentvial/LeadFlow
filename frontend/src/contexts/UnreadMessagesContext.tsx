@@ -22,7 +22,7 @@ interface EventNotification {
     contactName?: string | null;
     comment?: string;
   };
-  notification_type: 'assigned' | '30min_before' | '5min_before';
+  notification_type: 'assigned' | '30min_before' | '10min_before' | '5min_before';
   title: string;
   message: string;
   minutes_before?: number;
@@ -110,6 +110,7 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
   const ws = useWebSocket({
     url: shouldInitialize ? '/ws/notifications/' : '',
     onMessage: (message) => {
+      console.log('[UnreadMessagesContext] WebSocket message received:', message.type, message);
       // Listen for new message notifications (sent via chat_message group)
       if (message.type === 'new_message') {
         const msg = message.message;
@@ -119,13 +120,16 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
           return;
         }
         
+        // Reload unread count to update chat room list
+        // This ensures new chat rooms appear for the recipient
+        loadUnreadCount();
+        
         // Check if user is currently viewing this chat room
         const isViewingThisChat = isOnChatPage && activeChatRoomId === msg.chatRoomId;
         
         if (isViewingThisChat) {
           // User is viewing the chat, mark as read and don't show popup
           // The message will appear in the chat automatically via chat WebSocket
-          loadUnreadCount();
           return;
         }
         
@@ -150,9 +154,6 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
               createdAt: msg.createdAt || new Date().toISOString(),
             });
             
-            // Reload unread count
-            loadUnreadCount();
-            
             // Auto-hide popup after 5 seconds
             setTimeout(() => {
               setMessagePopup(null);
@@ -164,25 +165,52 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
         loadUnreadCount();
       } else if (message.type === 'event_notification') {
         // Handle event notifications
+        console.log('[UnreadMessagesContext] Received event_notification:', message);
+        console.log('[UnreadMessagesContext] Full message structure:', JSON.stringify(message, null, 2));
         const eventNotification = message.notification;
         if (eventNotification) {
-          setEventPopup(eventNotification);
+          console.log('[UnreadMessagesContext] Event notification data:', eventNotification);
+          console.log('[UnreadMessagesContext] Notification type:', eventNotification.notification_type);
           
-          // Auto-hide popup after 8 seconds
-          setTimeout(() => {
-            setEventPopup(null);
-          }, 8000);
+          // Skip popup for assignment notifications - only show reminders (30min_before, 10min_before, 5min_before)
+          if (eventNotification.notification_type === 'assigned') {
+            console.log('[UnreadMessagesContext] Skipping popup for assignment notification (only showing reminders)');
+            return;
+          }
+          
+          // Check if it's a reminder notification
+          if (eventNotification.notification_type === '30min_before' || 
+              eventNotification.notification_type === '10min_before' || 
+              eventNotification.notification_type === '5min_before') {
+            console.log('[UnreadMessagesContext] Setting event popup for reminder:', eventNotification);
+            setEventPopup(eventNotification);
+            
+            // Auto-hide popup after 8 seconds
+            setTimeout(() => {
+              setEventPopup(null);
+            }, 8000);
+          } else {
+            console.warn('[UnreadMessagesContext] Unknown notification type:', eventNotification.notification_type);
+          }
+        } else {
+          console.error('[UnreadMessagesContext] Event notification received but notification data is missing:', message);
         }
       }
     },
     onOpen: () => {
       // WebSocket connected successfully
+      console.log('[UnreadMessagesContext] WebSocket connected successfully');
     },
     onError: (error) => {
       console.error('[UnreadMessagesContext] WebSocket error:', error);
     },
     reconnect: true,
   });
+  
+  // Log WebSocket connection status
+  React.useEffect(() => {
+    console.log('[UnreadMessagesContext] WebSocket status - Connected:', ws.isConnected, 'Disabled:', ws.isDisabled);
+  }, [ws.isConnected, ws.isDisabled]);
 
   // Also listen to chat rooms updates via notifications WebSocket
   // Only use WebSocket if it's connected and not disabled
