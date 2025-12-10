@@ -268,7 +268,19 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOWED_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', '')
 if CORS_ALLOWED_ORIGINS_ENV:
     # Use specific origins if provided via environment variable
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_ENV.split(',') if origin.strip()]
+    # Always include localhost origins for local development
+    allowed_origins = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_ENV.split(',') if origin.strip()]
+    # Add localhost origins if not already present
+    localhost_origins = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ]
+    for localhost_origin in localhost_origins:
+        if localhost_origin not in allowed_origins:
+            allowed_origins.append(localhost_origin)
+    CORS_ALLOWED_ORIGINS = allowed_origins
     CORS_ALLOW_ALL_ORIGINS = False
 else:
     # Allow all origins (default - works for development and production)
