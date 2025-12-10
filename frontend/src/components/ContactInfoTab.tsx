@@ -196,6 +196,10 @@ interface ContactInfoTabProps {
   notes?: any[];
   contactId?: string;
   onRefresh?: () => void;
+  loadingEvents?: boolean;
+  loadingMoreEvents?: boolean;
+  hasMoreEvents?: boolean;
+  onLoadMoreEvents?: () => void;
 }
 
 export function ContactInfoTab({ 
@@ -204,9 +208,23 @@ export function ContactInfoTab({
   appointments = [],
   notes = [],
   contactId = '',
-  onRefresh = () => {}
+  onRefresh = () => {},
+  loadingEvents = false,
+  loadingMoreEvents = false,
+  hasMoreEvents = false,
+  onLoadMoreEvents = () => {}
 }: ContactInfoTabProps) {
   const { currentUser, loading: loadingUser } = useUser();
+  
+  // State for limiting displayed events per column
+  const [pastEventsLimit, setPastEventsLimit] = useState(3);
+  const [futureEventsLimit, setFutureEventsLimit] = useState(3);
+  
+  // Reset limits when appointments change (e.g., when contact changes)
+  useEffect(() => {
+    setPastEventsLimit(3);
+    setFutureEventsLimit(3);
+  }, [contactId]);
   
   // Memoize permission checks to avoid recalculating on every render
   const canEditGeneral = React.useMemo(() => {
@@ -388,6 +406,15 @@ export function ContactInfoTab({
     'sourceId': 'source',
     'teleoperatorId': 'teleoperator',
     'confirmateurId': 'confirmateur',
+    'platformId': 'platform',
+    'montantEncaisse': 'montant_encaisse',
+    'bonus': 'bonus',
+    'paiement': 'paiement',
+    'contrat': 'contrat',
+    'nomDeScene': 'nom_de_scene',
+    'dateProTr': 'date_pro_tr',
+    'potentiel': 'potentiel',
+    'produit': 'produit',
   };
 
   // Helper function to check if user has view permission for a specific field
@@ -461,6 +488,14 @@ export function ContactInfoTab({
       return false;
     }
     
+    // FIRST: User MUST have permission to edit the contact's current status
+    // If they don't have edit permission on the status, they cannot edit any fields
+    const canEditCurrentStatus = canEditContact(contact);
+    if (!canEditCurrentStatus) {
+      console.log(`[canEditField ${fieldName}] User cannot edit contact's current status, blocking all field edits`);
+      return false;
+    }
+    
     const backendFieldName = fieldNameMap[fieldName];
     console.log(`[canEditField ${fieldName}] Field mapping: ${fieldName} -> ${backendFieldName}`);
     if (!backendFieldName) {
@@ -485,8 +520,7 @@ export function ContactInfoTab({
       }))
     );
     
-    // FIRST: Check if user has field-specific edit permission for this field
-    // If they do, allow editing regardless of general contact edit permission
+    // SECOND: Check if user has field-specific edit permission for this field
     const hasFieldPermission = ficheContactEditPermissions.some((p: any) => {
       const pFieldName = p.fieldName ? String(p.fieldName).trim() : null;
       const expectedFieldName = String(backendFieldName).trim();
@@ -496,16 +530,16 @@ export function ContactInfoTab({
     });
     
     if (hasFieldPermission) {
-      console.log(`[canEditField ${fieldName}] Has field-specific permission, allowing edit`);
+      console.log(`[canEditField ${fieldName}] Has field-specific permission AND can edit contact status, allowing edit`);
       return true;
     }
     
-    // SECOND: If no field-specific permission exists, check general contact edit permission
+    // THIRD: If no field-specific permission exists, check general contact edit permission
     // If no fiche_contact edit permissions exist at all, fallback to general contact edit permission
+    // (Note: canEditCurrentStatus already checked above, so if we reach here, user can edit the status)
     if (ficheContactEditPermissions.length === 0) {
-      const canEdit = canEditContact(contact);
-      console.log(`[canEditField ${fieldName}] No fiche_contact permissions, checking general contact edit: ${canEdit}`);
-      return canEdit;
+      console.log(`[canEditField ${fieldName}] No fiche_contact permissions, user can edit status, allowing edit`);
+      return true;
     }
     
     // If fiche_contact permissions exist but this field doesn't have permission, block it
@@ -1806,116 +1840,268 @@ export function ContactInfoTab({
   return (
     <div className="space-y-3">
       {/* Rendez-vous - Compact */}
-      <Card>
+      <Card className="w-full">
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Rendez-vous</CardTitle>
         </CardHeader>
-        <CardContent className="pt-0">
+        <CardContent className="pt-0 px-6 w-full">
           {/* Show loading indicator only while user is loading AND we don't have permissions yet */}
           {loadingUser && !currentUser?.permissions ? (
             <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
           ) : (
             <>
+              {/* Past and Future Events - Two Columns */}
               {appointments.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {(() => {
-                    const sorted = [...appointments].sort((a, b) => {
-                      const dateA = new Date(a.datetime).getTime();
-                      const dateB = new Date(b.datetime).getTime();
-                      return dateB - dateA; // Descending order (most recent first)
-                    });
-                    // Rearrange to put most recent on the right (top-right position)
-                    // For pairs: [second most recent, most recent], [fourth most recent, third most recent], etc.
-                    const rearranged: any[] = [];
-                    for (let i = 0; i < sorted.length; i += 2) {
-                      if (i + 1 < sorted.length) {
-                        // Pair: put second most recent on left, most recent on right
-                        rearranged.push(sorted[i + 1], sorted[i]);
-                      } else {
-                        // Odd number: last item goes on left
-                        rearranged.push(sorted[i]);
-                      }
-                    }
-                    return rearranged;
-                  })().map((apt) => {
-                    const datetime = new Date(apt.datetime);
-                    const isPast = datetime < new Date();
-                    return (
-                      <div 
-                        key={apt.id} 
-                        className={`contact-appointment-card ${isPast ? 'past' : ''}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Calendar className={`contact-icon-calendar ${isPast ? 'past' : ''}`} />
-                              <span className={`font-medium ${isPast ? 'contact-text-past' : ''}`}>
-                                {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                              </span>
-                              <Clock className={`contact-icon-clock ml-1 ${isPast ? 'past' : ''}`} />
-                              <span className={isPast ? 'contact-text-past' : ''}>
-                                {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                              </span>
-                            </div>
-                            {apt.comment && (
-                              <p className={`contact-text-comment ${isPast ? 'past' : ''}`}>
-                                {apt.comment}
-                              </p>
-                            )}
-                            <div className="flex flex-col gap-1">
-                              <div className="flex items-center gap-2">
-                                <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                                  {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
-                                    day: '2-digit', 
-                                    month: '2-digit', 
-                                    year: 'numeric',
-                                    hour: '2-digit', 
-                                    minute: '2-digit'
-                                  }) : '-'}
-                                </span>
-                                {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
-                                  <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                                    • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                  {/* Past Events Column */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold mb-2">Événements passés</h3>
+                    {[...appointments]
+                      .filter((apt) => new Date(apt.datetime) < new Date())
+                      .sort((a, b) => {
+                        const dateA = new Date(a.datetime).getTime();
+                        const dateB = new Date(b.datetime).getTime();
+                        return dateB - dateA; // Most recent first
+                      })
+                      .slice(0, pastEventsLimit)
+                      .map((apt) => {
+                        const datetime = new Date(apt.datetime);
+                        return (
+                          <div 
+                            key={apt.id} 
+                            className="contact-appointment-card past"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Calendar className="contact-icon-calendar past" />
+                                  <span className="font-medium contact-text-past">
+                                    {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                   </span>
+                                  <Clock className="contact-icon-clock ml-1 past" />
+                                  <span className="contact-text-past">
+                                    {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                  </span>
+                                </div>
+                                {apt.comment && (
+                                  <p className="contact-text-comment past">
+                                    {apt.comment}
+                                  </p>
                                 )}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="contact-text-meta past">
+                                      {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
+                                        day: '2-digit', 
+                                        month: '2-digit', 
+                                        year: 'numeric',
+                                        hour: '2-digit', 
+                                        minute: '2-digit'
+                                      }) : '-'}
+                                    </span>
+                                    {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
+                                      <span className="contact-text-meta past">
+                                        • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {apt.assignedTo && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="contact-text-meta past">
+                                        Assigné à: <span className="font-medium">{apt.assignedTo}</span>
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              {apt.assignedTo && (
-                                <div className="flex items-center gap-2">
-                                  <span className={`contact-text-meta ${isPast ? 'past' : ''}`}>
-                                    Assigné à: <span className="font-medium">{apt.assignedTo}</span>
-                                  </span>
+                              {(canEditPlanning || canDeletePlanning) && (
+                                <div className="flex gap-2 flex-shrink-0">
+                                  {canEditPlanning && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleEditAppointment(apt)}
+                                      className="contact-tab-button-modify cursor-pointer text-slate-600 past"
+                                    >
+                                      Modifier
+                                    </Button>
+                                  )}
+                                  {canDeletePlanning && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleDeleteAppointment(apt.id)}
+                                      className="contact-tab-button-delete text-red-600 cursor-pointer past"
+                                    >
+                                      Supprimer
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                             </div>
                           </div>
-                          {(canEditPlanning || canDeletePlanning) && (
-                            <div className="flex gap-2 flex-shrink-0">
-                              {canEditPlanning && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEditAppointment(apt)}
-                                  className={`contact-tab-button-modify cursor-pointer text-slate-600 ${isPast ? 'past' : ''}`}
-                                >
-                                  Modifier
-                                </Button>
-                              )}
-                              {canDeletePlanning && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteAppointment(apt.id)}
-                                  className={`contact-tab-button-delete text-red-600 cursor-pointer ${isPast ? 'past' : ''}`}
-                                >
-                                  Supprimer
-                                </Button>
+                        );
+                      })}
+                    {appointments.filter((apt) => new Date(apt.datetime) < new Date()).length === 0 && (
+                      <p className="text-sm text-slate-500">Aucun événement passé</p>
+                    )}
+                    {appointments.filter((apt) => new Date(apt.datetime) < new Date()).length > pastEventsLimit && (
+                      <div className="flex justify-end mt-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setPastEventsLimit(prev => prev + 3);
+                            // If we need more events from API, load them
+                            if (appointments.filter((apt) => new Date(apt.datetime) < new Date()).length <= pastEventsLimit + 3 && hasMoreEvents) {
+                              onLoadMoreEvents();
+                            }
+                          }}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Voir plus...
+                        </Button>
+                      </div>
+                    )}
+                    {hasMoreEvents && appointments.filter((apt) => new Date(apt.datetime) < new Date()).length <= pastEventsLimit && (
+                      <div className="flex justify-end mt-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onLoadMoreEvents}
+                          disabled={loadingMoreEvents}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          {loadingMoreEvents ? 'Chargement...' : 'Voir plus...'}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Future Events Column */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold mb-2">Événements à venir</h3>
+                    {[...appointments]
+                      .filter((apt) => new Date(apt.datetime) >= new Date())
+                      .sort((a, b) => {
+                        const dateA = new Date(a.datetime).getTime();
+                        const dateB = new Date(b.datetime).getTime();
+                        return dateA - dateB; // Soonest first
+                      })
+                      .slice(0, futureEventsLimit)
+                      .map((apt) => {
+                        const datetime = new Date(apt.datetime);
+                        return (
+                          <div 
+                            key={apt.id} 
+                            className="contact-appointment-card"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Calendar className="contact-icon-calendar" />
+                                  <span className="font-medium">
+                                    {datetime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                  </span>
+                                  <Clock className="contact-icon-clock ml-1" />
+                                  <span>
+                                    {datetime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                  </span>
+                                </div>
+                                {apt.comment && (
+                                  <p className="contact-text-comment">
+                                    {apt.comment}
+                                  </p>
+                                )}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="contact-text-meta">
+                                      {apt.created_at ? new Date(apt.created_at).toLocaleString('fr-FR', { 
+                                        day: '2-digit', 
+                                        month: '2-digit', 
+                                        year: 'numeric',
+                                        hour: '2-digit', 
+                                        minute: '2-digit'
+                                      }) : '-'}
+                                    </span>
+                                    {(apt.createdBy || apt.userId?.username || apt.user?.username) && (
+                                      <span className="contact-text-meta">
+                                        • {apt.createdBy || apt.userId?.username || apt.user?.username}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {apt.assignedTo && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="contact-text-meta">
+                                        Assigné à: <span className="font-medium">{apt.assignedTo}</span>
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {(canEditPlanning || canDeletePlanning) && (
+                                <div className="flex gap-2 flex-shrink-0">
+                                  {canEditPlanning && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleEditAppointment(apt)}
+                                      className="contact-tab-button-modify cursor-pointer text-slate-600"
+                                    >
+                                      Modifier
+                                    </Button>
+                                  )}
+                                  {canDeletePlanning && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleDeleteAppointment(apt.id)}
+                                      className="contact-tab-button-delete text-red-600 cursor-pointer"
+                                    >
+                                      Supprimer
+                                    </Button>
+                                  )}
+                                </div>
                               )}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        );
+                      })}
+                    {appointments.filter((apt) => new Date(apt.datetime) >= new Date()).length === 0 && (
+                      <p className="text-sm text-slate-500">Aucun événement à venir</p>
+                    )}
+                    {appointments.filter((apt) => new Date(apt.datetime) >= new Date()).length > futureEventsLimit && (
+                      <div className="flex justify-end mt-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setFutureEventsLimit(prev => prev + 3);
+                            // If we need more events from API, load them
+                            if (appointments.filter((apt) => new Date(apt.datetime) >= new Date()).length <= futureEventsLimit + 3 && hasMoreEvents) {
+                              onLoadMoreEvents();
+                            }
+                          }}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Voir plus...
+                        </Button>
                       </div>
-                    );
-                  })}
+                    )}
+                    {hasMoreEvents && appointments.filter((apt) => new Date(apt.datetime) >= new Date()).length <= futureEventsLimit && (
+                      <div className="flex justify-end mt-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onLoadMoreEvents}
+                          disabled={loadingMoreEvents}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          {loadingMoreEvents ? 'Chargement...' : 'Voir plus...'}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-slate-500">Aucun rendez-vous</p>
@@ -2144,84 +2330,101 @@ export function ContactInfoTab({
               <div className="contact-status-field-container">
                 <Label className="text-slate-600">Statut</Label>
                 <div className="flex items-center gap-2">
-                <div 
-                    className={`contact-field-display flex-1 ${canEditField('statusId') ? 'editable' : ''}`}
-                    onClick={canEditField('statusId') ? async () => {
-                      // Fetch fresh contact data
-                      try {
-                        const contactData = await apiCall(`/api/contacts/${contactId}/`);
-                        const freshContact = contactData.contact || contact;
-                        setSelectedStatusId(freshContact.statusId || '');
-                        setStatusChangeNote('');
-                        setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
-                        // Set filter type based on current status
-                        const currentStatus = statuses.find(s => s.id === freshContact.statusId);
-                        if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
-                          setStatusModalFilterType(currentStatus.type);
-                        } else {
-                          setStatusModalFilterType('lead');
+                {(() => {
+                  // Check if user can edit the status field AND can edit this contact's current status
+                  const canEditStatusField = canEditField('statusId');
+                  const canEditCurrentStatus = canEditContact(contact);
+                  const canClickStatus = canEditStatusField && canEditCurrentStatus;
+                  
+                  return (
+                    <div 
+                      className={`contact-field-display flex-1 ${canClickStatus ? 'editable' : ''}`}
+                      onClick={canClickStatus ? async () => {
+                        // Fetch fresh contact data
+                        try {
+                          const contactData = await apiCall(`/api/contacts/${contactId}/`);
+                          const freshContact = contactData.contact || contact;
+                          setSelectedStatusId(freshContact.statusId || '');
+                          setStatusChangeNote('');
+                          setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                          // Set filter type based on current status
+                          const currentStatus = statuses.find(s => s.id === freshContact.statusId);
+                          if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                            setStatusModalFilterType(currentStatus.type);
+                          } else {
+                            setStatusModalFilterType('lead');
+                          }
+                          // Prefill client form if status is client default
+                          if (currentStatus?.clientDefault === true) {
+                            const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+                              ? currentUser.id 
+                              : (freshContact.teleoperatorId || freshContact.managerId || '');
+                            
+                            setClientFormData({
+                              platformId: freshContact.platformId || '',
+                              teleoperatorId: defaultTeleoperatorId,
+                              nomDeScene: freshContact.nomDeScene || '',
+                              firstName: freshContact.firstName || '',
+                              lastName: freshContact.lastName || '',
+                              emailClient: freshContact.email || '',
+                              telephoneClient: freshContact.phone || '',
+                              portableClient: freshContact.mobile || '',
+                              contrat: freshContact.contrat || '',
+                              sourceId: freshContact.sourceId || '',
+                              montantEncaisse: freshContact.montantEncaisse || '',
+                              bonus: freshContact.bonus || '',
+                              paiement: freshContact.paiement || '',
+                              noteGestionnaire: '',
+                              noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                            });
+                            setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                          }
+                          setIsStatusModalOpen(true);
+                        } catch (error) {
+                          console.error('Error fetching fresh contact:', error);
+                          // Fallback to current contact
+                          setSelectedStatusId(contact.statusId || '');
+                          setStatusChangeNote('');
+                          setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                          const currentStatus = statuses.find(s => s.id === contact.statusId);
+                          if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
+                            setStatusModalFilterType(currentStatus.type);
+                          } else {
+                            setStatusModalFilterType('lead');
+                          }
+                          setIsStatusModalOpen(true);
                         }
-                        // Prefill client form if status is client default
-                        if (currentStatus?.clientDefault === true) {
-                          const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
-                            ? currentUser.id 
-                            : (freshContact.teleoperatorId || freshContact.managerId || '');
-                          
-                          setClientFormData({
-                            platformId: freshContact.platformId || '',
-                            teleoperatorId: defaultTeleoperatorId,
-                            nomDeScene: freshContact.nomDeScene || '',
-                            firstName: freshContact.firstName || '',
-                            lastName: freshContact.lastName || '',
-                            emailClient: freshContact.email || '',
-                            telephoneClient: freshContact.phone || '',
-                            portableClient: freshContact.mobile || '',
-                            contrat: freshContact.contrat || '',
-                            sourceId: freshContact.sourceId || '',
-                            montantEncaisse: freshContact.montantEncaisse || '',
-                            bonus: freshContact.bonus || '',
-                            paiement: freshContact.paiement || '',
-                            noteGestionnaire: '',
-                            noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
-                          });
-                          setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
-                        }
-                        setIsStatusModalOpen(true);
-                      } catch (error) {
-                        console.error('Error fetching fresh contact:', error);
-                        // Fallback to current contact
-                        setSelectedStatusId(contact.statusId || '');
-                        setStatusChangeNote('');
-                        setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
-                        const currentStatus = statuses.find(s => s.id === contact.statusId);
-                        if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
-                          setStatusModalFilterType(currentStatus.type);
-                        } else {
-                          setStatusModalFilterType('lead');
-                        }
-                        setIsStatusModalOpen(true);
-                      }
-                  } : undefined}
-                >
-                  {(() => {
-                    const statusText = getStatusDisplayText(contact);
-                    const isMaskedStatus = statusText === 'CLIENT EN COURS' || statusText.startsWith('Indisponible');
-                    const statusBgColor = statusText === 'CLIENT EN COURS' ? '#22c55e' : (isMaskedStatus ? '#e5e7eb' : (contact.statusColor || '#e5e7eb'));
-                    const statusTextColor = statusText === 'CLIENT EN COURS' ? '#ffffff' : (isMaskedStatus ? '#374151' : (contact.statusColor ? '#000000' : '#374151'));
-                    
-                    return (
-                      <span 
-                        className="contact-status-badge"
-                        style={{
-                          backgroundColor: statusBgColor,
-                          color: statusTextColor
-                        }}
-                      >
-                        {statusText}
-                      </span>
-                    );
-                    })()}
-                  </div>
+                      } : (e) => {
+                        // Prevent any action if user doesn't have permission
+                        e.stopPropagation();
+                      }}
+                      style={canClickStatus ? {} : {
+                        cursor: 'not-allowed',
+                        opacity: 0.7
+                      }}
+                      title={canClickStatus ? undefined : "Vous n'avez pas la permission de modifier le statut de ce contact"}
+                    >
+                      {(() => {
+                        const statusText = getStatusDisplayText(contact);
+                        const isMaskedStatus = statusText === 'CLIENT EN COURS' || statusText.startsWith('Indisponible');
+                        const statusBgColor = statusText === 'CLIENT EN COURS' ? '#22c55e' : (isMaskedStatus ? '#e5e7eb' : (contact.statusColor || '#e5e7eb'));
+                        const statusTextColor = statusText === 'CLIENT EN COURS' ? '#ffffff' : (isMaskedStatus ? '#374151' : (contact.statusColor ? '#000000' : '#374151'));
+                        
+                        return (
+                          <span 
+                            className="contact-status-badge"
+                            style={{
+                              backgroundColor: statusBgColor,
+                              color: statusTextColor
+                            }}
+                          >
+                            {statusText}
+                          </span>
+                        );
+                        })()}
+                    </div>
+                  );
+                })()}
                 </div>
               </div>
             )}
@@ -3795,7 +3998,12 @@ export function ContactInfoTab({
                         const normalizedStatusId = String(status.id).trim();
                         if (!statusViewPermissions.has(normalizedStatusId)) return false;
                         // Filter by status type - only show statuses matching the current filter type
-                        if (status.type !== statusModalFilterType) {
+                        // Strict check: must match exactly and be either 'lead' or 'client'
+                        if (!status.type || status.type !== statusModalFilterType) {
+                          return false;
+                        }
+                        // Additional safety check: ensure type is valid
+                        if (status.type !== 'lead' && status.type !== 'client') {
                           return false;
                         }
                         return true;

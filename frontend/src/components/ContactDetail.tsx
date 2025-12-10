@@ -19,6 +19,9 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   const [notes, setNotes] = useState<any[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(true); // Start as true to show skeleton initially
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [eventsPage, setEventsPage] = useState(1);
+  const [eventsHasMore, setEventsHasMore] = useState(false);
+  const [loadingMoreEvents, setLoadingMoreEvents] = useState(false);
 
   useEffect(() => {
     loadContactData();
@@ -38,8 +41,13 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       
       setContact((contactData as any).contact);
       
+      // Reset events pagination when contact changes
+      setAppointments([]);
+      setEventsPage(1);
+      setEventsHasMore(false);
+      
       // Load notes and events in parallel after contact is loaded (non-blocking)
-      loadNotesAndEvents();
+      loadNotesAndEvents(1);
     } catch (error) {
       console.error('Error loading contact data:', error);
       setContact(null);
@@ -47,24 +55,28 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   }
 
   // Load notes and events in parallel (non-blocking)
-  async function loadNotesAndEvents() {
-    setLoadingNotes(true);
-    setLoadingEvents(true);
+  async function loadNotesAndEvents(page: number = 1, append: boolean = false) {
+    if (page === 1) {
+      setLoadingNotes(true);
+      setLoadingEvents(true);
+    } else {
+      setLoadingMoreEvents(true);
+    }
     
     // Load notes and events in parallel for better performance
     try {
       const [notesResult, eventsResult] = await Promise.allSettled([
-        apiCall(`/api/notes/?contactId=${contactId}`),
-        apiCall(`/api/events/?contactId=${contactId}`)
+        page === 1 ? apiCall(`/api/notes/?contactId=${contactId}`) : Promise.resolve(null), // Only load notes on first page
+        apiCall(`/api/events/?contactId=${contactId}&page=${page}&page_size=20`)
       ]);
 
-      // Handle notes result
-      if (notesResult.status === 'fulfilled') {
+      // Handle notes result (only on first page)
+      if (page === 1 && notesResult.status === 'fulfilled') {
         const notesData = notesResult.value;
         // Handle both paginated response (data.results) and direct array response
         const notesArray = Array.isArray(notesData) ? notesData : ((notesData as any).results || (notesData as any).notes || notesData || []);
         setNotes(notesArray);
-      } else {
+      } else if (page === 1 && notesResult.status === 'rejected') {
         console.error('Error loading notes:', notesResult.reason);
         setNotes([]);
       }
@@ -73,19 +85,42 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       if (eventsResult.status === 'fulfilled') {
         const eventsData = eventsResult.value;
         const eventsArray = (eventsData as any).events || [];
-        setAppointments(eventsArray);
+        
+        if (append) {
+          setAppointments(prev => [...prev, ...eventsArray]);
+        } else {
+          setAppointments(eventsArray);
+        }
+        
+        // Update pagination state
+        setEventsHasMore((eventsData as any).has_next || false);
+        setEventsPage(page);
       } else {
         console.error('Error loading events:', eventsResult.reason);
-        setAppointments([]);
+        if (!append) {
+          setAppointments([]);
+        }
       }
     } catch (err) {
       console.error('Error loading notes and events:', err);
-      setNotes([]);
-      setAppointments([]);
+      if (!append) {
+        setNotes([]);
+        setAppointments([]);
+      }
     } finally {
-      setLoadingNotes(false);
-      setLoadingEvents(false);
+      if (page === 1) {
+        setLoadingNotes(false);
+        setLoadingEvents(false);
+      } else {
+        setLoadingMoreEvents(false);
+      }
     }
+  }
+
+  // Load more events
+  async function loadMoreEvents() {
+    if (!eventsHasMore || loadingMoreEvents) return;
+    await loadNotesAndEvents(eventsPage + 1, true);
   }
 
   async function handleContactUpdated() {
@@ -125,6 +160,10 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
               notes={notes}
               contactId={contactId}
               onRefresh={loadContactData}
+              loadingEvents={loadingEvents}
+              loadingMoreEvents={loadingMoreEvents}
+              hasMoreEvents={eventsHasMore}
+              onLoadMoreEvents={loadMoreEvents}
             />
           )}
         </TabsContent>

@@ -27,8 +27,8 @@ import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
 from django.db.models import Count, Q, Sum, F
-from django.db.models.functions import Cast, MD5, Substr, Coalesce
-from django.db.models import CharField
+from django.db.models.functions import Cast, MD5, Substr, Coalesce, Concat
+from django.db.models import CharField, Value
 import boto3
 from botocore.exceptions import ClientError
 import os
@@ -827,9 +827,15 @@ class ContactView(generics.ListAPIView):
         # Apply search filter
         search = request.query_params.get('search', '').strip()
         if search:
-            queryset = queryset.filter(
-                models.Q(fname__icontains=search) |
-                models.Q(lname__icontains=search) |
+            # Search in combined full name (same logic as fullName filter) and email
+            queryset = queryset.annotate(
+                full_name_search=Concat(
+                    Coalesce('fname', Value('')), 
+                    Value(' '), 
+                    Coalesce('lname', Value(''))
+                )
+            ).filter(
+                models.Q(full_name_search__icontains=search) |
                 models.Q(email__icontains=search)
             )
         
@@ -920,10 +926,16 @@ class ContactView(generics.ListAPIView):
                                         models.Q(mobile_str__contains=mobile_search)
                                     )
                             elif column_id == 'fullName':
-                                # Search in both first name and last name
-                                queryset = queryset.filter(
-                                    models.Q(fname__icontains=value) | models.Q(lname__icontains=value)
-                                )
+                                # Search in the combined full name string (first name + space + last name)
+                                # Handle NULL values with Coalesce to avoid NULL results
+                                # Use unique annotation name to avoid conflicts
+                                queryset = queryset.annotate(
+                                    full_name_search=Concat(
+                                        Coalesce('fname', Value('')), 
+                                        Value(' '), 
+                                        Coalesce('lname', Value(''))
+                                    )
+                                ).filter(full_name_search__icontains=value)
                             elif column_id == 'firstName':
                                 queryset = queryset.filter(fname__icontains=value)
                             elif column_id == 'lastName':
@@ -1008,6 +1020,87 @@ class ContactView(generics.ListAPIView):
                             models.Q(teleoperator__user_details__team_memberships__team_id__in=regular_values) |
                             models.Q(confirmateur__user_details__team_memberships__team_id__in=regular_values)
                         )
+                    elif column_id == 'previousStatus':
+                        # Filter by previous status from logs
+                        # The serializer finds the most recent status change log (ordered by -created_at)
+                        # where old_value.statusName != new_value.statusName
+                        # We'll find contacts that have at least one status change log with matching old_value.statusName
+                        from .models import Log
+                        from django.db.models import OuterRef, Exists
+                        
+                        # Find contacts that have logs with old_value.statusName matching filter values
+                        # where status actually changed (old != new)
+                        matching_contact_ids = set()
+                        print(f"[CONTACT DEBUG] previousStatus filter - regular_values: {regular_values}")
+                        for status_name in regular_values:
+                            print(f"[CONTACT DEBUG] previousStatus filter - searching for status_name: '{status_name}'")
+                            # Find logs where status changed and old_value.statusName matches
+                            matching_logs = Log.objects.filter(
+                                contact_id=OuterRef('pk'),
+                                old_value__statusName=status_name,
+                                new_value__statusName__isnull=False
+                            ).exclude(
+                                old_value__statusName=models.F('new_value__statusName')
+                            )
+                            
+                            # Get contacts that have at least one matching log
+                            # Note: This finds contacts with ANY matching status change, not necessarily the most recent
+                            # For exact matching, we'd need to check the most recent one, but that's very complex
+                            contacts = Contact.objects.filter(
+                                Exists(matching_logs)
+                            ).values_list('id', flat=True)
+                            
+                            contact_list = list(contacts)
+                            print(f"[CONTACT DEBUG] previousStatus filter - found {len(contact_list)} contacts for status_name: '{status_name}'")
+                            matching_contact_ids.update(contact_list)
+                        
+                        print(f"[CONTACT DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
+                        
+                        # Match preview logic:
+                        # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
+                        # - So we need to add regular values filter, and empty filter will be combined with OR if has_empty is True
+                        if matching_contact_ids:
+                            q_objects.append(models.Q(id__in=matching_contact_ids))
+                            print(f"[CONTACT DEBUG] previousStatus filter - Added Q object with {len(matching_contact_ids)} contact IDs")
+                        elif not has_empty:
+                            # No matches and no empty option - exclude all (strict filter)
+                            print(f"[CONTACT DEBUG] previousStatus filter - No matches found and empty not selected, excluding all contacts")
+                            queryset = queryset.none()
+                            break
+                        # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
+                        # The empty filter (already added above) will be applied, showing only contacts with empty previousStatus
+                        elif has_empty:
+                            print(f"[CONTACT DEBUG] previousStatus filter - No matches found but empty selected, will show only empty contacts")
+                    elif column_id == 'previousTeleoperator':
+                        # Filter by previous teleoperator from logs
+                        # Similar to previousStatus - find contacts with matching old_value.teleoperatorName
+                        from .models import Log
+                        from django.db.models import OuterRef, Exists
+                        
+                        matching_contact_ids = set()
+                        for teleoperator_name in regular_values:
+                            # Find logs where teleoperator changed and old_value.teleoperatorName matches
+                            matching_logs = Log.objects.filter(
+                                contact_id=OuterRef('pk'),
+                                old_value__teleoperatorName=teleoperator_name,
+                                new_value__teleoperatorName__isnull=False
+                            ).exclude(
+                                old_value__teleoperatorName=models.F('new_value__teleoperatorName')
+                            )
+                            
+                            # Get contacts that have at least one matching log
+                            contacts = Contact.objects.filter(
+                                Exists(matching_logs)
+                            ).values_list('id', flat=True)
+                            
+                            matching_contact_ids.update(contacts)
+                        
+                        if matching_contact_ids:
+                            q_objects.append(models.Q(id__in=matching_contact_ids))
+                        elif not has_empty:
+                            # No matches and no empty option - exclude all
+                            queryset = queryset.none()
+                            break
                 
                 # Add empty/null filter if empty option is selected
                 # If we have regular_values, combine with OR (regular values OR empty)
@@ -1040,6 +1133,21 @@ class ContactView(generics.ListAPIView):
                             models.Q(confirmateur__isnull=True) |
                             models.Q(confirmateur__user_details__team_memberships__isnull=True)
                         )
+                    elif column_id == 'previousStatus':
+                        # Empty previousStatus means no previous status (contact never had a status change)
+                        # This is tricky - we need to find contacts that have no status change logs
+                        from .models import Log
+                        # Get all contact IDs that have status change logs
+                        contacts_with_status_changes = Log.objects.filter(
+                            contact_id__isnull=False,
+                            old_value__statusName__isnull=False,
+                            new_value__statusName__isnull=False
+                        ).exclude(
+                            old_value__statusName=models.F('new_value__statusName')
+                        ).values_list('contact_id_id', flat=True).distinct()
+                        
+                        # Contacts without status changes (empty previousStatus)
+                        empty_q = ~models.Q(id__in=contacts_with_status_changes)
                     else:
                         empty_q = None
                         print(f"[DEBUG] WARNING: No empty_q created for column '{column_id}'")
@@ -1406,28 +1514,200 @@ class FosseContactView(generics.ListAPIView):
                     # Handle empty string as None
                     default_order = fosse_setting.default_order if fosse_setting.default_order and fosse_setting.default_order.strip() else None
                     
-                    # Apply forced 'defined' type filters server-side
+                    # Apply forced filters server-side (both 'defined' and 'open' types)
                     # This ensures forced filters are always applied even if frontend doesn't send them
                     for column_id, filter_config in forced_filters.items():
                         config = filter_config if isinstance(filter_config, dict) else {}
-                        if config.get('type') == 'defined' and config.get('values'):
-                            values = config['values']
-                            if column_id == 'status':
-                                queryset = queryset.filter(status_id__in=values)
-                            elif column_id == 'source':
-                                queryset = queryset.filter(source_id__in=values)
-                            elif column_id == 'creator':
-                                queryset = queryset.filter(creator_id__in=values)
-                            elif column_id == 'postalCode':
-                                queryset = queryset.filter(postal_code__in=values)
-                            elif column_id == 'nationality':
-                                queryset = queryset.filter(nationality__in=values)
-                            elif column_id == 'campaign':
-                                queryset = queryset.filter(campaign__in=values)
-                            elif column_id == 'civility':
-                                queryset = queryset.filter(civility__in=values)
-                        elif config.get('type') == 'open':
-                            # Apply 'open' type filters server-side if they have values
+                        config_type = config.get('type')
+                        config_values = config.get('values')
+                        
+                        # Handle multi-select filters (both 'defined' and 'open' types with values)
+                        if (config_type == 'defined' or config_type == 'open') and config_values and len(config_values) > 0:
+                            values = config_values
+                            has_empty = '__empty__' in values
+                            regular_values = [v for v in values if v != '__empty__']
+                            
+                            # Debug logging for forced filters
+                            if column_id in ['previousStatus', 'previousTeleoperator']:
+                                print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - values: {values}, has_empty: {has_empty}, regular_values: {regular_values}")
+                                print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - config_type: {config_type}, config_values: {config_values}")
+                            
+                            # Build Q objects for filtering
+                            q_objects = []
+                            
+                            # IMPORTANT: For forced filters, only apply filters if values are explicitly provided
+                            # If user forced a specific value (not empty), has_empty should be False
+                            # and we should only show contacts matching that value
+                            
+                            # Add regular value filters if any
+                            if regular_values:
+                                if column_id == 'status':
+                                    q_objects.append(models.Q(status_id__in=regular_values))
+                                elif column_id == 'source':
+                                    q_objects.append(models.Q(source_id__in=regular_values))
+                                elif column_id == 'creator':
+                                    q_objects.append(models.Q(creator_id__in=regular_values))
+                                elif column_id == 'postalCode':
+                                    q_objects.append(models.Q(postal_code__in=regular_values))
+                                elif column_id == 'nationality':
+                                    q_objects.append(models.Q(nationality__in=regular_values))
+                                elif column_id == 'campaign':
+                                    q_objects.append(models.Q(campaign__in=regular_values))
+                                elif column_id == 'civility':
+                                    q_objects.append(models.Q(civility__in=regular_values))
+                                elif column_id == 'previousStatus':
+                                    # Filter by previous status from logs - same logic as regular filter
+                                    from .models import Log
+                                    from django.db.models import OuterRef, Exists
+                                    
+                                    matching_contact_ids = set()
+                                    for status_name in regular_values:
+                                        matching_logs = Log.objects.filter(
+                                            contact_id=OuterRef('pk'),
+                                            old_value__statusName=status_name,
+                                            new_value__statusName__isnull=False
+                                        ).exclude(
+                                            old_value__statusName=models.F('new_value__statusName')
+                                        )
+                                        # Get contacts that have matching logs - use all contacts, not just current queryset
+                                        # because we need to find contacts by their log history
+                                        contacts = Contact.objects.filter(
+                                            Exists(matching_logs)
+                                        ).values_list('id', flat=True)
+                                        matching_contact_ids.update(contacts)
+                                    
+                                    if matching_contact_ids:
+                                        q_objects.append(models.Q(id__in=matching_contact_ids))
+                                    # If no matches found and has_empty is False, we'll exclude all contacts below
+                                    # If has_empty is True, empty_q will be added below, but only if empty was explicitly selected
+                                elif column_id == 'previousTeleoperator':
+                                    # Filter by previous teleoperator from logs - same logic as regular filter
+                                    from .models import Log
+                                    from django.db.models import OuterRef, Exists
+                                    
+                                    matching_contact_ids = set()
+                                    for teleoperator_name in regular_values:
+                                        matching_logs = Log.objects.filter(
+                                            contact_id=OuterRef('pk'),
+                                            old_value__teleoperatorName=teleoperator_name,
+                                            new_value__teleoperatorName__isnull=False
+                                        ).exclude(
+                                            old_value__teleoperatorName=models.F('new_value__teleoperatorName')
+                                        )
+                                        # Get contacts that have matching logs - use all contacts, not just current queryset
+                                        # because we need to find contacts by their log history
+                                        contacts = Contact.objects.filter(
+                                            Exists(matching_logs)
+                                        ).values_list('id', flat=True)
+                                        matching_contact_ids.update(contacts)
+                                    
+                                    if matching_contact_ids:
+                                        q_objects.append(models.Q(id__in=matching_contact_ids))
+                                    # If no matches found and has_empty is False, we'll exclude all contacts below
+                                    # If has_empty is True, empty_q will be added below, but only if empty was explicitly selected
+                            
+                            # Add empty filter ONLY if empty option was explicitly selected (has_empty is True)
+                            # For forced filters, if user selected specific values without empty, only show those
+                            if has_empty:
+                                if column_id == 'status':
+                                    empty_q = models.Q(status_id__isnull=True)
+                                elif column_id == 'source':
+                                    empty_q = models.Q(source_id__isnull=True)
+                                elif column_id == 'creator':
+                                    empty_q = models.Q(creator_id__isnull=True)
+                                elif column_id == 'postalCode':
+                                    empty_q = models.Q(postal_code__isnull=True) | models.Q(postal_code='')
+                                elif column_id == 'nationality':
+                                    empty_q = models.Q(nationality__isnull=True) | models.Q(nationality='')
+                                elif column_id == 'campaign':
+                                    empty_q = models.Q(campaign__isnull=True) | models.Q(campaign='')
+                                elif column_id == 'civility':
+                                    empty_q = models.Q(civility__isnull=True) | models.Q(civility='')
+                                elif column_id == 'previousStatus':
+                                    # Empty previousStatus means no previous status (contact never had a status change)
+                                    from .models import Log
+                                    contacts_with_status_changes = Log.objects.filter(
+                                        contact_id__isnull=False,
+                                        old_value__statusName__isnull=False,
+                                        new_value__statusName__isnull=False
+                                    ).exclude(
+                                        old_value__statusName=models.F('new_value__statusName')
+                                    ).values_list('contact_id_id', flat=True).distinct()
+                                    empty_q = ~models.Q(id__in=contacts_with_status_changes)
+                                elif column_id == 'previousTeleoperator':
+                                    # Empty previousTeleoperator means no previous teleoperator (contact never had a teleoperator change)
+                                    from .models import Log
+                                    contacts_with_teleoperator_changes = Log.objects.filter(
+                                        contact_id__isnull=False,
+                                        old_value__teleoperatorName__isnull=False,
+                                        new_value__teleoperatorName__isnull=False
+                                    ).exclude(
+                                        old_value__teleoperatorName=models.F('new_value__teleoperatorName')
+                                    ).values_list('contact_id_id', flat=True).distinct()
+                                    empty_q = ~models.Q(id__in=contacts_with_teleoperator_changes)
+                                else:
+                                    empty_q = None
+                                
+                                if empty_q:
+                                    if regular_values:
+                                        # Regular values exist - only add empty_q if has_empty is True
+                                        # This matches preview logic: if (hasEmpty && !previousStatus) matches = true;
+                                        # So we combine: (regular_values) OR (empty) when has_empty is True
+                                        if has_empty:
+                                            q_objects.append(empty_q)
+                                        # If has_empty is False, don't add empty_q - only show regular values
+                                    else:
+                                        # Only empty option selected - show ONLY contacts with empty/null
+                                        # This matches preview logic: matches = hasEmpty && !previousStatus
+                                        q_objects = [empty_q]
+                            
+                            # Apply combined filter - match preview table logic exactly
+                            # Preview logic:
+                            # - If regularValues.length === 0: matches = hasEmpty && !previousStatus
+                            # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
+                            if q_objects:
+                                if column_id in ['previousStatus', 'previousTeleoperator']:
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - Applying {len(q_objects)} Q object(s)")
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - q_objects: {q_objects}, has_empty: {has_empty}, regular_values: {regular_values}")
+                                    queryset_before = queryset.count()
+                                
+                                if len(q_objects) == 1:
+                                    # Single filter - apply directly
+                                    queryset = queryset.filter(q_objects[0])
+                                else:
+                                    # Multiple filters - combine with OR (regular values OR empty)
+                                    # This matches preview: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
+                                    combined_q = q_objects[0]
+                                    for q_obj in q_objects[1:]:
+                                        combined_q |= q_obj
+                                    queryset = queryset.filter(combined_q)
+                                
+                                if column_id in ['previousStatus', 'previousTeleoperator']:
+                                    queryset_after = queryset.count()
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - queryset count: {queryset_before} -> {queryset_after}")
+                            elif column_id in ['previousStatus', 'previousTeleoperator']:
+                                # No q_objects but we're filtering - match preview logic
+                                print(f"[FOSSE FORCED FILTER DEBUG] WARNING: {column_id} - has_empty: {has_empty}, regular_values: {regular_values}, but q_objects is empty!")
+                                
+                                # Preview logic: if regularValues.length === 0, matches = hasEmpty && !previousStatus
+                                # So if only empty is selected and no q_objects, something went wrong
+                                if not regular_values and has_empty:
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - Only empty selected but empty_q not added - this shouldn't happen")
+                                    # empty_q should have been added above, but if not, exclude all to be safe
+                                    queryset = queryset.none()
+                                # Preview logic: if regularValues.length > 0 and no matches, matches = false (unless hasEmpty && !previousStatus)
+                                # So if regularValues exist but no matches and hasEmpty is false, exclude all
+                                elif regular_values and not has_empty:
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - No matches found for regular_values and empty not selected, excluding all contacts")
+                                    queryset = queryset.none()
+                                # If regularValues exist but no matches and hasEmpty is true, empty_q should have been added
+                                elif regular_values and has_empty:
+                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - No matches for regular_values but empty selected - empty_q should have been added above")
+                                    # This shouldn't happen - empty_q should have been added in the has_empty block above
+                                    # But if it didn't, exclude all to be safe
+                                    queryset = queryset.none()
+                        elif config_type == 'open':
+                            # Apply 'open' type filters server-side if they have text values or date ranges
                             # These are pre-filled but users can modify them
                             value = config.get('value')
                             if value and isinstance(value, str) and value.strip():
@@ -1435,10 +1715,16 @@ class FosseContactView(generics.ListAPIView):
                                 if column_id == 'email':
                                     queryset = queryset.filter(email__icontains=value)
                                 elif column_id == 'fullName':
-                                    queryset = queryset.filter(
-                                        models.Q(fname__icontains=value) |
-                                        models.Q(lname__icontains=value)
-                                    )
+                                    # Search in the combined full name string (first name + space + last name)
+                                    # Handle NULL values with Coalesce to avoid NULL results
+                                    # Use unique annotation name to avoid conflicts
+                                    queryset = queryset.annotate(
+                                        full_name_search=Concat(
+                                            Coalesce('fname', Value('')), 
+                                            Value(' '), 
+                                            Coalesce('lname', Value(''))
+                                        )
+                                    ).filter(full_name_search__icontains=value)
                             date_range = config.get('dateRange')
                             if date_range and isinstance(date_range, dict):
                                 if date_range.get('from') or date_range.get('to'):
@@ -1459,12 +1745,12 @@ class FosseContactView(generics.ListAPIView):
         except (UserDetails.DoesNotExist, Exception):
             pass
         
-        # Apply search filter
+        # Apply search filter (annotation already applied above if needed)
         search = request.query_params.get('search', '').strip()
         if search:
+            # Search in combined full name (same logic as fullName filter) and email
             queryset = queryset.filter(
-                models.Q(fname__icontains=search) |
-                models.Q(lname__icontains=search) |
+                models.Q(full_name_search__icontains=search) |
                 models.Q(email__icontains=search)
             )
         
@@ -1482,6 +1768,19 @@ class FosseContactView(generics.ListAPIView):
         status_type = request.query_params.get('status_type')
         if status_type and status_type != 'all':
             queryset = queryset.filter(status__type=status_type)
+        
+        # Check if we need full_name_search annotation (for search or fullName filter)
+        search = request.query_params.get('search', '').strip()
+        has_fullname_filter = any(key.startswith('filter_fullName') for key in request.query_params.keys())
+        if search or has_fullname_filter:
+            # Apply annotation once for both search and fullName filter
+            queryset = queryset.annotate(
+                full_name_search=Concat(
+                    Coalesce('fname', Value('')), 
+                    Value(' '), 
+                    Coalesce('lname', Value(''))
+                )
+            )
         
         # Apply column filters (similar to ContactView but with Fosse-specific handling)
         date_range_filters = {}
@@ -1522,8 +1821,22 @@ class FosseContactView(generics.ListAPIView):
                                         models.Q(phone_str__contains=phone_search) | 
                                         models.Q(mobile_str__contains=phone_search)
                                     )
+                            elif column_id == 'fullName':
+                                # Search in the combined full name string (first name + space + last name)
+                                # Annotation already applied above if search or fullName filter is present
+                                queryset = queryset.filter(full_name_search__icontains=value)
+                            elif column_id == 'firstName':
+                                queryset = queryset.filter(fname__icontains=value)
+                            elif column_id == 'lastName':
+                                queryset = queryset.filter(lname__icontains=value)
                             elif column_id == 'city':
                                 queryset = queryset.filter(city__icontains=value)
+                            elif column_id == 'address':
+                                queryset = queryset.filter(address__icontains=value)
+                            elif column_id == 'addressComplement':
+                                queryset = queryset.filter(address_complement__icontains=value)
+                            elif column_id == 'birthPlace':
+                                queryset = queryset.filter(birth_place__icontains=value)
         
         # Apply multi-select filters with Fosse-specific logic
         for column_id, values in multi_select_filters.items():
@@ -1537,6 +1850,10 @@ class FosseContactView(generics.ListAPIView):
                 has_empty = '__empty__' in values
                 regular_values = [v for v in values if v != '__empty__']
                 q_objects = []
+                
+                # Debug logging for previousStatus filter
+                if column_id == 'previousStatus':
+                    print(f"[FOSSE DEBUG] previousStatus filter - values: {values}, has_empty: {has_empty}, regular_values: {regular_values}")
                 
                 if has_empty:
                     if column_id == 'status':
@@ -1576,6 +1893,7 @@ class FosseContactView(generics.ListAPIView):
                         ).values_list('contact_id_id', flat=True).distinct()
                         
                         # Contacts without status changes (empty previousStatus)
+                        # Use a subquery to handle empty case correctly
                         q_objects.append(~models.Q(id__in=contacts_with_status_changes))
                     elif column_id == 'previousTeleoperator':
                         # Empty previousTeleoperator means no previous teleoperator (contact never had a teleoperator change)
@@ -1590,6 +1908,7 @@ class FosseContactView(generics.ListAPIView):
                         ).values_list('contact_id_id', flat=True).distinct()
                         
                         # Contacts without teleoperator changes (empty previousTeleoperator)
+                        # Use a subquery to handle empty case correctly
                         q_objects.append(~models.Q(id__in=contacts_with_teleoperator_changes))
                 
                 # Add regular value filters if any
@@ -1635,7 +1954,9 @@ class FosseContactView(generics.ListAPIView):
                         # Find contacts that have logs with old_value.statusName matching filter values
                         # where status actually changed (old != new)
                         matching_contact_ids = set()
+                        print(f"[FOSSE DEBUG] previousStatus filter - regular_values: {regular_values}")
                         for status_name in regular_values:
+                            print(f"[FOSSE DEBUG] previousStatus filter - searching for status_name: '{status_name}'")
                             # Find logs where status changed and old_value.statusName matches
                             matching_logs = Log.objects.filter(
                                 contact_id=OuterRef('pk'),
@@ -1652,14 +1973,27 @@ class FosseContactView(generics.ListAPIView):
                                 Exists(matching_logs)
                             ).values_list('id', flat=True)
                             
-                            matching_contact_ids.update(contacts)
+                            contact_list = list(contacts)
+                            print(f"[FOSSE DEBUG] previousStatus filter - found {len(contact_list)} contacts for status_name: '{status_name}'")
+                            matching_contact_ids.update(contact_list)
                         
+                        print(f"[FOSSE DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
+                        
+                        # Match preview logic:
+                        # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
+                        # - So we need to add regular values filter, and empty filter will be combined with OR if has_empty is True
                         if matching_contact_ids:
                             q_objects.append(models.Q(id__in=matching_contact_ids))
+                            print(f"[FOSSE DEBUG] previousStatus filter - Added Q object with {len(matching_contact_ids)} contact IDs")
                         elif not has_empty:
-                            # No matches and no empty option - exclude all
+                            # No matches and no empty option - exclude all (strict filter)
+                            print(f"[FOSSE DEBUG] previousStatus filter - No matches found and empty not selected, excluding all contacts")
                             queryset = queryset.none()
                             break
+                        # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
+                        # The empty filter (already added above) will be applied, showing only contacts with empty previousStatus
+                        elif has_empty:
+                            print(f"[FOSSE DEBUG] previousStatus filter - No matches found but empty selected, will show only empty contacts")
                     elif column_id == 'previousTeleoperator':
                         # Filter by previous teleoperator from logs
                         # Similar to previousStatus - find contacts with matching old_value.teleoperatorName
@@ -1696,15 +2030,28 @@ class FosseContactView(generics.ListAPIView):
                     if column_id == 'source':
                         print(f"[FOSSE DEBUG] About to apply source filter. Q objects count: {len(q_objects)}")
                         print(f"[FOSSE DEBUG] Queryset count before filter: {queryset.count()}")
+                    if column_id in ['previousStatus', 'previousTeleoperator']:
+                        print(f"[FOSSE DEBUG] {column_id} - q_objects count: {len(q_objects)}, has_empty: {has_empty}, regular_values: {regular_values}")
+                        print(f"[FOSSE DEBUG] {column_id} - q_objects: {q_objects}")
                     if len(q_objects) == 1:
                         # Single filter - apply directly
                         queryset = queryset.filter(q_objects[0])
+                        if column_id in ['previousStatus', 'previousTeleoperator']:
+                            print(f"[FOSSE DEBUG] {column_id} - Applied single filter, queryset count after: {queryset.count()}")
                     else:
                         # Multiple filters - combine with OR (empty OR regular values)
+                        # For previousStatus and previousTeleoperator, ensure empty filter is only included if has_empty is True
+                        if column_id in ['previousStatus', 'previousTeleoperator']:
+                            print(f"[FOSSE DEBUG] {column_id} combining {len(q_objects)} Q objects, has_empty: {has_empty}, regular_values: {regular_values}")
                         combined_q = q_objects[0]
                         for q_obj in q_objects[1:]:
                             combined_q |= q_obj
                         queryset = queryset.filter(combined_q)
+                        if column_id in ['previousStatus', 'previousTeleoperator']:
+                            print(f"[FOSSE DEBUG] {column_id} - Applied combined filter, queryset count after: {queryset.count()}")
+                elif column_id in ['previousStatus', 'previousTeleoperator']:
+                    # No q_objects but we're filtering - this shouldn't happen, but log it
+                    print(f"[FOSSE DEBUG] WARNING: {column_id} - has_empty: {has_empty}, regular_values: {regular_values}, but q_objects is empty!")
                     
                     # Special handling for managerTeam in Fosse
                     if column_id == 'managerTeam' and regular_values:
@@ -3437,9 +3784,58 @@ def event_list(request):
     
     # Allow filtering by contactId if provided as query parameter
     contact_id = request.query_params.get('contactId', None)
+    
+    # Check if pagination is requested (for contactId filtering)
+    requested_page = request.query_params.get('page')
+    requested_page_size = request.query_params.get('page_size')
+    
     if contact_id:
-        # Return all events for this contact (all users can see events for contacts they have access to)
-        events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId').order_by('datetime')
+        # Return events for this contact with pagination support
+        events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId').order_by('-datetime')  # Most recent first
+        
+        # Apply pagination if requested
+        if requested_page or requested_page_size:
+            from rest_framework.pagination import PageNumberPagination
+            
+            page_size = int(requested_page_size) if requested_page_size else 20  # Default 20 events per page
+            page = int(requested_page) if requested_page else 1
+            
+            # Ensure reasonable page size (max 100 per page)
+            if page_size > 100:
+                page_size = 100
+            if page_size < 1:
+                page_size = 20
+            
+            # Create pagination class with proper page_size
+            # Use a closure to capture page_size value
+            def create_event_pagination(page_size_val):
+                class EventPagination(PageNumberPagination):
+                    page_size = page_size_val
+                    page_size_query_param = 'page_size'
+                    max_page_size = 100
+                return EventPagination
+            
+            EventPagination = create_event_pagination(page_size)
+            paginator = EventPagination()
+            paginated_events = paginator.paginate_queryset(events, request)
+            
+            serializer = EventSerializer(paginated_events, many=True)
+            
+            # Return paginated response in consistent format
+            return Response({
+                'events': serializer.data,
+                'total': paginator.page.paginator.count,
+                'next': paginator.get_next_link(),
+                'previous': paginator.get_previous_link(),
+                'page': page,
+                'page_size': page_size,
+                'has_next': paginator.page.has_next(),
+                'has_previous': paginator.page.has_previous()
+            })
+        else:
+            # No pagination requested, return all events (backward compatibility)
+            serializer = EventSerializer(events, many=True)
+            return Response({'events': serializer.data})
     else:
         # Filter events based on user's role data_access level
         # Events are filtered based on the contacts the user can access
