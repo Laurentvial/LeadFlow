@@ -24,14 +24,31 @@ python backend/check_websocket_deployment.py
 
 ## Common Issues and Fixes
 
-### 1. ❌ Redis Not Configured
+### 1. ❌ Redis Channel Layer Connection Error
 
 **Symptoms:**
-- WebSocket connections fail immediately
-- Logs show: `No channel_layer available`
-- Channel layer errors in Heroku logs
+- WebSocket connections fail
+- Error: `'tuple' object has no attribute 'decode'`
+- Channel layer test fails in diagnostic script
 
 **Fix:**
+The Redis configuration has been updated to pass the Redis URL directly to `channels-redis`, which handles SSL automatically. The configuration in `settings.py` now uses:
+
+```python
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [REDIS_URL],  # Pass URL directly - handles SSL automatically
+            "capacity": 1500,
+            "expiry": 10,
+        },
+    },
+}
+```
+
+**If Redis is not configured at all:**
+
 ```bash
 # Add Redis addon to Heroku
 heroku addons:create heroku-redis:mini -a leadflow-backend-eu

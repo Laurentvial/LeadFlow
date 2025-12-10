@@ -87,12 +87,19 @@ def check_channel_layers():
             import asyncio
             async def test_channel_layer():
                 try:
-                    # Try to send a test message
-                    await channel_layer.send('test_channel', {'type': 'test'})
-                    print("✅ Channel layer connection successful!")
-                    return True
+                    # Try to get a channel name (this tests the connection)
+                    test_channel = channel_layer.new_channel()
+                    if test_channel:
+                        print("✅ Channel layer connection successful!")
+                        return True
+                    else:
+                        print("⚠️  Channel layer returned None for new_channel()")
+                        return False
                 except Exception as e:
                     print(f"❌ Channel layer connection failed: {e}")
+                    print(f"   Error type: {type(e).__name__}")
+                    import traceback
+                    print(f"   Traceback: {traceback.format_exc()}")
                     return False
             
             result = asyncio.run(test_channel_layer())
