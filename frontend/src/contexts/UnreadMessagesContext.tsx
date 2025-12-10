@@ -96,8 +96,10 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
   const loadUnreadCount = useCallback(async () => {
     try {
       const data = await apiCall('/api/chat/rooms/');
-      const rooms = data || [];
-      const total = rooms.reduce((sum: number, room: any) => sum + (room.unreadCount || 0), 0);
+      // Handle both old format (array) and new format (object with chatRooms array)
+      const responseData = Array.isArray(data) ? { chatRooms: data } : data;
+      const rooms = responseData?.chatRooms || [];
+      const total = Array.isArray(rooms) ? rooms.reduce((sum: number, room: any) => sum + (room.unreadCount || 0), 0) : 0;
       setTotalUnreadCount(total);
     } catch (error: any) {
       console.error('Error loading unread messages count:', error);
