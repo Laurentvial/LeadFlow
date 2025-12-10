@@ -34,7 +34,8 @@ REST_FRAMEWORK = {
 }
 
 # Disable CSRF for API endpoints (using JWT instead)
-CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(',')
+# Include Vercel domain for production frontend
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,https://lead-flow-orpin.vercel.app').split(',')
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
@@ -265,27 +266,28 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Note: CORS_ALLOW_ALL_ORIGINS and CORS_ALLOWED_ORIGINS are mutually exclusive
 # For development and production, we allow all origins by default
 # You can restrict this by setting CORS_ALLOWED_ORIGINS environment variable
-# However, localhost origins are always included for local development
+# However, localhost origins and Vercel domain are always included
 
 # Check if CORS_ALLOWED_ORIGINS is explicitly set
 CORS_ALLOWED_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', '')
 
-# Default localhost origins that should always be allowed
-DEFAULT_LOCALHOST_ORIGINS = [
+# Default origins that should always be allowed
+DEFAULT_REQUIRED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://lead-flow-orpin.vercel.app',  # Production Vercel frontend
 ]
 
 if CORS_ALLOWED_ORIGINS_ENV:
     # Use specific origins if provided via environment variable
-    # Always include localhost origins for local development
+    # Always include required origins (localhost + Vercel) for development and production
     allowed_origins = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_ENV.split(',') if origin.strip()]
-    # Add localhost origins if not already present
-    for localhost_origin in DEFAULT_LOCALHOST_ORIGINS:
-        if localhost_origin not in allowed_origins:
-            allowed_origins.append(localhost_origin)
+    # Add required origins if not already present
+    for required_origin in DEFAULT_REQUIRED_ORIGINS:
+        if required_origin not in allowed_origins:
+            allowed_origins.append(required_origin)
     CORS_ALLOWED_ORIGINS = allowed_origins
     CORS_ALLOW_ALL_ORIGINS = False
     # Log for debugging (only in DEBUG mode)
