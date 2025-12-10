@@ -1,8 +1,13 @@
 from django.db.models.signals import post_save
 from django.db.models import Q
 from django.dispatch import receiver
-from .models import Status, Role, Permission, PermissionRole, NotificationPreference
+from .models import Status, Role, Permission, PermissionRole, NotificationPreference, Notification
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Predefined components that should have permissions
 PREDEFINED_COMPONENTS = [
@@ -142,4 +147,64 @@ def create_permissions_for_new_role(sender, instance, created, **kwargs):
             'notify_contact_edit': True
         }
     )
+
+
+@receiver(post_save, sender=Notification)
+def send_notification_via_websocket(sender, instance, created, **kwargs):
+    """
+    When a Notification is created, send it via WebSocket to the user.
+    Skip event notifications as they are handled separately by send_event_notification.
+    """
+    if not created:
+        return  # Only send for new notifications
+    
+    # Skip event notifications - they're handled by send_event_notification function
+    if instance.type == 'event':
+        return
+    
+    # Skip message notifications - they're handled by chat WebSocket
+    if instance.type == 'message':
+        return
+    
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning("[send_notification_via_websocket] No channel layer available")
+            return
+        
+        # Serialize notification data
+        notification_data = {
+            'id': instance.id,
+            'type': instance.type,
+            'title': instance.title,
+            'message': instance.message,
+            'message_id': instance.message_id if instance.message_id else None,
+            'email_id': instance.email_id if instance.email_id else None,
+            'contact_id': instance.contact_id if instance.contact_id else None,
+            'event_id': instance.event_id if instance.event_id else None,
+            'data': instance.data if instance.data else {},
+            'is_read': instance.is_read,
+            'created_at': instance.created_at.isoformat(),
+        }
+        
+        # Get unread count for this user
+        unread_count = Notification.objects.filter(user=instance.user, is_read=False).count()
+        
+        # Send via WebSocket
+        async_to_sync(channel_layer.group_send)(
+            f'notifications_{instance.user.id}',
+            {
+                'type': 'send_notification',
+                'notification': notification_data,
+                'unread_count': unread_count,
+            }
+        )
+        
+        logger.info(f"[send_notification_via_websocket] Sent notification {instance.id} to user {instance.user.id}")
+        
+    except Exception as e:
+        # Log but don't fail - notification is already saved in database
+        logger.error(f"[send_notification_via_websocket] Error sending notification {instance.id} via WebSocket: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
