@@ -333,6 +333,9 @@ CORS_EXPOSE_HEADERS = [
     'content-length',
 ]
 
+# Ensure CORS applies to all API URLs (including /api/token/)
+CORS_URLS_REGEX = r'^/api/.*$'
+
 # File upload settings for large CSV imports
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
@@ -367,6 +370,11 @@ LOGGING = {
         'channels': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        'corsheaders': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
             'propagate': False,
         },
     },
