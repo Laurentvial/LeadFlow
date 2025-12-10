@@ -103,40 +103,40 @@ if REDIS_URL:
     # channels-redis 4.x supports Redis URLs directly, including SSL (rediss://)
     # For Aiven Redis with self-signed certificates, disable SSL verification
     import ssl
+    import asyncio
     
     # Check if it's Aiven Redis (has ec2 in hostname)
     is_aiven = 'ec2' in REDIS_URL or 'compute.amazonaws.com' in REDIS_URL
     
-    # For Aiven Redis with self-signed certificates, patch SSL verification
+    # For Aiven Redis with self-signed certificates, patch asyncio.open_connection
     if is_aiven and REDIS_URL.startswith('rediss://'):
-        # Monkey-patch redis.asyncio to disable SSL verification for Aiven
+        # Monkey-patch asyncio.open_connection to disable SSL verification for Aiven Redis
         try:
-            import redis.asyncio.connection as redis_conn
+            _original_open_connection = asyncio.open_connection
             
-            # Store original function
-            _original_create_connection = redis_conn.create_connection
-            
-            # Create patched version
-            async def _patched_create_connection(address, *args, **kwargs):
-                # Create SSL context without verification for Aiven
-                if 'ssl' not in kwargs:
-                    ssl_context = ssl.create_default_context()
-                    ssl_context.check_hostname = False
-                    ssl_context.verify_mode = ssl.CERT_NONE
-                    kwargs['ssl'] = ssl_context
-                elif isinstance(kwargs.get('ssl'), bool) and kwargs['ssl']:
-                    # If ssl=True, replace with context
-                    ssl_context = ssl.create_default_context()
-                    ssl_context.check_hostname = False
-                    ssl_context.verify_mode = ssl.CERT_NONE
-                    kwargs['ssl'] = ssl_context
-                return await _original_create_connection(address, *args, **kwargs)
+            async def _patched_open_connection(*args, **kwargs):
+                # If SSL is involved and it's for Aiven Redis, disable verification
+                if 'ssl' in kwargs:
+                    ssl_value = kwargs['ssl']
+                    if isinstance(ssl_value, bool) and ssl_value:
+                        # Create SSL context without verification
+                        ssl_context = ssl.create_default_context()
+                        ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
+                        kwargs['ssl'] = ssl_context
+                    elif isinstance(ssl_value, ssl.SSLContext):
+                        # Modify existing SSL context
+                        ssl_value.check_hostname = False
+                        ssl_value.verify_mode = ssl.CERT_NONE
+                return await _original_open_connection(*args, **kwargs)
             
             # Apply patch
-            redis_conn.create_connection = _patched_create_connection
-        except Exception:
-            # If patching fails, continue anyway - might work without it
-            pass
+            asyncio.open_connection = _patched_open_connection
+        except Exception as e:
+            # If patching fails, log but continue
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to patch SSL verification: {e}")
     
     # Configure Redis - channels-redis will use the URL
     CHANNEL_LAYERS = {
