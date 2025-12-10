@@ -6226,10 +6226,26 @@ def email_signature_logo_proxy(request, file_path):
 def chat_rooms(request):
     """List all chat rooms for the current user or create a new one"""
     if request.method == 'GET':
-        # Get all chat rooms where the user is a participant
-        chat_rooms = ChatRoom.objects.filter(participants=request.user).distinct()
+        # Get pagination parameters
+        limit = int(request.query_params.get('limit', 15))  # Default to 15 conversations
+        offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+        
+        # Get total count for pagination info
+        total_count = ChatRoom.objects.filter(participants=request.user).distinct().count()
+        
+        # Get chat rooms ordered by updated_at descending (most recent first)
+        chat_rooms = ChatRoom.objects.filter(participants=request.user).distinct().order_by('-updated_at')[offset:offset + limit]
+        
         serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
-        return Response(serializer.data)
+        
+        # Return chat rooms with pagination metadata
+        return Response({
+            'chatRooms': serializer.data,
+            'hasMore': offset + limit < total_count,
+            'total': total_count,
+            'offset': offset,
+            'limit': limit
+        })
     
     elif request.method == 'POST':
         # Create a new chat room
@@ -6294,10 +6310,32 @@ def chat_messages(request, chat_room_id):
             return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
         
         if request.method == 'GET':
-            # Get all messages for this chat room
-            messages = Message.objects.filter(chat_room=chat_room).order_by('created_at')
-            serializer = MessageSerializer(messages, many=True)
-            return Response(serializer.data)
+            # Get pagination parameters - ALWAYS limit to 15 messages per page
+            limit = min(int(request.query_params.get('limit', 15)), 15)  # Max 15 messages per page
+            offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+            
+            # Get total count for pagination info
+            total_count = Message.objects.filter(chat_room=chat_room).count()
+            
+            # Get messages ordered by created_at descending (most recent first)
+            # Offset 0 = most recent messages, higher offset = older messages
+            messages = Message.objects.filter(chat_room=chat_room).order_by('-created_at')[offset:offset + limit]
+            
+            # Reverse to get chronological order (oldest to newest) for display
+            messages_list = list(messages)
+            messages_list.reverse()
+            
+            serializer = MessageSerializer(messages_list, many=True)
+            
+            # Return messages with pagination metadata
+            # hasMore = True if there are more messages to load (older messages when scrolling up)
+            return Response({
+                'messages': serializer.data,
+                'hasMore': offset + limit < total_count,
+                'total': total_count,
+                'offset': offset,
+                'limit': limit
+            })
         
         elif request.method == 'POST':
             # Send a new message

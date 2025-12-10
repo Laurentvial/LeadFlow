@@ -74,23 +74,62 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const conversationsListRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [pendingMessages, setPendingMessages] = useState<Map<string, Message>>(new Map());
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [messagesOffset, setMessagesOffset] = useState(0);
+  const isLoadingOlderRef = useRef(false); // Track if we're loading older messages to prevent auto-scroll
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [conversationsOffset, setConversationsOffset] = useState(0);
+  const MESSAGES_PER_PAGE = 15;
+  const CONVERSATIONS_PER_PAGE = 15;
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
   // Load chat rooms
-  const loadChatRooms = React.useCallback(async () => {
+  const loadChatRooms = React.useCallback(async (offset: number = 0, append: boolean = false) => {
     try {
-      const data = await apiCall('/api/chat/rooms/');
-      setChatRooms(data || []);
+      const data = await apiCall(`/api/chat/rooms/?limit=${CONVERSATIONS_PER_PAGE}&offset=${offset}`);
+      
+      // Handle both old format (array) and new format (object with chatRooms array)
+      const responseData = Array.isArray(data) ? { chatRooms: data, hasMore: false } : data;
+      const serverChatRooms = responseData.chatRooms || [];
+      const hasMore = responseData.hasMore || false;
+      
+      if (append) {
+        // Append to existing conversations
+        setChatRooms(prev => {
+          // Merge and remove duplicates
+          const merged = [...prev, ...serverChatRooms];
+          const unique = merged.reduce((acc, room) => {
+            const existing = acc.find(r => r.id === room.id);
+            if (!existing) {
+              acc.push(room);
+            }
+            return acc;
+          }, [] as ChatRoom[]);
+          
+          // Sort by updatedAt descending
+          unique.sort((a, b) => 
+            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          );
+          
+          return unique;
+        });
+      } else {
+        // Replace all conversations
+        setChatRooms(serverChatRooms);
+      }
+      
+      setConversationsOffset(offset);
+      setHasMoreConversations(hasMore);
       
       // Refresh global unread count in sidebar
       refreshUnreadCount();
@@ -100,7 +139,21 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
     } finally {
       setLoading(false);
     }
-  }, [refreshUnreadCount]);
+  }, [refreshUnreadCount, CONVERSATIONS_PER_PAGE]);
+  
+  // Load more conversations when scrolling down
+  const loadMoreConversations = React.useCallback(async () => {
+    if (loadingMoreConversations || !hasMoreConversations) return;
+    
+    setLoadingMoreConversations(true);
+    const newOffset = conversationsOffset + CONVERSATIONS_PER_PAGE;
+    
+    try {
+      await loadChatRooms(newOffset, true);
+    } finally {
+      setLoadingMoreConversations(false);
+    }
+  }, [loadingMoreConversations, hasMoreConversations, conversationsOffset, loadChatRooms, CONVERSATIONS_PER_PAGE]);
 
   // Load users for new chat
   const loadUsers = async () => {
@@ -113,13 +166,20 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
   };
 
   // Load messages for selected room
-  const loadMessages = React.useCallback(async (roomId: string, preservePending: boolean = false) => {
+  // offset=0: loads the 15 most recent messages
+  // offset>0: loads older messages (for scrolling up)
+  const loadMessages = React.useCallback(async (roomId: string, preservePending: boolean = false, offset: number = 0) => {
     try {
-      const data = await apiCall(`/api/chat/rooms/${roomId}/messages/`);
-      const serverMessages = data || [];
+      // Always limit to MESSAGES_PER_PAGE (15) messages per request
+      const data = await apiCall(`/api/chat/rooms/${roomId}/messages/?limit=${MESSAGES_PER_PAGE}&offset=${offset}`);
+      
+      // Handle both old format (array) and new format (object with messages array)
+      const responseData = Array.isArray(data) ? { messages: data, hasMore: false } : data;
+      const serverMessages = responseData.messages || [];
+      const hasMore = responseData.hasMore || false;
       
       // Merge server messages with pending messages to avoid losing messages being sent
-      if (preservePending && pendingMessages.size > 0) {
+      if (preservePending && pendingMessages.size > 0 && offset === 0) {
         const pendingArray = Array.from(pendingMessages.values());
         const allMessages = [...serverMessages, ...pendingArray];
         
@@ -146,28 +206,163 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
           });
           return newMap;
         });
+        
+        // Update pagination state even when preserving pending
+        setMessagesOffset(offset);
+        setHasMoreMessages(hasMore);
       } else {
-        setMessages(serverMessages);
+        if (offset === 0) {
+          // Initial load or refresh - replace all messages
+          setMessages(serverMessages);
+          setMessagesOffset(0);
+        } else {
+          // Loading older messages - prepend to existing messages
+          setMessages(prev => {
+            // Merge and remove duplicates
+            const merged = [...serverMessages, ...prev];
+            const unique = merged.reduce((acc, msg) => {
+              const existing = acc.find(m => m.id === msg.id);
+              if (!existing) {
+                acc.push(msg);
+              }
+              return acc;
+            }, [] as Message[]);
+            
+            // Sort by createdAt
+            unique.sort((a, b) => 
+              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+            
+            return unique;
+          });
+        }
+        setMessagesOffset(offset);
+        setHasMoreMessages(hasMore);
       }
       
       // Mark messages as read via API (WebSocket will be handled separately)
-      try {
-        await apiCall(`/api/chat/rooms/${roomId}/read/`, {
-          method: 'POST',
-        });
-      } catch (readError) {
-        // Ignore read errors, not critical
+      if (offset === 0) {
+        try {
+          await apiCall(`/api/chat/rooms/${roomId}/read/`, {
+            method: 'POST',
+          });
+        } catch (readError) {
+          // Ignore read errors, not critical
+        }
       }
       
       // Update unread count in chat rooms list
-      setChatRooms(prev => prev.map(room => 
-        room.id === roomId ? { ...room, unreadCount: 0 } : room
-      ));
+      if (offset === 0) {
+        setChatRooms(prev => prev.map(room => 
+          room.id === roomId ? { ...room, unreadCount: 0 } : room
+        ));
+      }
     } catch (error: any) {
       console.error('Error loading messages:', error);
       toast.error('Erreur lors du chargement des messages');
     }
-  }, [pendingMessages]);
+  }, [pendingMessages, MESSAGES_PER_PAGE]);
+  
+  // Load older messages when scrolling up
+  const loadOlderMessages = React.useCallback(async (roomId: string) => {
+    if (loadingOlderMessages || !hasMoreMessages) return;
+    
+    setLoadingOlderMessages(true);
+    isLoadingOlderRef.current = true; // Set flag to prevent auto-scroll
+    const newOffset = messagesOffset + MESSAGES_PER_PAGE;
+    
+    // Find the scrollable viewport element
+    const findScrollableElement = () => {
+      const container = messagesContainerRef.current;
+      if (!container) return null;
+      
+      let parent = container.parentElement;
+      while (parent) {
+        if (parent.getAttribute('data-slot') === 'scroll-area-viewport') {
+          return parent;
+        }
+        parent = parent.parentElement;
+      }
+      return null;
+    };
+    
+    const scrollableElement = findScrollableElement();
+    if (!scrollableElement) {
+      setLoadingOlderMessages(false);
+      isLoadingOlderRef.current = false;
+      return;
+    }
+    
+    // Save current scroll position and height before loading
+    const scrollHeight = scrollableElement.scrollHeight;
+    const scrollTop = scrollableElement.scrollTop;
+    
+    try {
+      await loadMessages(roomId, false, newOffset);
+      
+      // Restore scroll position after loading older messages
+      // Use multiple requestAnimationFrame to ensure DOM is fully updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (scrollableElement) {
+            const newScrollHeight = scrollableElement.scrollHeight;
+            const heightDifference = newScrollHeight - scrollHeight;
+            // Maintain the same visual position by adding the height difference
+            scrollableElement.scrollTop = scrollTop + heightDifference;
+            // Clear flag after scroll position is restored
+            setTimeout(() => {
+              isLoadingOlderRef.current = false;
+            }, 100);
+          }
+        });
+      });
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }, [loadingOlderMessages, hasMoreMessages, messagesOffset, loadMessages, MESSAGES_PER_PAGE]);
+
+  // Scroll to bottom only when new messages arrive (not when loading older messages)
+  useEffect(() => {
+    // Don't scroll when loading older messages - let loadOlderMessages handle scroll position
+    if (loadingOlderMessages || isLoadingOlderRef.current) return;
+    
+    // Find the scrollable viewport element
+    const findScrollableElement = () => {
+      const container = messagesContainerRef.current;
+      if (!container) return null;
+      
+      let parent = container.parentElement;
+      while (parent) {
+        if (parent.getAttribute('data-slot') === 'scroll-area-viewport') {
+          return parent;
+        }
+        parent = parent.parentElement;
+      }
+      return null;
+    };
+    
+    const scrollableElement = findScrollableElement();
+    if (scrollableElement) {
+      // Only auto-scroll if we're at or very near the bottom (within 50px)
+      // This handles new messages arriving (not older messages being loaded or auto-refresh)
+      const scrollBottom = scrollableElement.scrollHeight - scrollableElement.scrollTop - scrollableElement.clientHeight;
+      const isAtBottom = scrollBottom <= 50; // Reduced threshold for more precise detection
+      
+      // Also check if user has scrolled up to view older messages
+      // If messagesOffset > 0, user has loaded older messages, so don't auto-scroll unless at bottom
+      if (isAtBottom || messagesOffset === 0) {
+        if (isAtBottom) {
+          scrollToBottom();
+        }
+      }
+    } else {
+      // If no container ref yet, scroll to bottom (initial load only)
+      if (messagesOffset === 0) {
+        scrollToBottom();
+      }
+    }
+  }, [messages, loadingOlderMessages, messagesOffset]);
+  
 
   // Send message
   const sendMessage = async () => {
@@ -236,7 +431,7 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
         ));
         
         // Reload chat rooms to get updated order
-        await loadChatRooms();
+        await loadChatRooms(0, false);
       } catch (error: any) {
         console.error('Error sending message:', error);
         toast.error('Erreur lors de l\'envoi du message');
@@ -272,8 +467,14 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
       setIsNewChatOpen(false);
       setSelectedUserId('');
       
+      // Reset pagination state for new room
+      setMessagesOffset(0);
+      setHasMoreMessages(false);
+      setConversationsOffset(0);
+      setHasMoreConversations(false);
+      
       // Load messages for the new room
-      await loadMessages(newRoom.id);
+      await loadMessages(newRoom.id, false, 0);
     } catch (error: any) {
       console.error('Error creating chat room:', error);
       toast.error('Erreur lors de la création de la conversation');
@@ -285,12 +486,15 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
     setSelectedRoom(room);
     // Clear pending messages when switching rooms
     setPendingMessages(new Map());
-    await loadMessages(room.id, false);
+    setMessagesOffset(0);
+    setHasMoreMessages(false);
+    isLoadingOlderRef.current = false; // Reset flag when switching rooms
+    await loadMessages(room.id, false, 0);
   };
 
   // Initial load
   useEffect(() => {
-    loadChatRooms();
+    loadChatRooms(0, false);
     loadUsers();
   }, []);
 
@@ -344,7 +548,7 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
         }
         
         // Always update chat rooms list to show new messages
-        loadChatRooms();
+        loadChatRooms(0, false);
         
         // Refresh global unread count in sidebar
         refreshUnreadCount();
@@ -371,35 +575,58 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
         const chatRoomId = notification.data?.chat_room_id;
         
         // Reload chat rooms immediately when a new message notification is received
-        loadChatRooms();
+        loadChatRooms(0, false);
         
         // If the message is for the currently selected room, reload messages immediately
         if (selectedRoom && chatRoomId === selectedRoom.id) {
           // Reload messages to get the latest, preserving pending messages
-          loadMessages(selectedRoom.id, true); // preservePending = true
+          // Reset pagination when refreshing
+          setMessagesOffset(0);
+          loadMessages(selectedRoom.id, true, 0); // preservePending = true, offset = 0
         }
       }
     },
     onOpen: () => {
       // Reload chat rooms when WebSocket connects
-      loadChatRooms();
+      loadChatRooms(0, false);
     },
     reconnect: true,
   });
 
-  // Auto-refresh chat rooms periodically (like WhatsApp)
+  // Handle scroll to load more conversations
   useEffect(() => {
-    const interval = setInterval(() => {
-      loadChatRooms();
+    // Find the scrollable viewport element for conversations list
+    const findScrollableElement = () => {
+      const container = conversationsListRef.current;
+      if (!container) return null;
       
-      // Also reload messages for currently selected room, preserving pending messages
-      if (selectedRoom) {
-        loadMessages(selectedRoom.id, true); // preservePending = true
+      let parent = container.parentElement;
+      while (parent) {
+        if (parent.getAttribute('data-slot') === 'scroll-area-viewport') {
+          return parent;
+        }
+        parent = parent.parentElement;
       }
-    }, 5000); // Refresh every 5 seconds
-
-    return () => clearInterval(interval);
-  }, [selectedRoom, loadChatRooms, loadMessages]);
+      return null;
+    };
+    
+    const scrollableElement = findScrollableElement();
+    if (!scrollableElement) return;
+    
+    const handleScroll = () => {
+      // Load more conversations when scrolled near bottom (within 100px)
+      const scrollHeight = scrollableElement.scrollHeight;
+      const scrollTop = scrollableElement.scrollTop;
+      const clientHeight = scrollableElement.clientHeight;
+      
+      if (scrollHeight - scrollTop - clientHeight < 100 && hasMoreConversations && !loadingMoreConversations) {
+        loadMoreConversations();
+      }
+    };
+    
+    scrollableElement.addEventListener('scroll', handleScroll);
+    return () => scrollableElement.removeEventListener('scroll', handleScroll);
+  }, [hasMoreConversations, loadingMoreConversations, loadMoreConversations]);
 
   // Filter chat rooms by search query
   const filteredRooms = chatRooms.filter(room => {
@@ -478,51 +705,60 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
 
         {/* Chat rooms list */}
         <ScrollArea className="chat-rooms-list">
-          {filteredRooms.length === 0 ? (
-            <div className="chat-empty-state">
-              {searchQuery ? 'Aucune conversation trouvée' : 'Aucune conversation'}
-            </div>
-          ) : (
-            filteredRooms.map(room => (
-              <div
-                key={room.id}
-                onClick={() => handleRoomSelect(room)}
-                className={`chat-room-item ${selectedRoom?.id === room.id ? 'active' : ''}`}
-              >
-                <div className="chat-room-avatar">
-                  <Avatar>
-                    <AvatarFallback>
-                      {room.otherParticipant 
-                        ? getInitials(room.otherParticipant.name || room.otherParticipant.username)
-                        : '?'}
-                    </AvatarFallback>
-                  </Avatar>
-                </div>
-                <div className="chat-room-content">
-                  <div className="chat-room-header">
-                    <span className="chat-room-name">
-                      {room.otherParticipant?.name || room.otherParticipant?.username || 'Utilisateur'}
-                    </span>
-                    {room.unreadCount > 0 && (
-                      <Badge variant="default" className="chat-room-unread-badge">
-                        {room.unreadCount}
-                      </Badge>
-                    )}
-                  </div>
-                  {room.lastMessage && (
-                    <>
-                      <p className="chat-room-preview">
-                        {room.lastMessage.content}
-                      </p>
-                      <p className="chat-room-time">
-                        {formatTime(room.lastMessage.createdAt)}
-                      </p>
-                    </>
-                  )}
-                </div>
+          <div ref={conversationsListRef}>
+            {filteredRooms.length === 0 ? (
+              <div className="chat-empty-state">
+                {searchQuery ? 'Aucune conversation trouvée' : 'Aucune conversation'}
               </div>
-            ))
-          )}
+            ) : (
+              <>
+                {filteredRooms.map(room => (
+                  <div
+                    key={room.id}
+                    onClick={() => handleRoomSelect(room)}
+                    className={`chat-room-item ${selectedRoom?.id === room.id ? 'active' : ''}`}
+                  >
+                    <div className="chat-room-avatar">
+                      <Avatar>
+                        <AvatarFallback>
+                          {room.otherParticipant 
+                            ? getInitials(room.otherParticipant.name || room.otherParticipant.username)
+                            : '?'}
+                        </AvatarFallback>
+                      </Avatar>
+                    </div>
+                    <div className="chat-room-content">
+                      <div className="chat-room-header">
+                        <span className="chat-room-name">
+                          {room.otherParticipant?.name || room.otherParticipant?.username || 'Utilisateur'}
+                        </span>
+                        {room.unreadCount > 0 && (
+                          <Badge variant="default" className="chat-room-unread-badge">
+                            {room.unreadCount}
+                          </Badge>
+                        )}
+                      </div>
+                      {room.lastMessage && (
+                        <>
+                          <p className="chat-room-preview">
+                            {room.lastMessage.content}
+                          </p>
+                          <p className="chat-room-time">
+                            {formatTime(room.lastMessage.createdAt)}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {loadingMoreConversations && (
+                  <div className="chat-loading-more-conversations">
+                    <div>Chargement des conversations...</div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </ScrollArea>
       </div>
 
@@ -555,7 +791,20 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
 
             {/* Messages */}
             <ScrollArea className="chat-messages-area">
-              <div className="chat-messages-container">
+              <div className="chat-messages-container" ref={messagesContainerRef}>
+                {hasMoreMessages && (
+                  <div className="chat-load-more-container">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectedRoom && loadOlderMessages(selectedRoom.id)}
+                      disabled={loadingOlderMessages}
+                      className="chat-load-more-button"
+                    >
+                      {loadingOlderMessages ? 'Chargement...' : 'Charger plus de messages'}
+                    </Button>
+                  </div>
+                )}
                 {messages.map((message) => {
                   // Compare with djangoUserId (Django User ID) which matches senderId
                   // senderId is the Django User ID, so we need to compare with djangoUserId

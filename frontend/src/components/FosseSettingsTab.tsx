@@ -96,8 +96,10 @@ export function FosseSettingsTab() {
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
   const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
   const [statusColumnFilterType, setStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
+  const [previousStatusColumnFilterType, setPreviousStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
   const [pendingTextFilterValues, setPendingTextFilterValues] = useState<Record<string, string>>({});
   const [pendingDateRangeFilters, setPendingDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>({});
+  const [pendingMultiSelectFilters, setPendingMultiSelectFilters] = useState<Record<string, string[]>>({});
 
   // Load Fosse default status
   const loadFosseDefaultStatus = async () => {
@@ -417,7 +419,7 @@ export function FosseSettingsTab() {
 
 
   // Get options for a filterable column
-  const getFilterOptions = (columnId: string) => {
+  const getFilterOptions = (columnId: string, statusTypeFilter: 'lead' | 'client' = 'lead') => {
     const column = FILTERABLE_COLUMNS.find(c => c.id === columnId);
     if (!column) return [];
 
@@ -425,21 +427,24 @@ export function FosseSettingsTab() {
       case 'statuses':
         if (columnId === 'previousStatus') {
           // For previousStatus, use status names (since it stores names, not IDs)
-          // Deduplicate by status name
-          const statusNameMap = new Map<string, { id: string; label: string }>();
-          statuses.forEach(status => {
-            const name = status.name;
-            if (!statusNameMap.has(name)) {
-              statusNameMap.set(name, { id: name, label: name });
-            } else {
-              // If duplicate name exists, use name with status ID to make it unique
-              statusNameMap.set(`${name}_${status.id}`, {
-                id: name, // Still use name for filtering
-                label: `${name} (${status.id})`
-              });
-            }
-          });
-          return Array.from(statusNameMap.values());
+          // Filter by status type (lead or client) - same logic as status filter
+          return statuses
+            .filter((status) => {
+              if (!status.id || status.id.trim() === '') return false;
+              // Filter by status type - strict check
+              if (!statusTypeFilter || status.type !== statusTypeFilter) {
+                return false;
+              }
+              // Additional safety check: ensure type is valid
+              if (status.type !== 'lead' && status.type !== 'client') {
+                return false;
+              }
+              return true;
+            })
+            .map(status => ({
+              id: status.name, // Use name since previousStatus stores the name, not ID
+              label: status.name
+            }));
         }
         return statuses.map(s => ({ id: s.id, label: s.name }));
       case 'sources':
@@ -755,31 +760,25 @@ export function FosseSettingsTab() {
         options.push(...teamOptions);
         break;
       case 'previousStatus':
-        // Show all statuses (both lead and client) for previous status filter
-        // Deduplicate by status name since multiple statuses might have the same name
-        const statusNameMap = new Map<string, { id: string; label: string }>();
-        statuses
+        // Filter by status type (lead or client) - same logic as status filter
+        const previousStatusOptions = statuses
           .filter((status) => {
             if (!status.id || status.id.trim() === '') return false;
-            return true; // Include all statuses
-          })
-          .forEach(status => {
-            // Use name as key, but if duplicate, append status ID to make it unique
-            const name = status.name;
-            if (!statusNameMap.has(name)) {
-              statusNameMap.set(name, {
-                id: name, // Use name since previousStatus stores the name, not ID
-                label: name
-              });
-            } else {
-              // If duplicate name exists, use name with status ID to make it unique
-              statusNameMap.set(`${name}_${status.id}`, {
-                id: name, // Still use name for filtering (stores name in DB)
-                label: `${name} (${status.id})` // Show both in label for clarity
-              });
+            // Filter by status type - strict check
+            if (!statusTypeFilter || status.type !== statusTypeFilter) {
+              return false;
             }
-          });
-        options.push(...Array.from(statusNameMap.values()));
+            // Additional safety check: ensure type is valid
+            if (status.type !== 'lead' && status.type !== 'client') {
+              return false;
+            }
+            return true;
+          })
+          .map(status => ({
+            id: status.name, // Use name since previousStatus stores the name, not ID
+            label: status.name
+          }));
+        options.push(...previousStatusOptions);
         break;
       case 'previousTeleoperator':
         // Show all users for previous teleoperator filter
@@ -1296,7 +1295,17 @@ export function FosseSettingsTab() {
                                                         ...prev,
                                                         [`${role.id}-${columnId}`]: existingRange
                                                       }));
-                                                    } else if (!shouldUseMultiSelectFilter(columnId)) {
+                                                    } else if (shouldUseMultiSelectFilter(columnId)) {
+                                                      // Initialize pending multi-select filter values
+                                                      const setting = settings.get(role.id);
+                                                      const currentFilters = setting?.forcedFilters || {};
+                                                      const filter = currentFilters[columnId];
+                                                      const existingValues = filter?.values || [];
+                                                      setPendingMultiSelectFilters(prev => ({
+                                                        ...prev,
+                                                        [`${role.id}-${columnId}`]: existingValues
+                                                      }));
+                                                    } else {
                                                       const setting = settings.get(role.id);
                                                       const currentFilters = setting?.forcedFilters || {};
                                                       const filter = currentFilters[columnId];
@@ -1314,6 +1323,12 @@ export function FosseSettingsTab() {
                                                       delete newTerms[`${role.id}-${columnId}`];
                                                       return newTerms;
                                                     });
+                                                    // Clear pending multi-select filter when closing (if not applied)
+                                                    setPendingMultiSelectFilters(prev => {
+                                                      const newValues = { ...prev };
+                                                      delete newValues[`${role.id}-${columnId}`];
+                                                      return newValues;
+                                                    });
                                                     setPendingTextFilterValues(prev => {
                                                       const newValues = { ...prev };
                                                       delete newValues[`${role.id}-${columnId}`];
@@ -1326,6 +1341,9 @@ export function FosseSettingsTab() {
                                                     });
                                                     if (columnId === 'status') {
                                                       setStatusColumnFilterType('lead');
+                                                    }
+                                                    if (columnId === 'previousStatus') {
+                                                      setPreviousStatusColumnFilterType('lead');
                                                     }
                                                   }
                                                 }}
@@ -1362,28 +1380,36 @@ export function FosseSettingsTab() {
                                                     </div>
                                                     {shouldUseMultiSelectFilter(columnId) ? (
                                                       <>
-                                                        {columnId === 'status' && (
+                                                        {(columnId === 'status' || columnId === 'previousStatus') && (
                                                           <div className="mb-2 flex gap-2">
                                                             <Button
                                                               type="button"
-                                                              variant={statusColumnFilterType === 'lead' ? 'default' : 'outline'}
+                                                              variant={(columnId === 'status' ? statusColumnFilterType : previousStatusColumnFilterType) === 'lead' ? 'default' : 'outline'}
                                                               size="sm"
                                                               className="flex-1 h-8 text-xs"
                                                               onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                setStatusColumnFilterType('lead');
+                                                                if (columnId === 'status') {
+                                                                  setStatusColumnFilterType('lead');
+                                                                } else {
+                                                                  setPreviousStatusColumnFilterType('lead');
+                                                                }
                                                               }}
                                                             >
                                                               Lead
                                                             </Button>
                                                             <Button
                                                               type="button"
-                                                              variant={statusColumnFilterType === 'client' ? 'default' : 'outline'}
+                                                              variant={(columnId === 'status' ? statusColumnFilterType : previousStatusColumnFilterType) === 'client' ? 'default' : 'outline'}
                                                               size="sm"
                                                               className="flex-1 h-8 text-xs"
                                                               onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                setStatusColumnFilterType('client');
+                                                                if (columnId === 'status') {
+                                                                  setStatusColumnFilterType('client');
+                                                                } else {
+                                                                  setPreviousStatusColumnFilterType('client');
+                                                                }
                                                               }}
                                                             >
                                                               Client
@@ -1410,7 +1436,11 @@ export function FosseSettingsTab() {
                                                           </div>
                                                           {(() => {
                                                             const searchTerm = (columnFilterSearchTerms[`${role.id}-${columnId}`] || '').toLowerCase();
-                                                            const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                                            const statusTypeFilter = columnId === 'status' 
+                                                              ? statusColumnFilterType 
+                                                              : columnId === 'previousStatus'
+                                                              ? previousStatusColumnFilterType
+                                                              : 'lead';
                                                             const allOptions = getPreviewFilterOptions(columnId, statusTypeFilter);
                                                             const emptyOption = allOptions.find(opt => opt.id === '__empty__');
                                                             const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
@@ -1424,7 +1454,10 @@ export function FosseSettingsTab() {
                                                               : filteredOtherOptions;
                                                             
                                                             const currentFilter = forcedFilters[columnId];
-                                                            const selectedValues = currentFilter?.values || [];
+                                                            const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                            const selectedValues = pendingValues !== undefined 
+                                                              ? pendingValues 
+                                                              : (currentFilter?.values || []);
                                                             const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
                                                             
                                                             return (
@@ -1438,13 +1471,19 @@ export function FosseSettingsTab() {
                                                                   onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     const filteredIds = filteredOptions.map(opt => opt.id);
+                                                                    const baseValues = pendingValues !== undefined 
+                                                                      ? pendingValues 
+                                                                      : (currentFilter?.values || []);
                                                                     let newValues: string[];
                                                                     if (allFilteredSelected) {
-                                                                      newValues = selectedValues.filter(id => !filteredIds.includes(id));
+                                                                      newValues = baseValues.filter(id => !filteredIds.includes(id));
                                                                     } else {
-                                                                      newValues = [...new Set([...selectedValues, ...filteredIds])];
+                                                                      newValues = [...new Set([...baseValues, ...filteredIds])];
                                                                     }
-                                                                    handleFilterChange(role.id, columnId, 'defined', newValues);
+                                                                    setPendingMultiSelectFilters(prev => ({
+                                                                      ...prev,
+                                                                      [`${role.id}-${columnId}`]: newValues
+                                                                    }));
                                                                   }}
                                                                 >
                                                                   {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
@@ -1459,7 +1498,11 @@ export function FosseSettingsTab() {
                                                         >
                                                           {(() => {
                                                             const searchTerm = (columnFilterSearchTerms[`${role.id}-${columnId}`] || '').toLowerCase();
-                                                            const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                                            const statusTypeFilter = columnId === 'status' 
+                                                              ? statusColumnFilterType 
+                                                              : columnId === 'previousStatus'
+                                                              ? previousStatusColumnFilterType
+                                                              : 'lead';
                                                             const allOptions = getPreviewFilterOptions(columnId, statusTypeFilter);
                                                             const emptyOption = allOptions.find(opt => opt.id === '__empty__');
                                                             const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
@@ -1481,7 +1524,11 @@ export function FosseSettingsTab() {
                                                             }
                                                             
                                                             const currentFilter = forcedFilters[columnId];
-                                                            const selectedValues = currentFilter?.values || [];
+                                                            const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                            // Use pending values if they exist, otherwise use current filter values
+                                                            const selectedValues = pendingValues !== undefined 
+                                                              ? pendingValues 
+                                                              : (currentFilter?.values || []);
                                                             
                                                             return filteredOptions.map((option, index) => {
                                                               const isChecked = selectedValues.includes(option.id);
@@ -1493,13 +1540,21 @@ export function FosseSettingsTab() {
                                                                   key={uniqueKey}
                                                                   className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
                                                                   onClick={() => {
+                                                                    // Update pending state instead of saving immediately
+                                                                    const currentPending = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                                    const baseValues = currentPending !== undefined 
+                                                                      ? currentPending 
+                                                                      : (currentFilter?.values || []);
                                                                     let newValues: string[];
                                                                     if (isChecked) {
-                                                                      newValues = selectedValues.filter(id => id !== option.id);
+                                                                      newValues = baseValues.filter(id => id !== option.id);
                                                                     } else {
-                                                                      newValues = [...selectedValues, option.id];
+                                                                      newValues = [...baseValues, option.id];
                                                                     }
-                                                                    handleFilterChange(role.id, columnId, 'defined', newValues);
+                                                                    setPendingMultiSelectFilters(prev => ({
+                                                                      ...prev,
+                                                                      [`${role.id}-${columnId}`]: newValues
+                                                                    }));
                                                                   }}
                                                                 >
                                                                   <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
@@ -1523,8 +1578,8 @@ export function FosseSettingsTab() {
                                                                     <span 
                                                                       className="inline-block px-2 py-1 rounded text-sm"
                                                                       style={{
-                                                                        backgroundColor: statuses.find(s => s.name === option.id)?.color || '#e5e7eb',
-                                                                        color: statuses.find(s => s.name === option.id)?.color ? '#000000' : '#374151'
+                                                                        backgroundColor: statuses.find(s => s.name === option.id && s.type === previousStatusColumnFilterType)?.color || '#e5e7eb',
+                                                                        color: statuses.find(s => s.name === option.id && s.type === previousStatusColumnFilterType)?.color ? '#000000' : '#374151'
                                                                       }}
                                                                     >
                                                                       {option.label}
@@ -1543,7 +1598,12 @@ export function FosseSettingsTab() {
                                                             size="sm"
                                                             onClick={(e) => {
                                                               e.stopPropagation();
-                                                              // Reset filter - remove it from forced filters
+                                                              // Reset pending state and remove filter from forced filters
+                                                              setPendingMultiSelectFilters(prev => {
+                                                                const newValues = { ...prev };
+                                                                delete newValues[`${role.id}-${columnId}`];
+                                                                return newValues;
+                                                              });
                                                               const setting = settings.get(role.id);
                                                               const currentFilters = setting?.forcedFilters || {};
                                                               const newFilters = { ...currentFilters };
@@ -1560,7 +1620,10 @@ export function FosseSettingsTab() {
                                                             disabled={(() => {
                                                               const setting = settings.get(role.id);
                                                               const currentFilters = setting?.forcedFilters || {};
-                                                              return !currentFilters[columnId];
+                                                              const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                              const hasCurrentFilter = currentFilters[columnId] !== undefined;
+                                                              const hasPendingChanges = pendingValues !== undefined;
+                                                              return !hasCurrentFilter && !hasPendingChanges;
                                                             })()}
                                                           >
                                                             Réinitialiser
@@ -1570,9 +1633,50 @@ export function FosseSettingsTab() {
                                                             size="sm"
                                                             onClick={(e) => {
                                                               e.stopPropagation();
+                                                              // Apply pending filter changes
+                                                              const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                              if (pendingValues !== undefined) {
+                                                                // Save pending values (even if empty array - that's valid)
+                                                                if (pendingValues.length > 0) {
+                                                                  handleFilterChange(role.id, columnId, 'defined', pendingValues);
+                                                                } else {
+                                                                  // If empty array, remove the filter
+                                                                  const setting = settings.get(role.id);
+                                                                  const currentFilters = setting?.forcedFilters || {};
+                                                                  const newFilters = { ...currentFilters };
+                                                                  delete newFilters[columnId];
+                                                                  if (setting) {
+                                                                    updateSettings(role.id, { forcedFilters: newFilters });
+                                                                  } else {
+                                                                    loadSettingForRole(role.id).then(() => {
+                                                                      updateSettings(role.id, { forcedFilters: newFilters });
+                                                                    });
+                                                                  }
+                                                                }
+                                                                // Clear pending state
+                                                                setPendingMultiSelectFilters(prev => {
+                                                                  const newValues = { ...prev };
+                                                                  delete newValues[`${role.id}-${columnId}`];
+                                                                  return newValues;
+                                                                });
+                                                              }
                                                               setOpenFilterColumn(null);
                                                             }}
+                                                            disabled={(() => {
+                                                              const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
+                                                              const currentFilter = forcedFilters[columnId];
+                                                              const currentValues = currentFilter?.values || [];
+                                                              
+                                                              // Disable if no pending changes (pendingValues is undefined)
+                                                              if (pendingValues === undefined) return true;
+                                                              
+                                                              // Disable if pending values match current values
+                                                              const pendingSorted = [...pendingValues].sort().join(',');
+                                                              const currentSorted = [...currentValues].sort().join(',');
+                                                              return pendingSorted === currentSorted;
+                                                            })()}
                                                           >
+                                                            <Filter className="w-4 h-4 mr-2" />
                                                             Appliquer
                                                           </Button>
                                                         </div>
@@ -1886,23 +1990,23 @@ export function FosseSettingsTab() {
                                         </tr>
                                       ) : (
                                         previewContacts.map((contact) => (
-                                          <tr key={contact.id}>
-                                            {AVAILABLE_COLUMNS.map((column) => {
-                                              const columnId = column.id;
-                                              const isColumnEnabled = forcedColumns.includes(columnId);
-                                              return (
-                                                <td 
-                                                  key={columnId}
-                                                  style={{
-                                                    backgroundColor: isColumnEnabled ? 'transparent' : '#fef3c7',
-                                                    opacity: isColumnEnabled ? 1 : 0.7
-                                                  }}
-                                                >
-                                                  {renderPreviewCellContent(contact, columnId)}
-                                                </td>
-                                              );
-                                            })}
-                                          </tr>
+                                        <tr key={contact.id}>
+                                          {AVAILABLE_COLUMNS.map((column) => {
+                                            const columnId = column.id;
+                                            const isColumnEnabled = forcedColumns.includes(columnId);
+                                            return (
+                                              <td 
+                                                key={columnId}
+                                                style={{
+                                                  backgroundColor: isColumnEnabled ? 'transparent' : '#fef3c7',
+                                                  opacity: isColumnEnabled ? 1 : 0.7
+                                                }}
+                                              >
+                                                {renderPreviewCellContent(contact, columnId)}
+                                              </td>
+                                            );
+                                          })}
+                                        </tr>
                                         ))
                                       )}
                                     </tbody>

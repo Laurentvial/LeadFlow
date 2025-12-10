@@ -98,6 +98,15 @@ const contactFields = [
   { field: 'source', label: 'Source' },
   { field: 'teleoperator', label: 'Téléopérateur' },
   { field: 'confirmateur', label: 'Confirmateur' },
+  { field: 'platform', label: 'Plateforme' },
+  { field: 'montant_encaisse', label: 'Montant encaissé' },
+  { field: 'bonus', label: 'Bonus' },
+  { field: 'paiement', label: 'Paiement' },
+  { field: 'contrat', label: 'Contrat' },
+  { field: 'nom_de_scene', label: 'Nom de scène' },
+  { field: 'date_pro_tr', label: 'Date Pro TR' },
+  { field: 'potentiel', label: 'Potentiel' },
+  { field: 'produit', label: 'Produit' },
 ];
 
 export function PermissionsTab() {

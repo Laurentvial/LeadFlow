@@ -216,6 +216,27 @@
   gap: 1rem;
 }
 
+.chat-load-more-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+
+.chat-load-more-button {
+  width: 100%;
+  max-width: 300px;
+}
+
+.chat-loading-more-conversations {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
 .chat-message-wrapper {
   display: flex;
 }

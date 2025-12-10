@@ -282,6 +282,7 @@ export function ContactList({
   const [columnFilterSearchTerms, setColumnFilterSearchTerms] = useState<Record<string, string>>({});
   const [statusColumnFilterType, setStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
   const [statusModalFilterType, setStatusModalFilterType] = useState<'lead' | 'client'>('lead');
+  const [previousStatusColumnFilterType, setPreviousStatusColumnFilterType] = useState<'lead' | 'client'>('lead');
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
@@ -770,6 +771,15 @@ export function ContactList({
     }
   }, [isFossePage, fosseSettings, fosseSettingsLoading, appliedColumnFilters]);
   
+  // Close any open popovers for forced filters
+  useEffect(() => {
+    if (isFossePage && fosseSettings && openFilterColumn) {
+      if (isFilterForced(openFilterColumn)) {
+        setOpenFilterColumn(null);
+      }
+    }
+  }, [isFossePage, fosseSettings, openFilterColumn]);
+  
   // Save column order to localStorage
   const saveColumnOrder = (order: string[]) => {
     const storageKey = getStorageKey('column-order');
@@ -1096,17 +1106,11 @@ export function ContactList({
 
   // Apply a single column filter
   function handleApplyColumnFilter(columnId: string) {
-    // If on Fosse page, check if this filter is forced with 'defined' type
-    // 'open' type filters allow users to filter freely - no restriction
-    if (isFossePage && fosseSettings) {
-      const forcedFilters = fosseSettings.forcedFilters || {};
-      const filterConfig = forcedFilters[columnId];
-      // Only prevent modification if filter type is 'defined' - 'open' allows changes
-      if (filterConfig && filterConfig.type === 'defined' && filterConfig.values && filterConfig.values.length > 0) {
-        toast.error('Ce filtre est forcé et ne peut pas être modifié');
-        return;
-      }
-      // If filter type is 'open' or doesn't exist, allow normal filtering
+    // If on Fosse page, check if this filter is forced (has any value configured)
+    // Forced filters cannot be modified regardless of type ('open' or 'defined')
+    if (isFilterForced(columnId)) {
+      toast.error('Ce filtre est forcé et ne peut pas être modifié');
+      return;
     }
     
     const newFilters = { ...appliedColumnFilters };
@@ -1159,17 +1163,11 @@ export function ContactList({
   
   // Reset a specific column filter
   function handleResetColumnFilter(columnId: string) {
-    // If on Fosse page, check if this filter is forced with 'defined' type
-    // 'open' type filters allow users to reset freely - no restriction
-    if (isFossePage && fosseSettings) {
-      const forcedFilters = fosseSettings.forcedFilters || {};
-      const filterConfig = forcedFilters[columnId];
-      // Only prevent reset if filter type is 'defined' - 'open' allows reset
-      if (filterConfig && filterConfig.type === 'defined' && filterConfig.values && filterConfig.values.length > 0) {
-        toast.error('Ce filtre est forcé et ne peut pas être réinitialisé');
-        return;
-      }
-      // If filter type is 'open' or doesn't exist, allow normal reset
+    // If on Fosse page, check if this filter is forced (has any value configured)
+    // Forced filters cannot be reset regardless of type ('open' or 'defined')
+    if (isFilterForced(columnId)) {
+      toast.error('Ce filtre est forcé et ne peut pas être réinitialisé');
+      return;
     }
     
     // Remove from pending filters
@@ -1254,6 +1252,24 @@ export function ContactList({
 
   const isDateColumn = (columnId: string): boolean => {
     return ['createdAt', 'updatedAt', 'birthDate'].includes(columnId);
+  };
+  
+  // Helper function to check if a filter is forced (has any value configured, regardless of type)
+  const isFilterForced = (columnId: string): boolean => {
+    if (isFossePage && fosseSettings) {
+      const forcedFilters = fosseSettings.forcedFilters || {};
+      const filterConfig = forcedFilters[columnId];
+      if (filterConfig) {
+        // Check if filter has any value (multi-select, text, or date range)
+        // Works for both 'defined' and 'open' types - if a filter is forced, user cannot open it
+        const hasValues = filterConfig.values && Array.isArray(filterConfig.values) && filterConfig.values.length > 0;
+        const hasValue = filterConfig.value !== undefined && filterConfig.value !== null && String(filterConfig.value).trim() !== '';
+        const hasDateRange = filterConfig.dateRange && 
+          (filterConfig.dateRange.from || filterConfig.dateRange.to);
+        return hasValues || hasValue || hasDateRange;
+      }
+    }
+    return false;
   };
   
   // Helper function to get filter options for Select columns
@@ -1385,21 +1401,29 @@ export function ContactList({
         break;
       case 'previousStatus':
         // For previousStatus, use status names (since it stores names, not IDs)
-        // Deduplicate by status name
-        const statusNameMap = new Map<string, { id: string; label: string }>();
-        statuses.forEach(status => {
-          const name = status.name;
-          if (!statusNameMap.has(name)) {
-            statusNameMap.set(name, { id: name, label: name });
-          } else {
-            // If duplicate name exists, use name with status ID to make it unique
-            statusNameMap.set(`${name}_${status.id}`, {
-              id: name, // Still use name for filtering
-              label: `${name} (${status.id})`
-            });
-          }
-        });
-        const previousStatusOptions = Array.from(statusNameMap.values());
+        // Use the exact same logic as status filter
+        const isFossePageForPreviousStatus = apiEndpoint.includes('/fosse/');
+        const previousStatusOptions = statuses
+          .filter((status) => {
+            if (!status.id || status.id.trim() === '') return false;
+            
+            // Filter by status type
+            if (status.type !== statusTypeFilter) {
+              return false;
+            }
+            
+            if (isFossePageForPreviousStatus) {
+              // Fosse page: show all statuses in filter
+              return true;
+            }
+            // Regular contacts page: filter by view permissions
+            const normalizedStatusId = String(status.id).trim();
+            return statusViewPermissions.has(normalizedStatusId);
+          })
+          .map(status => ({
+            id: status.name, // Use name for filtering since previousStatus stores names
+            label: status.name
+          }));
         options.push(...previousStatusOptions);
         break;
       case 'previousTeleoperator':
@@ -1850,6 +1874,10 @@ export function ContactList({
             ) : (
               <span 
                 className="contacts-status-badge"
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent row click
+                  // Prevent opening modal - user doesn't have edit permission for this status
+                }}
                 style={{
                   backgroundColor: statusBgColor,
                   color: statusTextColor,
@@ -1857,8 +1885,11 @@ export function ContactList({
                   borderRadius: '5px',
                   fontSize: '0.875rem',
                   fontWeight: '500',
-                  display: 'inline-block'
+                  display: 'inline-block',
+                  cursor: 'not-allowed',
+                  opacity: 0.7
                 }}
+                title="Vous n'avez pas la permission de modifier le statut de ce contact"
               >
                 {statusDisplayText}
               </span>
@@ -2480,112 +2511,81 @@ export function ContactList({
                     </th>
                     {getOrderedVisibleColumns().map((columnId) => (
                       <th key={columnId} style={{ position: 'relative' }}>
-                        <Popover 
-                          open={openFilterColumn === columnId}
-                          onOpenChange={(open) => {
-                            // Prevent opening filter if it's forced with 'defined' type
-                            if (open && isFossePage && fosseSettings) {
-                              const forcedFilters = fosseSettings.forcedFilters || {};
-                              const filterConfig = forcedFilters[columnId];
-                              if (filterConfig && filterConfig.type === 'defined') {
-                                // Check if filter has any value (multi-select, text, or date range)
-                                const hasValue = (filterConfig.values && filterConfig.values.length > 0) ||
-                                               (filterConfig.value !== undefined && filterConfig.value !== '') ||
-                                               (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
-                                if (hasValue) {
-                                  toast.error('Ce filtre est forcé et ne peut pas être modifié');
-                                  return;
+                        {isFilterForced(columnId) ? (
+                          // If filter is forced, just show a button without popover
+                          <button
+                            className="contacts-column-header-button"
+                            disabled
+                            title="Ce filtre est forcé et ne peut pas être modifié"
+                          >
+                            <span>{getColumnLabel(columnId)}</span>
+                            {(pendingColumnFilters[columnId] || columnFilters[columnId]) && (
+                              <Filter className="w-3 h-3" style={{ color: '#3b82f6' }} />
+                            )}
+                          </button>
+                        ) : (
+                          <Popover 
+                            open={openFilterColumn === columnId}
+                            onOpenChange={(open) => {
+                              setOpenFilterColumn(open ? columnId : null);
+                              // Clear search term and status type filter when closing
+                              if (!open) {
+                                setColumnFilterSearchTerms(prev => {
+                                  const newTerms = { ...prev };
+                                  delete newTerms[columnId];
+                                  return newTerms;
+                                });
+                                if (columnId === 'status') {
+                                  setStatusColumnFilterType('lead');
+                                }
+                                if (columnId === 'previousStatus') {
+                                  setPreviousStatusColumnFilterType('lead');
                                 }
                               }
-                            }
-                            
-                            setOpenFilterColumn(open ? columnId : null);
-                            // Clear search term and status type filter when closing
-                            if (!open) {
-                              setColumnFilterSearchTerms(prev => {
-                                const newTerms = { ...prev };
-                                delete newTerms[columnId];
-                                return newTerms;
-                              });
-                              if (columnId === 'status') {
-                                setStatusColumnFilterType('lead');
-                              }
-                            }
-                            // Initialize pending filter with current applied filter when opening
-                            if (open && isDateColumn(columnId)) {
-                              const currentFilter = columnFilters[columnId];
-                              if (currentFilter && typeof currentFilter === 'object' && currentFilter !== null) {
-                                setPendingColumnFilters(prev => ({
-                                  ...prev,
-                                  [columnId]: { ...(currentFilter as { from?: string; to?: string }) }
-                                }));
-                              } else {
-                                setPendingColumnFilters(prev => ({
-                                  ...prev,
-                                  [columnId]: { from: '', to: '' }
-                                }));
-                              }
-                            } else if (open) {
-                              if (shouldUseMultiSelectFilter(columnId)) {
-                                // Initialize multi-select filter
+                              // Initialize pending filter with current applied filter when opening
+                              if (open && isDateColumn(columnId)) {
                                 const currentFilter = columnFilters[columnId];
-                                const filterArray = Array.isArray(currentFilter) ? currentFilter : 
-                                                  (typeof currentFilter === 'string' && currentFilter ? [currentFilter] : []);
-                                setPendingColumnFilters(prev => ({
-                                  ...prev,
-                                  [columnId]: filterArray.length > 0 ? filterArray : ''
-                                }));
-                              } else if (!pendingColumnFilters[columnId]) {
-                                // Initialize with current applied filter for non-date columns
-                                setPendingColumnFilters(prev => ({
-                                  ...prev,
-                                  [columnId]: columnFilters[columnId] || ''
-                                }));
+                                if (currentFilter && typeof currentFilter === 'object' && currentFilter !== null) {
+                                  setPendingColumnFilters(prev => ({
+                                    ...prev,
+                                    [columnId]: { ...(currentFilter as { from?: string; to?: string }) }
+                                  }));
+                                } else {
+                                  setPendingColumnFilters(prev => ({
+                                    ...prev,
+                                    [columnId]: { from: '', to: '' }
+                                  }));
+                                }
+                              } else if (open) {
+                                if (shouldUseMultiSelectFilter(columnId)) {
+                                  // Initialize multi-select filter
+                                  const currentFilter = columnFilters[columnId];
+                                  const filterArray = Array.isArray(currentFilter) ? currentFilter : 
+                                                    (typeof currentFilter === 'string' && currentFilter ? [currentFilter] : []);
+                                  setPendingColumnFilters(prev => ({
+                                    ...prev,
+                                    [columnId]: filterArray.length > 0 ? filterArray : ''
+                                  }));
+                                } else if (!pendingColumnFilters[columnId]) {
+                                  // Initialize with current applied filter for non-date columns
+                                  setPendingColumnFilters(prev => ({
+                                    ...prev,
+                                    [columnId]: columnFilters[columnId] || ''
+                                  }));
+                                }
                               }
-                            }
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <button
-                              className="contacts-column-header-button"
-                              disabled={(() => {
-                                // Disable button if filter is forced with 'defined' type
-                                if (isFossePage && fosseSettings) {
-                                  const forcedFilters = fosseSettings.forcedFilters || {};
-                                  const filterConfig = forcedFilters[columnId];
-                                  if (filterConfig && filterConfig.type === 'defined') {
-                                    // Check if filter has any value (multi-select, text, or date range)
-                                    return (filterConfig.values && filterConfig.values.length > 0) ||
-                                           (filterConfig.value !== undefined && filterConfig.value !== '') ||
-                                           (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
-                                  }
-                                }
-                                return false;
-                              })()}
-                              title={(() => {
-                                // Show tooltip if filter is forced
-                                if (isFossePage && fosseSettings) {
-                                  const forcedFilters = fosseSettings.forcedFilters || {};
-                                  const filterConfig = forcedFilters[columnId];
-                                  if (filterConfig && filterConfig.type === 'defined') {
-                                    // Check if filter has any value (multi-select, text, or date range)
-                                    const hasValue = (filterConfig.values && filterConfig.values.length > 0) ||
-                                                   (filterConfig.value !== undefined && filterConfig.value !== '') ||
-                                                   (filterConfig.dateRange && (filterConfig.dateRange.from || filterConfig.dateRange.to));
-                                    if (hasValue) {
-                                      return 'Ce filtre est forcé et ne peut pas être modifié';
-                                    }
-                                  }
-                                }
-                                return '';
-                              })()}
-                            >
-                              <span>{getColumnLabel(columnId)}</span>
-                              {(pendingColumnFilters[columnId] || columnFilters[columnId]) && (
-                                <Filter className="w-3 h-3" style={{ color: '#3b82f6' }} />
-                              )}
-                            </button>
-                          </PopoverTrigger>
+                            }}
+                          >
+                            <PopoverTrigger asChild>
+                              <button
+                                className="contacts-column-header-button"
+                              >
+                                <span>{getColumnLabel(columnId)}</span>
+                                {(pendingColumnFilters[columnId] || columnFilters[columnId]) && (
+                                  <Filter className="w-3 h-3" style={{ color: '#3b82f6' }} />
+                                )}
+                              </button>
+                            </PopoverTrigger>
                           <PopoverContent 
                             className="w-80 p-4" 
                             align="start"
@@ -2600,28 +2600,36 @@ export function ContactList({
                               </div>
                               {shouldUseMultiSelectFilter(columnId) ? (
                                 <>
-                                  {columnId === 'status' && (
+                                  {(columnId === 'status' || columnId === 'previousStatus') && (
                                     <div className="mb-2 flex gap-2">
                                       <Button
                                         type="button"
-                                        variant={statusColumnFilterType === 'lead' ? 'default' : 'outline'}
+                                        variant={(columnId === 'status' ? statusColumnFilterType : previousStatusColumnFilterType) === 'lead' ? 'default' : 'outline'}
                                         size="sm"
                                         className="flex-1 h-8 text-xs"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setStatusColumnFilterType('lead');
+                                          if (columnId === 'status') {
+                                            setStatusColumnFilterType('lead');
+                                          } else {
+                                            setPreviousStatusColumnFilterType('lead');
+                                          }
                                         }}
                                       >
                                         Lead
                                       </Button>
                                       <Button
                                         type="button"
-                                        variant={statusColumnFilterType === 'client' ? 'default' : 'outline'}
+                                        variant={(columnId === 'status' ? statusColumnFilterType : previousStatusColumnFilterType) === 'client' ? 'default' : 'outline'}
                                         size="sm"
                                         className="flex-1 h-8 text-xs"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setStatusColumnFilterType('client');
+                                          if (columnId === 'status') {
+                                            setStatusColumnFilterType('client');
+                                          } else {
+                                            setPreviousStatusColumnFilterType('client');
+                                          }
                                         }}
                                       >
                                         Client
@@ -2713,7 +2721,11 @@ export function ContactList({
                                   >
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                      const statusTypeFilter = columnId === 'status' 
+                                        ? statusColumnFilterType 
+                                        : columnId === 'previousStatus'
+                                        ? previousStatusColumnFilterType
+                                        : 'lead';
                                       const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       
                                       // Always show empty option first, then filter other options
@@ -2790,8 +2802,8 @@ export function ContactList({
                                             <span 
                                               className="inline-block px-2 py-1 rounded text-sm"
                                               style={{
-                                                backgroundColor: statuses.find(s => s.name === option.id)?.color || '#e5e7eb',
-                                                color: statuses.find(s => s.name === option.id)?.color ? '#000000' : '#374151'
+                                                backgroundColor: statuses.find(s => s.name === option.id && s.type === previousStatusColumnFilterType)?.color || '#e5e7eb',
+                                                color: statuses.find(s => s.name === option.id && s.type === previousStatusColumnFilterType)?.color ? '#000000' : '#374151'
                                               }}
                                             >
                                               {option.label}
@@ -2963,6 +2975,7 @@ export function ContactList({
                             </div>
                           </PopoverContent>
                         </Popover>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -3661,7 +3674,12 @@ export function ContactList({
                           return false;
                         }
                         // Filter by status type - only show statuses matching the current filter type
-                        if (status.type !== statusModalFilterType) {
+                        // Strict check: must match exactly and be either 'lead' or 'client'
+                        if (!status.type || status.type !== statusModalFilterType) {
+                          return false;
+                        }
+                        // Additional safety check: ensure type is valid
+                        if (status.type !== 'lead' && status.type !== 'client') {
                           return false;
                         }
                         return true;
