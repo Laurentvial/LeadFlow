@@ -262,44 +262,11 @@ for dir_path in [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS Configuration
-# Note: CORS_ALLOW_ALL_ORIGINS and CORS_ALLOWED_ORIGINS are mutually exclusive
-# For development and production, we allow all origins by default
-# You can restrict this by setting CORS_ALLOWED_ORIGINS environment variable
-# However, localhost origins and Vercel domain are always included
-
-# Check if CORS_ALLOWED_ORIGINS is explicitly set
-CORS_ALLOWED_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', '')
-
-# Default origins that should always be allowed
-DEFAULT_REQUIRED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'https://lead-flow-orpin.vercel.app',  # Production Vercel frontend
-]
-
-if CORS_ALLOWED_ORIGINS_ENV:
-    # Use specific origins if provided via environment variable
-    # Always include required origins (localhost + Vercel) for development and production
-    allowed_origins = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_ENV.split(',') if origin.strip()]
-    # Add required origins if not already present
-    for required_origin in DEFAULT_REQUIRED_ORIGINS:
-        if required_origin not in allowed_origins:
-            allowed_origins.append(required_origin)
-    CORS_ALLOWED_ORIGINS = allowed_origins
-    CORS_ALLOW_ALL_ORIGINS = False
-    # Log for debugging (always log in production to help troubleshoot CORS issues)
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"[CORS] Using restricted origins: {CORS_ALLOWED_ORIGINS}")
-else:
-    # Allow all origins (default - works for development and production)
-    CORS_ALLOW_ALL_ORIGINS = True
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info("[CORS] Allowing all origins (CORS_ALLOW_ALL_ORIGINS = True)")
+# CORS Configuration - API Only Mode
+# Allow all origins for API access (no CORS restrictions)
+# This is appropriate for an API-only backend with JWT authentication
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = []  # Empty when CORS_ALLOW_ALL_ORIGINS is True
 
 CORS_ALLOW_CREDENTIALS = True
 
