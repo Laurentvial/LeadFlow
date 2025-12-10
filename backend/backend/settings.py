@@ -290,14 +290,16 @@ if CORS_ALLOWED_ORIGINS_ENV:
             allowed_origins.append(required_origin)
     CORS_ALLOWED_ORIGINS = allowed_origins
     CORS_ALLOW_ALL_ORIGINS = False
-    # Log for debugging (only in DEBUG mode)
-    if DEBUG:
-        print(f"[CORS] Using restricted origins: {CORS_ALLOWED_ORIGINS}")
+    # Log for debugging (always log in production to help troubleshoot CORS issues)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[CORS] Using restricted origins: {CORS_ALLOWED_ORIGINS}")
 else:
     # Allow all origins (default - works for development and production)
     CORS_ALLOW_ALL_ORIGINS = True
-    if DEBUG:
-        print("[CORS] Allowing all origins (CORS_ALLOW_ALL_ORIGINS = True)")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("[CORS] Allowing all origins (CORS_ALLOW_ALL_ORIGINS = True)")
 
 CORS_ALLOW_CREDENTIALS = True
 
