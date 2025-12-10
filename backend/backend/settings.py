@@ -59,6 +59,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # CORS middleware DOIT être le premier
+    'api.middleware.ExplicitCorsMiddleware',  # Explicit CORS fallback
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # For serving static files on Heroku
     'django.contrib.sessions.middleware.SessionMiddleware',
