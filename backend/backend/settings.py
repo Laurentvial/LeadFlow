@@ -101,32 +101,52 @@ REDIS_URL = os.getenv('REDIS_URL', None)
 if REDIS_URL:
     # Heroku Redis or other cloud Redis with URL
     # channels-redis 4.x supports Redis URLs directly, including SSL (rediss://)
-    # For Aiven Redis with self-signed certificates, we need to disable SSL verification
+    # For Aiven Redis with self-signed certificates, disable SSL verification
     import ssl
     
-    # Parse Redis URL to check if it's SSL and if it's Aiven (has ec2 in hostname)
-    is_ssl = REDIS_URL.startswith('rediss://')
+    # Check if it's Aiven Redis (has ec2 in hostname)
     is_aiven = 'ec2' in REDIS_URL or 'compute.amazonaws.com' in REDIS_URL
     
-    # Configure Redis connection
-    redis_config = {
-        "hosts": [REDIS_URL],
-        "capacity": 1500,
-        "expiry": 10,
-    }
+    # For Aiven Redis with self-signed certificates, patch SSL verification
+    if is_aiven and REDIS_URL.startswith('rediss://'):
+        # Monkey-patch redis.asyncio to disable SSL verification for Aiven
+        try:
+            import redis.asyncio.connection as redis_conn
+            
+            # Store original function
+            _original_create_connection = redis_conn.create_connection
+            
+            # Create patched version
+            async def _patched_create_connection(address, *args, **kwargs):
+                # Create SSL context without verification for Aiven
+                if 'ssl' not in kwargs:
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                    kwargs['ssl'] = ssl_context
+                elif isinstance(kwargs.get('ssl'), bool) and kwargs['ssl']:
+                    # If ssl=True, replace with context
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                    kwargs['ssl'] = ssl_context
+                return await _original_create_connection(address, *args, **kwargs)
+            
+            # Apply patch
+            redis_conn.create_connection = _patched_create_connection
+        except Exception:
+            # If patching fails, continue anyway - might work without it
+            pass
     
-    # For Aiven Redis with self-signed certificates, disable SSL verification
-    if is_ssl and is_aiven:
-        # channels-redis passes connection_kwargs to redis.asyncio connection
-        # Disable SSL certificate verification for Aiven
-        redis_config["connection_kwargs"] = {
-            "ssl_cert_reqs": ssl.CERT_NONE,
-        }
-    
+    # Configure Redis - channels-redis will use the URL
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': redis_config,
+            'CONFIG': {
+                "hosts": [REDIS_URL],
+                "capacity": 1500,
+                "expiry": 10,
+            },
         },
     }
 elif os.getenv('USE_REDIS', 'False') == 'True':
