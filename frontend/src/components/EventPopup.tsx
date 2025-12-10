@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import { X, Calendar } from 'lucide-react';
-import '../styles/EventPopup.css';
+import { X } from 'lucide-react';
+import { Avatar, AvatarFallback } from './ui/avatar';
+import '../styles/MessagePopup.css';
 
 interface EventPopupProps {
   notification: {
@@ -26,15 +27,21 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Auto-close after 8 seconds (longer than message popup for event notifications)
+    console.log('[EventPopup] Component mounted with notification:', notification);
+    // Auto-close after 8 seconds
     const timer = setTimeout(() => {
+      console.log('[EventPopup] Auto-closing popup');
       onClose();
     }, 8000);
 
-    return () => clearTimeout(timer);
-  }, [onClose]);
+    return () => {
+      console.log('[EventPopup] Component unmounting');
+      clearTimeout(timer);
+    };
+  }, [onClose, notification]);
 
   const handleClick = () => {
+    console.log('[EventPopup] Clicked, navigating...');
     // Navigate to planning calendar or contact detail if contactId exists
     if (notification.event.contactId) {
       navigate(`/contacts/${notification.event.contactId}`);
@@ -61,55 +68,76 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
 
   const getNotificationIcon = () => {
     if (notification.notification_type === '5min_before') {
-      return '🔴'; // Red circle for urgent
+      return '🔴';
     } else if (notification.notification_type === '10min_before') {
-      return '🟠'; // Orange circle for soon
+      return '🟠';
     } else if (notification.notification_type === '30min_before') {
-      return '🟡'; // Yellow circle for warning
+      return '🟡';
     }
-    return '📅'; // Calendar for assignment
+    return '📅';
   };
 
-  // Debug logging
-  React.useEffect(() => {
-    console.log('[EventPopup] Component rendered with notification:', notification);
-    console.log('[EventPopup] Notification type:', notification?.notification_type);
-    console.log('[EventPopup] Title:', notification?.title);
-    console.log('[EventPopup] Message:', notification?.message);
-  }, [notification]);
+  const getInitials = () => {
+    return 'EV';
+  };
 
   if (!notification) {
     console.error('[EventPopup] No notification provided!');
     return null;
   }
 
+  // Format the display message
+  const displayMessage = notification.event.datetime 
+    ? `${notification.message}\n${formatDateTime(notification.event.datetime)}`
+    : notification.message;
+
+  console.log('[EventPopup] Rendering popup with:', {
+    title: notification.title,
+    message: displayMessage,
+    icon: getNotificationIcon()
+  });
+
   return (
     <div 
-      className="event-popup" 
+      className="message-popup" 
       onClick={handleClick}
+      style={{
+        position: 'fixed',
+        bottom: '20px',
+        right: '20px',
+        zIndex: 9999,
+        minWidth: '300px',
+        maxWidth: '400px',
+        background: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+        cursor: 'pointer',
+        display: 'block',
+        visibility: 'visible',
+        opacity: 1,
+      }}
     >
-      <div className="event-popup-content">
-        <div className="event-popup-icon">
-          <Calendar className="h-5 w-5" />
-        </div>
-        <div className="event-popup-text">
-          <div className="event-popup-title">
-            <span className="event-popup-emoji">{getNotificationIcon()}</span>
-            {notification.title}
+      <div className="message-popup-content">
+        <Avatar className="message-popup-avatar">
+          <AvatarFallback>
+            {getInitials()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="message-popup-text">
+          <div className="message-popup-sender">
+            {getNotificationIcon()} {notification.title}
           </div>
-          <div className="event-popup-message">{notification.message}</div>
-          {notification.event.datetime && (
-            <div className="event-popup-datetime">
-              {formatDateTime(notification.event.datetime)}
-            </div>
-          )}
+          <div className="message-popup-message" style={{ whiteSpace: 'pre-line' }}>
+            {displayMessage}
+          </div>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          className="event-popup-close"
+          className="message-popup-close"
           onClick={(e) => {
             e.stopPropagation();
+            console.log('[EventPopup] Close button clicked');
             onClose();
           }}
         >
@@ -119,4 +147,3 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
     </div>
   );
 }
-

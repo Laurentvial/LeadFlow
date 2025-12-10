@@ -164,37 +164,9 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
         // Also reload when message notifications are received (for compatibility)
         loadUnreadCount();
       } else if (message.type === 'event_notification') {
-        // Handle event notifications
-        console.log('[UnreadMessagesContext] Received event_notification:', message);
-        console.log('[UnreadMessagesContext] Full message structure:', JSON.stringify(message, null, 2));
-        const eventNotification = message.notification;
-        if (eventNotification) {
-          console.log('[UnreadMessagesContext] Event notification data:', eventNotification);
-          console.log('[UnreadMessagesContext] Notification type:', eventNotification.notification_type);
-          
-          // Skip popup for assignment notifications - only show reminders (30min_before, 10min_before, 5min_before)
-          if (eventNotification.notification_type === 'assigned') {
-            console.log('[UnreadMessagesContext] Skipping popup for assignment notification (only showing reminders)');
-            return;
-          }
-          
-          // Check if it's a reminder notification
-          if (eventNotification.notification_type === '30min_before' || 
-              eventNotification.notification_type === '10min_before' || 
-              eventNotification.notification_type === '5min_before') {
-            console.log('[UnreadMessagesContext] Setting event popup for reminder:', eventNotification);
-            setEventPopup(eventNotification);
-            
-            // Auto-hide popup after 8 seconds
-            setTimeout(() => {
-              setEventPopup(null);
-            }, 8000);
-          } else {
-            console.warn('[UnreadMessagesContext] Unknown notification type:', eventNotification.notification_type);
-          }
-        } else {
-          console.error('[UnreadMessagesContext] Event notification received but notification data is missing:', message);
-        }
+        // Event notifications are handled by the Notifications component
+        // The notification modal will auto-open when unread notifications are received
+        console.log('[UnreadMessagesContext] Received event_notification - handled by Notifications component');
       }
     },
     onOpen: () => {

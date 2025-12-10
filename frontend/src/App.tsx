@@ -48,7 +48,6 @@ function App() {
                     <>
                         <Toaster />
                         <MessagePopupWrapper />
-                        <EventPopupWrapper />
                         <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/logout" element={<Logout />} />

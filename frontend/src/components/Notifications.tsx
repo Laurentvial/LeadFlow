@@ -32,6 +32,28 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'unread' | 'read'>('unread');
 
+  // Auto-open modal when there are unread notifications and keep it open
+  useEffect(() => {
+    if (unreadCount > 0 && !isOpen) {
+      console.log('[Notifications] Auto-opening modal - unread count:', unreadCount);
+      setIsOpen(true);
+      // Switch to unread tab when auto-opening
+      setActiveTab('unread');
+    }
+  }, [unreadCount, isOpen]);
+
+  // Auto-close modal when all notifications are read
+  useEffect(() => {
+    if (unreadCount === 0 && isOpen) {
+      console.log('[Notifications] Auto-closing modal - all notifications read');
+      // Small delay before closing to show the "all read" state
+      const timer = setTimeout(() => {
+        setIsOpen(false);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [unreadCount, isOpen]);
+
   // Load notifications
   const loadNotifications = useCallback(async (silent: boolean = false) => {
     try {
@@ -112,9 +134,15 @@ export default function Notifications() {
     } else if (notification.type === 'contact' && notification.contact_id) {
       // Navigate to contact
       window.location.href = `/contacts?contact=${notification.contact_id}`;
+    } else if (notification.type === 'event' && notification.event_id) {
+      // Navigate to planning calendar
+      window.location.href = '/planning';
     }
     
-    setIsOpen(false);
+    // Don't close modal if there are still unread notifications
+    if (unreadCount <= 1) {
+      // This was the last unread notification, modal will auto-close
+    }
   };
 
   // Format time
@@ -280,7 +308,14 @@ export default function Notifications() {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          // Only allow toggling if all notifications are read, otherwise force open
+          if (unreadCount === 0) {
+            setIsOpen(!isOpen);
+          } else {
+            setIsOpen(true);
+          }
+        }}
         className="notifications-button"
       >
         <Bell className="h-5 w-5" />
@@ -307,13 +342,15 @@ export default function Notifications() {
                   Tout marquer comme lu
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsOpen(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+              {unreadCount === 0 && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsOpen(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
 

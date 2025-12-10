@@ -7,7 +7,7 @@ import traceback
 
 
 class Command(BaseCommand):
-    help = 'Check for upcoming events and send notifications 30 minutes and 10 minutes before'
+    help = 'Check for upcoming events and send notifications 30 minutes, 10 minutes, and 5 minutes before'
 
     def handle(self, *args, **options):
         now = timezone.now()
@@ -26,6 +26,12 @@ class Command(BaseCommand):
         ten_min_window_start = ten_min_from_now - timedelta(minutes=2)
         ten_min_window_end = ten_min_from_now + timedelta(minutes=2)
         
+        # Check for events 5 minutes from now (with wider 3 minute window to account for 10-minute scheduler interval)
+        five_min_from_now = now + timedelta(minutes=5)
+        five_min_window_start = five_min_from_now - timedelta(minutes=3)
+        five_min_window_end = five_min_from_now + timedelta(minutes=3)
+        
+        self.stdout.write(f'5-minute window: {five_min_window_start} to {five_min_window_end}')
         self.stdout.write(f'10-minute window: {ten_min_window_start} to {ten_min_window_end}')
         self.stdout.write(f'30-minute window: {thirty_min_window_start} to {thirty_min_window_end}')
         
@@ -43,12 +49,23 @@ class Command(BaseCommand):
             datetime__gt=now  # Ensure event is in the future
         ).select_related('userId', 'contactId')
         
+        # Find events in the 5-minute window (only future events)
+        events_5min = Event.objects.filter(
+            datetime__gte=five_min_window_start,
+            datetime__lte=five_min_window_end,
+            datetime__gt=now  # Ensure event is in the future
+        ).select_related('userId', 'contactId')
+        
         self.stdout.write(f'Found {events_30min.count()} events in 30-minute window')
         for event in events_30min:
             self.stdout.write(f'  - Event {event.id}: datetime={event.datetime}, userId={event.userId.id if event.userId else None}')
         
         self.stdout.write(f'Found {events_10min.count()} events in 10-minute window')
         for event in events_10min:
+            self.stdout.write(f'  - Event {event.id}: datetime={event.datetime}, userId={event.userId.id if event.userId else None}')
+        
+        self.stdout.write(f'Found {events_5min.count()} events in 5-minute window')
+        for event in events_5min:
             self.stdout.write(f'  - Event {event.id}: datetime={event.datetime}, userId={event.userId.id if event.userId else None}')
         
         # Send 30-minute notifications
@@ -128,9 +145,47 @@ class Command(BaseCommand):
                     )
                     self.stdout.write(traceback.format_exc())
         
+        # Send 5-minute notifications
+        count_5min = 0
+        for event in events_5min:
+            if event.userId:
+                # Check if we already sent a 5-minute notification for this event
+                all_event_notifications = Notification.objects.filter(
+                    user=event.userId,
+                    event_id=event.id,
+                    type='event'
+                )
+                already_sent = False
+                for notif in all_event_notifications:
+                    if notif.data and notif.data.get('notification_type') == '5min_before':
+                        already_sent = True
+                        self.stdout.write(
+                            f'Skipping 5-minute notification for event {event.id} - already sent (notification ID: {notif.id})'
+                        )
+                        break
+                
+                if already_sent:
+                    continue
+                
+                try:
+                    send_event_notification(event, notification_type='5min_before', minutes_before=5)
+                    count_5min += 1
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f'Sent 5-minute notification for event {event.id} (user: {event.userId.username or event.userId.email})'
+                        )
+                    )
+                except Exception as e:
+                    self.stdout.write(
+                        self.style.ERROR(
+                            f'Error sending 5-minute notification for event {event.id}: {str(e)}'
+                        )
+                    )
+                    self.stdout.write(traceback.format_exc())
+        
         self.stdout.write(
             self.style.SUCCESS(
-                f'Processed {count_30min} 30-minute notifications and {count_10min} 10-minute notifications'
+                f'Processed {count_30min} 30-minute notifications, {count_10min} 10-minute notifications, and {count_5min} 5-minute notifications'
             )
         )
 
