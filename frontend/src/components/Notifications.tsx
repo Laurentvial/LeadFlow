@@ -32,7 +32,7 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'unread' | 'read'>('unread');
 
-  // Auto-open modal when there are unread notifications and keep it open
+  // Auto-open modal when there are unread notifications (only if currently closed)
   useEffect(() => {
     if (unreadCount > 0 && !isOpen) {
       console.log('[Notifications] Auto-opening modal - unread count:', unreadCount);
@@ -42,17 +42,8 @@ export default function Notifications() {
     }
   }, [unreadCount, isOpen]);
 
-  // Auto-close modal when all notifications are read
-  useEffect(() => {
-    if (unreadCount === 0 && isOpen) {
-      console.log('[Notifications] Auto-closing modal - all notifications read');
-      // Small delay before closing to show the "all read" state
-      const timer = setTimeout(() => {
-        setIsOpen(false);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [unreadCount, isOpen]);
+  // Removed auto-close behavior - users can now control when to close the modal
+  // The modal will stay open even when all notifications are read
 
   // Load notifications
   const loadNotifications = useCallback(async (silent: boolean = false) => {
@@ -309,12 +300,8 @@ export default function Notifications() {
         variant="ghost"
         size="icon"
         onClick={() => {
-          // Only allow toggling if all notifications are read, otherwise force open
-          if (unreadCount === 0) {
-            setIsOpen(!isOpen);
-          } else {
-            setIsOpen(true);
-          }
+          // Always allow toggling - users can open/close whenever they want
+          setIsOpen(!isOpen);
         }}
         className="notifications-button"
       >
@@ -331,26 +318,13 @@ export default function Notifications() {
           <div className="notifications-header">
             <h3>Notifications</h3>
             <div className="notifications-header-actions">
-              {unreadCount > 0 && activeTab === 'unread' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={markAllAsRead}
-                  className="mark-all-read-button"
-                >
-                  <Check className="h-4 w-4" />
-                  Tout marquer comme lu
-                </Button>
-              )}
-              {unreadCount === 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           </div>
 

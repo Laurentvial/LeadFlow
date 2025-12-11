@@ -125,6 +125,7 @@ export function UsersTab() {
                   <tr>
                     <th>ID</th>
                     <th>Nom</th>
+                    <th>Couleur</th>
                     <th>Email</th>
                     <th>Rôle</th>
                     <th>Équipe</th>
@@ -141,6 +142,17 @@ export function UsersTab() {
                         <td className="users-teams-table-id">{user.id.substring(0, 8)}</td>
                         <td>
                           {`${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`}
+                        </td>
+                        <td>
+                          {user.hrex ? (
+                            <div
+                              className="w-4 h-4 rounded border border-slate-300"
+                              style={{ backgroundColor: user.hrex }}
+                              title={user.hrex}
+                            />
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
                         </td>
                         <td className="users-teams-table-email">{user.email || user.username || '-'}</td>
                         <td>

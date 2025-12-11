@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Upload, FileText, Download, X, Eye } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 import {
   Select,
   SelectContent,
@@ -41,14 +41,61 @@ const DOCUMENT_TYPES = [
 ];
 
 export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
+  const { currentUser } = useUser();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   
-  // Permission check for document deletion
-  const canDeleteDocument = useHasPermission('contacts', 'delete');
+  // Permission checks for documents tab - use contact_tabs permissions
+  const canCreateDocument = useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'create' && 
+      p.fieldName === 'documents' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  const canEditDocument = useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'edit' && 
+      p.fieldName === 'documents' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  const canDeleteDocument = useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'delete' && 
+      p.fieldName === 'documents' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
 
   useEffect(() => {
     loadDocuments();
@@ -198,14 +245,16 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Documents</CardTitle>
-          <Button 
-            type="button" 
-            className="flex items-center gap-2"
-            onClick={() => setUploadDialogOpen(true)}
-          >
-            <Upload className="w-4 h-4" />
-            Uploader un document
-          </Button>
+          {canCreateDocument && (
+            <Button 
+              type="button" 
+              className="flex items-center gap-2"
+              onClick={() => setUploadDialogOpen(true)}
+            >
+              <Upload className="w-4 h-4" />
+              Uploader un document
+            </Button>
+          )}
         </div>
       </CardHeader>
       {uploadDialogOpen && (

@@ -43,6 +43,7 @@ export function CreateUserModal({
     confirmPassword: "",
     role: "",
     teamId: "",
+    hrex: "",
   });
 
   // Set default role when roles are loaded and modal opens
@@ -64,6 +65,7 @@ export function CreateUserModal({
         confirmPassword: "",
         role: roles.length > 0 ? roles[0].id : "",
         teamId: "",
+        hrex: "",
       });
     }
   }, [isOpen, roles]);
@@ -107,6 +109,7 @@ export function CreateUserModal({
           phone: removePhoneSpaces(String(formData.phone)),
           roleId: formData.role,
           teamId: formData.teamId || null,
+          hrex: formData.hrex || '',
         }),
       });
 
@@ -121,6 +124,7 @@ export function CreateUserModal({
         confirmPassword: "",
         role: roles.length > 0 ? roles[0].id : "",
         teamId: "",
+        hrex: "",
       });
       onClose();
       onUserCreated();
@@ -290,6 +294,25 @@ export function CreateUserModal({
                   ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="modal-form-field">
+            <Label htmlFor="create-hrex">Couleur (optionnel)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="create-hrex"
+                type="color"
+                value={formData.hrex || '#3B82F6'}
+                onChange={(e) => setFormData({ ...formData, hrex: e.target.value })}
+                className="w-16 h-10 cursor-pointer"
+              />
+              <Input
+                value={formData.hrex}
+                onChange={(e) => setFormData({ ...formData, hrex: e.target.value })}
+                placeholder="Ex: #3B82F6 ou blue"
+                className="flex-1"
+              />
+            </div>
           </div>
 
           {error && (

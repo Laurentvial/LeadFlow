@@ -40,15 +40,31 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
     };
   }, [onClose, notification]);
 
-  const handleClick = () => {
-    console.log('[EventPopup] Clicked, navigating...');
-    // Navigate to planning calendar or contact detail if contactId exists
-    if (notification.event.contactId) {
-      navigate(`/contacts/${notification.event.contactId}`);
-    } else {
-      navigate('/planning');
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Stop propagation to prevent interfering with other elements
+    e.stopPropagation();
+    
+    // Check if a modal is currently open - if so, don't handle the click
+    const modalOverlay = document.querySelector('.modal-overlay');
+    if (modalOverlay) {
+      console.log('[EventPopup] Modal is open, ignoring click');
+      return;
     }
-    onClose();
+    
+    // Only handle clicks directly on the popup or its children (but not on the close button)
+    const target = e.target as HTMLElement;
+    const isCloseButton = target.closest('.message-popup-close') || target.closest('button');
+    
+    if (!isCloseButton && (e.target === e.currentTarget || e.currentTarget.contains(target))) {
+      console.log('[EventPopup] Clicked, navigating...');
+      // Navigate to planning calendar or contact detail if contactId exists
+      if (notification.event.contactId) {
+        navigate(`/contacts/${notification.event.contactId}`);
+      } else {
+        navigate('/planning');
+      }
+      onClose();
+    }
   };
 
   const formatDateTime = (datetimeStr: string) => {
@@ -101,11 +117,15 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
     <div 
       className="message-popup" 
       onClick={handleClick}
+      onMouseDown={(e) => {
+        // Stop propagation to prevent clicks from reaching elements behind the popup
+        e.stopPropagation();
+      }}
       style={{
         position: 'fixed',
         bottom: '20px',
         right: '20px',
-        zIndex: 9999,
+        zIndex: 10002,
         minWidth: '300px',
         maxWidth: '400px',
         background: 'white',
@@ -115,6 +135,7 @@ export function EventPopup({ notification, onClose }: EventPopupProps) {
         display: 'block',
         visibility: 'visible',
         opacity: 1,
+        pointerEvents: 'auto',
       }}
     >
       <div className="message-popup-content">

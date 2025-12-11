@@ -17,6 +17,14 @@ interface AppointmentCardProps {
   onEdit?: (appointment: any) => void;
   onDelete?: (appointmentId: string) => void;
   variant?: 'default' | 'planning';
+  notes?: Array<{
+    id: string;
+    text: string;
+    createdAt?: string;
+    created_at?: string;
+    createdBy?: string;
+    categoryName?: string;
+  }>;
 }
 
 export function AppointmentCard({ 
@@ -24,7 +32,8 @@ export function AppointmentCard({
   showActions = false, 
   onEdit, 
   onDelete,
-  variant = 'default'
+  variant = 'default',
+  notes = []
 }: AppointmentCardProps) {
   const datetime = new Date(appointment.datetime);
   const isPast = datetime < new Date();
@@ -33,7 +42,7 @@ export function AppointmentCard({
   // Use consistent styling regardless of variant
   const cardClasses = `p-4 border ${
     isPast 
-      ? 'border-slate-300 bg-slate-50 opacity-60' 
+      ? 'border-slate-300 bg-slate-100 opacity-50' 
       : 'border-slate-200'
   }`;
 
@@ -52,7 +61,7 @@ export function AppointmentCard({
                 })}
               </p>
             </div>
-            <span className={`text-slate-400 ${isPast ? 'opacity-50' : ''}`}>•</span>
+            <span className={`text-slate-400 ${isPast ? 'opacity-40' : ''}`}>•</span>
             <div className="flex items-center gap-1">
               <Clock className={`w-4 h-4 ${isPast ? 'text-slate-400' : 'text-slate-600'}`} />
               <p className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -61,7 +70,7 @@ export function AppointmentCard({
             </div>
             {contactName && (
               <>
-                <span className={`text-slate-400 ${isPast ? 'opacity-50' : ''}`}>•</span>
+                <span className={`text-slate-400 ${isPast ? 'opacity-40' : ''}`}>•</span>
                 <div className="flex items-center gap-1">
                   <User className={`w-4 h-4 ${isPast ? 'text-slate-400' : 'text-slate-600'}`} />
                   <p className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -72,7 +81,7 @@ export function AppointmentCard({
             )}
             {appointment.assignedTo && (
               <>
-                <span className={`text-slate-400 ${isPast ? 'opacity-50' : ''}`}>•</span>
+                <span className={`text-slate-400 ${isPast ? 'opacity-40' : ''}`}>•</span>
                 <p className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
                   Assigné à: <span className="font-medium">{appointment.assignedTo}</span>
                 </p>
@@ -108,7 +117,7 @@ export function AppointmentCard({
                     variant="ghost"
                     size="sm"
                     onClick={() => onEdit(appointment)}
-                    className={`h-auto p-0 hover:text-black hover:bg-transparent cursor-pointer text-slate-600 ${isPast ? 'opacity-50' : ''}`}
+                    className={`h-auto p-0 hover:text-black hover:bg-transparent cursor-pointer text-slate-600 ${isPast ? 'opacity-40' : ''}`}
                     title="Modifier"
                     style={{ fontSize: '12px' }}
                   >
@@ -120,7 +129,7 @@ export function AppointmentCard({
                     variant="ghost"
                     size="sm"
                     onClick={() => onDelete(appointment.id)}
-                    className={`h-auto p-0 text-red-600 hover:opacity-70 hover:bg-transparent cursor-pointer ${isPast ? 'opacity-50' : ''}`}
+                    className={`h-auto p-0 text-red-600 hover:opacity-70 hover:bg-transparent cursor-pointer ${isPast ? 'opacity-40' : ''}`}
                     title="Supprimer"
                     style={{ fontSize: '12px' }}
                   >
@@ -165,6 +174,44 @@ export function AppointmentCard({
         <p className={`text-sm mt-2 whitespace-pre-wrap ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
           {appointment.comment}
         </p>
+      )}
+      
+      {notes && notes.length > 0 && (
+        <div className={`mt-4 pt-4 border-t border-slate-200 ${appointment.comment ? '' : 'mt-3'}`}>
+          <p className={`text-xs font-semibold mb-2 ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
+            Dernières notes ({notes.length})
+          </p>
+          <div className="space-y-2">
+            {notes.map((note) => (
+              <div key={note.id} className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
+                <div className="flex items-start gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
+                    {note.categoryName && (
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${isPast ? 'bg-slate-200 text-slate-500 opacity-60' : 'bg-blue-100 text-blue-700'}`}>
+                        {note.categoryName}
+                      </span>
+                    )}
+                    {(note.createdBy || note.created_at || note.createdAt) && (
+                      <span className={`text-xs whitespace-nowrap ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {note.createdBy && `${note.createdBy} • `}
+                        {new Date(note.createdAt || note.created_at || '').toLocaleDateString('fr-FR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric'
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-600'}`} style={{ wordBreak: 'break-word' }}>
+                      {note.text && note.text.length > 100 ? `${note.text.substring(0, 100)}...` : note.text}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

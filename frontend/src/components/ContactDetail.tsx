@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { ContactInfoTab } from './ContactInfoTab';
 import { ContactHistoryTab } from './ContactHistoryTab';
 import { ContactDocumentsTab } from './ContactDocumentsTab';
+import { useUser } from '../contexts/UserContext';
 import '../styles/Contacts.css';
 import '../styles/PlanningCalendar.css';
 
@@ -14,6 +15,7 @@ interface ContactDetailProps {
 }
 
 export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
+  const { currentUser } = useUser();
   const [contact, setContact] = useState<any>(null);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
@@ -22,6 +24,66 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   const [eventsPage, setEventsPage] = useState(1);
   const [eventsHasMore, setEventsHasMore] = useState(false);
   const [loadingMoreEvents, setLoadingMoreEvents] = useState(false);
+
+  // Check permissions for each tab
+  const canViewInformationsTab = useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    // Check if user has permission to view informations tab
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view' && 
+      p.fieldName === 'informations' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to visible
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  const canViewDocumentsTab = useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    // Check if user has permission to view documents tab
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view' && 
+      p.fieldName === 'documents' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to visible
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  const canViewHistoriqueTab = useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    // Check if user has permission to view historique tab
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view' && 
+      p.fieldName === 'historique' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to visible
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  // Determine default tab based on available permissions
+  const defaultTab = useMemo(() => {
+    if (canViewInformationsTab) return 'info';
+    if (canViewDocumentsTab) return 'documents';
+    if (canViewHistoriqueTab) return 'history';
+    return 'info'; // Fallback
+  }, [canViewInformationsTab, canViewDocumentsTab, canViewHistoriqueTab]);
 
   useEffect(() => {
     loadContactData();
@@ -143,41 +205,55 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       )}
 
       {/* Contact Details Tabs */}
-      <Tabs defaultValue="info" className="space-y-3">
-        <TabsList>
-          <TabsTrigger value="info">Informations</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="history">Historique</TabsTrigger>
-        </TabsList>
+      {(canViewInformationsTab || canViewDocumentsTab || canViewHistoriqueTab) && (
+        <Tabs defaultValue={defaultTab} className="space-y-3">
+          <TabsList>
+            {canViewInformationsTab && (
+              <TabsTrigger value="info">Informations</TabsTrigger>
+            )}
+            {canViewDocumentsTab && (
+              <TabsTrigger value="documents">Documents</TabsTrigger>
+            )}
+            {canViewHistoriqueTab && (
+              <TabsTrigger value="history">Historique</TabsTrigger>
+            )}
+          </TabsList>
 
-        {/* Info Tab */}
-        <TabsContent value="info">
-          {contact && (
-            <ContactInfoTab 
-              contact={contact}
-              onContactUpdated={handleContactUpdated}
-              appointments={appointments}
-              notes={notes}
-              contactId={contactId}
-              onRefresh={loadContactData}
-              loadingEvents={loadingEvents}
-              loadingMoreEvents={loadingMoreEvents}
-              hasMoreEvents={eventsHasMore}
-              onLoadMoreEvents={loadMoreEvents}
-            />
+          {/* Info Tab */}
+          {canViewInformationsTab && (
+            <TabsContent value="info">
+              {contact && (
+                <ContactInfoTab 
+                  contact={contact}
+                  onContactUpdated={handleContactUpdated}
+                  appointments={appointments}
+                  notes={notes}
+                  contactId={contactId}
+                  onRefresh={loadContactData}
+                  loadingEvents={loadingEvents}
+                  loadingMoreEvents={loadingMoreEvents}
+                  hasMoreEvents={eventsHasMore}
+                  onLoadMoreEvents={loadMoreEvents}
+                />
+              )}
+            </TabsContent>
           )}
-        </TabsContent>
 
-        {/* Documents Tab */}
-        <TabsContent value="documents">
-          <ContactDocumentsTab contactId={contactId} />
-        </TabsContent>
+          {/* Documents Tab */}
+          {canViewDocumentsTab && (
+            <TabsContent value="documents">
+              <ContactDocumentsTab contactId={contactId} />
+            </TabsContent>
+          )}
 
-        {/* History Tab */}
-        <TabsContent value="history">
-          <ContactHistoryTab contactId={contactId} />
-        </TabsContent>
-      </Tabs>
+          {/* History Tab */}
+          {canViewHistoriqueTab && (
+            <TabsContent value="history">
+              <ContactHistoryTab contactId={contactId} />
+            </TabsContent>
+          )}
+        </Tabs>
+      )}
 
     </div>
   );

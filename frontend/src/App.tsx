@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import NotFound from './components/NotFound';
 import UsersAndTeams from './components/UsersTeams';
 import Planning from './components/PlanningCalendar';
+import PlanningAdministrateur from './components/PlanningAdministrateur';
 import Contacts from './components/Contacts';
 import Fosse from './components/Fosse';
 import AddContact from './components/AddContact';
@@ -87,6 +88,15 @@ function App() {
                             </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
+                    <Route path="/planning-administrateur" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="planning_administrateur" action="view">
+                                <Layout>
+                                    <PlanningAdministrateur />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
                     <Route path="/contacts" element={
                         <ProtectedRoute>
                             <PermissionProtectedRoute component="contacts" action="view">
@@ -107,7 +117,7 @@ function App() {
                     } />
                     <Route path="/fosse/configuration" element={
                         <ProtectedRoute>
-                            <PermissionProtectedRoute component="permissions" action="view">
+                            <PermissionProtectedRoute component="fosse" action="create">
                                 <Layout>
                                     <FosseConfiguration />
                                 </Layout>

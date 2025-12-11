@@ -82,7 +82,6 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       'userId': 'ID Utilisateur',
       'userName': 'Utilisateur',
       'createdAt': 'Créé le',
-      'updatedAt': 'Modifié le',
     };
     return labels[fieldName] || fieldName;
   }
@@ -118,6 +117,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
     // For creation events (contact or event), show all new values
     if ((log.eventType === 'addContact' || log.eventType === 'createEvent') && log.newValue) {
       Object.keys(log.newValue).forEach(key => {
+        // Skip updatedAt field
+        if (key === 'updatedAt') return;
         const newVal = log.newValue[key];
         // Only include non-empty fields for creation
         if (newVal !== null && newVal !== undefined && newVal !== '') {
@@ -134,6 +135,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
     // For deletion events, show old values
     if (log.eventType === 'deleteEvent' && log.oldValue) {
       Object.keys(log.oldValue).forEach(key => {
+        // Skip updatedAt field
+        if (key === 'updatedAt') return;
         const oldVal = log.oldValue[key];
         if (oldVal !== null && oldVal !== undefined && oldVal !== '') {
           changes.push({
@@ -155,6 +158,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       ]);
       
       allKeys.forEach(key => {
+        // Skip updatedAt field
+        if (key === 'updatedAt') return;
         const oldVal = log.oldValue[key];
         const newVal = log.newValue[key];
         

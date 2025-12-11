@@ -39,6 +39,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
     phone: '',
     role: '',
     teamId: '',
+    hrex: '',
   });
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
         phone: formatPhoneNumber(user.phone) || '',
         role: user.role ? String(user.role) : '',
         teamId: user.teamId ? String(user.teamId) : '',
+        hrex: user.hrex || '',
       });
     }
   }, [user, isOpen]);
@@ -81,6 +83,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           phone: removePhoneSpaces(String(formData.phone)),
           roleId: formData.role || null,
           teamId: formData.teamId || null,
+          hrex: formData.hrex || '',
         }),
       });
 
@@ -225,6 +228,25 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
                   ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="modal-form-field">
+            <Label htmlFor="edit-hrex">Couleur (optionnel)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="edit-hrex"
+                type="color"
+                value={formData.hrex || '#3B82F6'}
+                onChange={(e) => setFormData({ ...formData, hrex: e.target.value })}
+                className="w-16 h-10 cursor-pointer"
+              />
+              <Input
+                value={formData.hrex}
+                onChange={(e) => setFormData({ ...formData, hrex: e.target.value })}
+                placeholder="Ex: #3B82F6 ou blue"
+                className="flex-1"
+              />
+            </div>
           </div>
 
           {error && (

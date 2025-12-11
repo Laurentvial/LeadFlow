@@ -72,7 +72,7 @@ export function ContactList({
   const navigate = useNavigate();
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { sources, loading: sourcesLoading } = useSources();
-  const { platforms, loading: platformsLoading } = usePlatforms();
+  const { platforms, loading: platformsLoading, reload: reloadPlatforms } = usePlatforms();
   
   // Get current user for default permission functions
   const { currentUser, loading: userLoading } = useUser();
@@ -137,11 +137,42 @@ export function ContactList({
     });
   }, [currentUser?.permissions]);
   
+  // Check if user has permission to edit informations tab (replaces old contacts edit permission)
+  const canEditInformationsTab = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'edit' && 
+      p.fieldName === 'informations' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  // Check if user has permission to view any contact tab (replaces old contacts view permission)
+  const canViewAnyContactTab = React.useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to true if no permissions loaded
+    const hasAnyTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view'
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasAnyTabPermission;
+  }, [currentUser?.permissions]);
+
   // Use provided permission functions or create defaults
-  const canCreate = canCreateProp ?? useHasPermission('contacts', 'create');
-  const canEditGeneral = canEditGeneralProp ?? useHasPermission('contacts', 'edit');
-  const canViewGeneral = canViewGeneralProp ?? useHasPermission('contacts', 'view');
-  const canDelete = canDeleteProp ?? useHasPermission('contacts', 'delete');
+  // Note: canCreate and canDelete are kept for backward compatibility but may be removed later
+  const canCreate = canCreateProp ?? false; // Contacts create permission is obsolete
+  const canDelete = canDeleteProp ?? false; // Contacts delete permission is obsolete
   
   const statusEditPermissions = statusEditPermissionsProp ?? React.useMemo(() => {
     if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
@@ -196,6 +227,41 @@ export function ContactList({
     
     return new Set(viewPerms);
   }, [currentUser?.permissions]);
+
+  // Fosse-specific status view permissions - use fosse_statuses component
+  const fosseStatusViewPermissions = React.useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => {
+        // Check for fosse-specific status view permissions
+        // These have component='fosse_statuses', action='view', and a statusId
+        return p.component === 'fosse_statuses' && 
+               p.action === 'view' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
+
+  // Helper function to check if contact is in fosse (teleoperator and confirmateur are null/empty)
+  const isContactInFosse = React.useCallback((contact: any): boolean => {
+    if (!contact) return false;
+    const teleoperatorId = contact.teleoperatorId || contact.teleoperator || '';
+    const confirmateurId = contact.confirmateurId || contact.confirmateur || '';
+    return (!teleoperatorId || String(teleoperatorId).trim() === '') && 
+           (!confirmateurId || String(confirmateurId).trim() === '');
+  }, []);
   
   const isTeleoperatorForContact = isTeleoperatorForContactProp ?? React.useCallback((contact: any): boolean => {
     if (!currentUser?.id || !contact?.teleoperatorId) {
@@ -230,28 +296,117 @@ export function ContactList({
         normalizedStatusId = str;
       }
     }
-    if (!normalizedStatusId) {
-      return canViewGeneral;
+    // Check if user has view permission on the contact's status
+    if (normalizedStatusId) {
+      const canViewStatus = statusViewPermissions.has(normalizedStatusId);
+      return canViewStatus;
     }
-    if (!canViewGeneral) {
-      return false;
-    }
-    const canViewStatus = statusViewPermissions.has(normalizedStatusId);
-    return canViewStatus;
-  }, [canViewGeneral, statusViewPermissions, isTeleoperatorForContact, isConfirmateurForContact]);
+    // If contact has no status, check if user can view any contact tab
+    return canViewAnyContactTab;
+  }, [canViewAnyContactTab, statusViewPermissions, isTeleoperatorForContact, isConfirmateurForContact]);
   
   const canEditContact = canEditContactProp ?? React.useCallback((contact: any, statusIdOverride?: string | null): boolean => {
-    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
-    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
-    if (!normalizedStatusId) {
-      return canEditGeneral;
-    }
-    if (!canEditGeneral) {
+    // First check: user must have permission to edit informations tab
+    if (!canEditInformationsTab) {
       return false;
     }
+    
+    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
+    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
+    
+    // If contact has no status, only need tab permission (already checked above)
+    if (!normalizedStatusId) {
+      return true;
+    }
+    
+    // If contact has a status, user MUST have status-specific edit permission
     const canEditStatus = statusEditPermissions.has(normalizedStatusId);
     return canEditStatus;
-  }, [canEditGeneral, statusEditPermissions]);
+  }, [canEditInformationsTab, statusEditPermissions]);
+
+  // Map frontend field names to backend field names for fiche_contact permissions
+  const fieldNameMap: { [key: string]: string } = {
+    'civility': 'civility',
+    'firstName': 'fname',
+    'lastName': 'lname',
+    'phone': 'phone',
+    'mobile': 'mobile',
+    'email': 'email',
+    'birthDate': 'birth_date',
+    'birthPlace': 'birth_place',
+    'address': 'address',
+    'addressComplement': 'address_complement',
+    'postalCode': 'postal_code',
+    'city': 'city',
+    'nationality': 'nationality',
+    'campaign': 'campaign',
+    'statusId': 'status',
+    'sourceId': 'source',
+    'teleoperatorId': 'teleoperator',
+    'confirmateurId': 'confirmateur',
+    'platformId': 'platform',
+    'montantEncaisse': 'montant_encaisse',
+    'bonus': 'bonus',
+    'paiement': 'paiement',
+    'contrat': 'contrat',
+    'nomDeScene': 'nom_de_scene',
+    'dateProTr': 'date_pro_tr',
+    'potentiel': 'potentiel',
+    'produit': 'produit',
+  };
+
+  // Helper function to check if user has edit permission for a specific field in modal context
+  // In modal, we check if user can edit the informations tab AND (can edit current status OR has view permission on new status)
+  const canEditFieldInModal = React.useCallback((fieldName: string, contact: any, newStatusId?: string | null): boolean => {
+    if (!currentUser?.permissions) {
+      return false;
+    }
+    
+    // FIRST: User MUST have permission to edit the informations tab
+    if (!canEditInformationsTab) {
+      return false;
+    }
+    
+    // SECOND: Check if user can edit the contact (current status) OR has view permission on new status
+    const canEditCurrentStatus = canEditContact(contact);
+    const hasViewOnNewStatus = newStatusId ? statusViewPermissions.has(String(newStatusId).trim()) : false;
+    
+    if (!canEditCurrentStatus && !hasViewOnNewStatus) {
+      return false;
+    }
+    
+    const backendFieldName = fieldNameMap[fieldName];
+    if (!backendFieldName) {
+      return false; // Unknown field, default to no edit
+    }
+    
+    // Get all fiche_contact edit permissions for this user
+    const ficheContactEditPermissions = currentUser.permissions.filter((p: any) => 
+      p.component === 'fiche_contact' && 
+      p.action === 'edit' &&
+      !p.statusId
+    );
+    
+    // Check if user has field-specific edit permission for this field
+    const hasFieldPermission = ficheContactEditPermissions.some((p: any) => {
+      const pFieldName = p.fieldName ? String(p.fieldName).trim() : null;
+      const expectedFieldName = String(backendFieldName).trim();
+      return pFieldName === expectedFieldName;
+    });
+    
+    if (hasFieldPermission) {
+      return true;
+    }
+    
+    // If no field-specific permission exists, check general contact edit permission
+    // If no fiche_contact edit permissions exist at all, fallback to general contact edit permission
+    if (ficheContactEditPermissions.length === 0) {
+      return true;
+    }
+    
+    // If fiche_contact permissions exist but this field doesn't have permission, block it
+    return false;
+  }, [currentUser?.permissions, canEditContact, statusViewPermissions, canEditInformationsTab]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [totalContacts, setTotalContacts] = useState<number>(0);
   const [teams, setTeams] = useState<any[]>([]);
@@ -300,6 +455,7 @@ export function ContactList({
   const [eventDate, setEventDate] = useState('');
   const [eventHour, setEventHour] = useState('09');
   const [eventMinute, setEventMinute] = useState('00');
+  const [eventTeleoperatorId, setEventTeleoperatorId] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Client form state
@@ -322,6 +478,7 @@ export function ContactList({
   });
   const [isSavingClientForm, setIsSavingClientForm] = useState(false);
   const [selectedNoteCategoryId, setSelectedNoteCategoryId] = useState<string>('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, boolean>>({});
   const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
   
   // Check if selected status is client default
@@ -927,9 +1084,6 @@ export function ContactList({
       if (appliedSearchTerm) {
         queryParams.append('search', appliedSearchTerm);
       }
-      if (appliedStatusType !== 'all') {
-        queryParams.append('status_type', appliedStatusType);
-      }
       
       // On Fosse page, always merge forced filters from ref with state filters
       // This ensures forced filters are always applied even if state is temporarily cleared
@@ -965,6 +1119,16 @@ export function ContactList({
             setColumnFilters(filtersToUse);
           }
         }
+      }
+      
+      // Only apply status_type filter if no specific status filter is active
+      // This prevents conflicts between status_type and specific status filters
+      const hasStatusFilter = filtersToUse.status && (
+        (Array.isArray(filtersToUse.status) && filtersToUse.status.length > 0) ||
+        (typeof filtersToUse.status === 'string' && filtersToUse.status !== '')
+      );
+      if (appliedStatusType !== 'all' && !hasStatusFilter) {
+        queryParams.append('status_type', appliedStatusType);
       }
       
       // Add column filters
@@ -2231,11 +2395,19 @@ export function ContactList({
         const dateStr = today.toISOString().split('T')[0];
         setEventDate(dateStr);
         setEventHour(today.getHours().toString().padStart(2, '0'));
+        // Prefill teleoperatorId with current user if they are a teleoperateur, otherwise use contact's teleoperator
+        if (selectedContact) {
+          const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+            ? currentUser.id 
+            : (selectedContact.teleoperatorId || selectedContact.managerId || '');
+          setEventTeleoperatorId(defaultTeleoperatorId);
+        }
       } else if (!isEventStatus) {
         // Reset event fields if status is not an event status
         setEventDate('');
         setEventHour('09');
         setEventMinute('00');
+        setEventTeleoperatorId('');
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2297,13 +2469,36 @@ export function ContactList({
     }
   }, [isStatusModalOpen, accessibleCategories, statusChangeNoteCategoryId]);
   
+  // Helper function to update form field and clear error
+  const updateFormField = (fieldName: string, value: any) => {
+    setClientFormData({ ...clientFormData, [fieldName]: value });
+    if (fieldErrors[fieldName]) {
+      setFieldErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[fieldName];
+        return newErrors;
+      });
+    }
+  };
+
   async function handleUpdateStatus() {
     if (!selectedContact) return;
     
-    // Validate note is provided only if permission requires it (and not client default status)
-    if (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) {
+    // Validate note is always required
+    if (!statusChangeNote.trim()) {
+      setFieldErrors(prev => ({ ...prev, note: true }));
       toast.error('Veuillez saisir une note pour changer le statut');
+      setIsSavingClientForm(false);
       return;
+    }
+    
+    // Clear note error if validation passes
+    if (fieldErrors.note) {
+      setFieldErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors.note;
+        return newErrors;
+      });
     }
     
     // Validate that a category is selected if note is provided and categories are available
@@ -2352,14 +2547,29 @@ export function ContactList({
     try {
       // If status is client default, validate and include client form data
       if (selectedStatusIsClientDefault) {
-        // Validate required client form fields
-        if (!clientFormData.platformId || !clientFormData.teleoperatorId || !clientFormData.nomDeScene || 
-            !clientFormData.firstName || !clientFormData.emailClient || !clientFormData.contrat || 
-            !clientFormData.sourceId || clientFormData.montantEncaisse === '' || clientFormData.bonus === '' || 
-            !clientFormData.paiement) {
+        // Validate required client form fields and set errors
+        const errors: Record<string, boolean> = {};
+        if (!clientFormData.platformId) errors.platformId = true;
+        if (!clientFormData.teleoperatorId) errors.teleoperatorId = true;
+        if (!clientFormData.nomDeScene) errors.nomDeScene = true;
+        if (!clientFormData.firstName) errors.firstName = true;
+        if (!clientFormData.emailClient) errors.emailClient = true;
+        if (!clientFormData.telephoneClient) errors.telephoneClient = true;
+        if (!clientFormData.contrat) errors.contrat = true;
+        if (!clientFormData.sourceId) errors.sourceId = true;
+        if (clientFormData.montantEncaisse === '') errors.montantEncaisse = true;
+        if (clientFormData.bonus === '') errors.bonus = true;
+        if (!clientFormData.paiement) errors.paiement = true;
+        
+        if (Object.keys(errors).length > 0) {
+          setFieldErrors(errors);
           toast.error('Veuillez remplir tous les champs obligatoires de la fiche client');
+          setIsSavingClientForm(false);
           return;
         }
+        
+        // Clear errors if validation passes
+        setFieldErrors({});
         
         // Prepare update payload with client form data
         const payload: any = {
@@ -2386,11 +2596,20 @@ export function ContactList({
           body: JSON.stringify(payload)
         });
       } else {
-        // Update status only (non-client default status)
+        // Update status (non-client default status)
+        // If status is an event status, also update teleoperator
+        const updatePayload: any = {
+          statusId: selectedStatusId || ''
+        };
+        
+        if (isEventStatus && eventTeleoperatorId) {
+          updatePayload.teleoperatorId = eventTeleoperatorId || null;
+        }
+        
         await apiCall(`/api/contacts/${selectedContact.id}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ statusId: selectedStatusId || '' })
+          body: JSON.stringify(updatePayload)
         });
       }
       
@@ -2443,6 +2662,7 @@ export function ContactList({
       setEventDate('');
       setEventHour('09');
       setEventMinute('00');
+      setEventTeleoperatorId('');
       // Reset client form
       setClientFormData({
         platformId: '',
@@ -2462,6 +2682,7 @@ export function ContactList({
         noteCategoryId: ''
       });
       setSelectedNoteCategoryId('');
+      setFieldErrors({});
       // Wait for loadData to complete to ensure fresh data for next modal open
       await loadData();
     } catch (error: any) {
@@ -2497,18 +2718,20 @@ export function ContactList({
               <table className="contacts-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '40px' }}>
-                      <input
-                        type="checkbox"
-                        checked={allSelected}
-                        ref={(input) => {
-                          if (input) input.indeterminate = someSelected;
-                        }}
-                        onChange={handleSelectAll}
-                        className="contacts-checkbox"
-                        disabled={displayedContacts.length === 0}
-                      />
-                    </th>
+                    {canCreate && (
+                      <th style={{ width: '40px' }}>
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={(input) => {
+                            if (input) input.indeterminate = someSelected;
+                          }}
+                          onChange={handleSelectAll}
+                          className="contacts-checkbox"
+                          disabled={displayedContacts.length === 0}
+                        />
+                      </th>
+                    )}
                     {getOrderedVisibleColumns().map((columnId) => (
                       <th key={columnId} style={{ position: 'relative' }}>
                         {isFilterForced(columnId) ? (
@@ -2656,7 +2879,11 @@ export function ContactList({
                                     </div>
                                     {(() => {
                                       const searchTerm = (columnFilterSearchTerms[columnId] || '').toLowerCase();
-                                      const statusTypeFilter = columnId === 'status' ? statusColumnFilterType : 'lead';
+                                      const statusTypeFilter = columnId === 'status' 
+                                        ? statusColumnFilterType 
+                                        : columnId === 'previousStatus'
+                                        ? previousStatusColumnFilterType
+                                        : 'lead';
                                       const allOptions = getFilterOptions(columnId, statusTypeFilter);
                                       const emptyOption = allOptions.find(opt => opt.id === '__empty__');
                                       const otherOptions = allOptions.filter(opt => opt.id !== '__empty__');
@@ -2672,47 +2899,193 @@ export function ContactList({
                                       const currentValue = pendingColumnFilters[columnId];
                                       const selectedValues = Array.isArray(currentValue) ? currentValue : 
                                                            (typeof currentValue === 'string' && currentValue ? [currentValue] : []);
-                                      const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
                                       
-                                      return (
-                                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                                          <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setPendingColumnFilters(prev => {
-                                                const current = prev[columnId];
-                                                const currentArray = Array.isArray(current) ? current : 
-                                                                   (typeof current === 'string' && current ? [current] : []);
-                                                
-                                                if (allFilteredSelected) {
-                                                  // Deselect all filtered options
-                                                  const filteredIds = filteredOptions.map(opt => opt.id);
-                                                  const newArray = currentArray.filter(id => !filteredIds.includes(id));
-                                                  return {
-                                                    ...prev,
-                                                    [columnId]: newArray.length > 0 ? newArray : ''
-                                                  };
-                                                } else {
-                                                  // Select all filtered options
-                                                  const filteredIds = filteredOptions.map(opt => opt.id);
-                                                  const newArray = [...new Set([...currentArray, ...filteredIds])];
-                                                  return {
-                                                    ...prev,
-                                                    [columnId]: newArray.length > 0 ? newArray : ''
-                                                  };
-                                                }
-                                              });
-                                            }}
-                                          >
-                                            {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
-                                          </Button>
-                                        </div>
-                                      );
+                                      // For status and previousStatus columns with tabs, show separate buttons for each tab
+                                      if ((columnId === 'status' || columnId === 'previousStatus')) {
+                                        // Get all status IDs for Lead and Client tabs
+                                        const leadOptions = getFilterOptions(columnId, 'lead');
+                                        const clientOptions = getFilterOptions(columnId, 'client');
+                                        
+                                        // Get all Lead status IDs (excluding empty)
+                                        const allLeadStatusIds = leadOptions
+                                          .filter(opt => opt.id !== '__empty__')
+                                          .map(opt => opt.id)
+                                          .filter(statusId => {
+                                            if (columnId === 'status') {
+                                              const status = statuses.find(s => s.id === statusId);
+                                              return status && status.type === 'lead';
+                                            } else {
+                                              const status = statuses.find(s => s.name === statusId);
+                                              return status && status.type === 'lead';
+                                            }
+                                          });
+                                        
+                                        // Get all Client status IDs (excluding empty)
+                                        const allClientStatusIds = clientOptions
+                                          .filter(opt => opt.id !== '__empty__')
+                                          .map(opt => opt.id)
+                                          .filter(statusId => {
+                                            if (columnId === 'status') {
+                                              const status = statuses.find(s => s.id === statusId);
+                                              return status && status.type === 'client';
+                                            } else {
+                                              const status = statuses.find(s => s.name === statusId);
+                                              return status && status.type === 'client';
+                                            }
+                                          });
+                                        
+                                        // Check if all Lead statuses are selected
+                                        const allLeadSelected = allLeadStatusIds.length > 0 && 
+                                          allLeadStatusIds.every(id => selectedValues.includes(id));
+                                        
+                                        // Check if all Client statuses are selected
+                                        const allClientSelected = allClientStatusIds.length > 0 && 
+                                          allClientStatusIds.every(id => selectedValues.includes(id));
+                                        
+                                        return (
+                                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                            <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
+                                            <div className="flex gap-1">
+                                              {/* Lead tab select all button - only show in Lead tab */}
+                                              {statusTypeFilter === 'lead' && (
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setPendingColumnFilters(prev => {
+                                                      const current = prev[columnId];
+                                                      const currentArray = Array.isArray(current) ? current : 
+                                                                         (typeof current === 'string' && current ? [current] : []);
+                                                      
+                                                      if (allLeadSelected) {
+                                                        // Deselect all Lead statuses
+                                                        const newArray = currentArray.filter(id => {
+                                                          if (id === '__empty__') return true;
+                                                          if (columnId === 'status') {
+                                                            const status = statuses.find(s => s.id === id);
+                                                            return !status || status.type !== 'lead';
+                                                          } else {
+                                                            const status = statuses.find(s => s.name === id);
+                                                            return !status || status.type !== 'lead';
+                                                          }
+                                                        });
+                                                        return {
+                                                          ...prev,
+                                                          [columnId]: newArray.length > 0 ? newArray : ''
+                                                        };
+                                                      } else {
+                                                        // Select all Lead statuses (keep Client statuses and empty)
+                                                        const newArraySet = new Set(currentArray);
+                                                        allLeadStatusIds.forEach(id => newArraySet.add(id));
+                                                        const newArray = Array.from(newArraySet);
+                                                        return {
+                                                          ...prev,
+                                                          [columnId]: newArray.length > 0 ? newArray : ''
+                                                        };
+                                                      }
+                                                    });
+                                                  }}
+                                                >
+                                                  {allLeadSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                                </Button>
+                                              )}
+                                              
+                                              {/* Client tab select all button - only show in Client tab */}
+                                              {statusTypeFilter === 'client' && (
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setPendingColumnFilters(prev => {
+                                                      const current = prev[columnId];
+                                                      const currentArray = Array.isArray(current) ? current : 
+                                                                         (typeof current === 'string' && current ? [current] : []);
+                                                      
+                                                      if (allClientSelected) {
+                                                        // Deselect all Client statuses
+                                                        const newArray = currentArray.filter(id => {
+                                                          if (id === '__empty__') return true;
+                                                          if (columnId === 'status') {
+                                                            const status = statuses.find(s => s.id === id);
+                                                            return !status || status.type !== 'client';
+                                                          } else {
+                                                            const status = statuses.find(s => s.name === id);
+                                                            return !status || status.type !== 'client';
+                                                          }
+                                                        });
+                                                        return {
+                                                          ...prev,
+                                                          [columnId]: newArray.length > 0 ? newArray : ''
+                                                        };
+                                                      } else {
+                                                        // Select all Client statuses (keep Lead statuses and empty)
+                                                        const newArraySet = new Set(currentArray);
+                                                        allClientStatusIds.forEach(id => newArraySet.add(id));
+                                                        const newArray = Array.from(newArraySet);
+                                                        return {
+                                                          ...prev,
+                                                          [columnId]: newArray.length > 0 ? newArray : ''
+                                                        };
+                                                      }
+                                                    });
+                                                  }}
+                                                >
+                                                  {allClientSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                                </Button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      } else {
+                                        // For other columns, use the original single button logic
+                                        const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
+                                        
+                                        return (
+                                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                            <span>{filteredOptions.length} option{filteredOptions.length > 1 ? 's' : ''} affichée{filteredOptions.length > 1 ? 's' : ''}</span>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPendingColumnFilters(prev => {
+                                                  const current = prev[columnId];
+                                                  const currentArray = Array.isArray(current) ? current : 
+                                                                     (typeof current === 'string' && current ? [current] : []);
+                                                  
+                                                  if (allFilteredSelected) {
+                                                    // Deselect all filtered options
+                                                    const filteredIds = filteredOptions.map(opt => opt.id);
+                                                    const newArray = currentArray.filter(id => !filteredIds.includes(id));
+                                                    return {
+                                                      ...prev,
+                                                      [columnId]: newArray.length > 0 ? newArray : ''
+                                                    };
+                                                  } else {
+                                                    // Select all filtered options
+                                                    const filteredIds = filteredOptions.map(opt => opt.id);
+                                                    const newArray = [...new Set([...currentArray, ...filteredIds])];
+                                                    return {
+                                                      ...prev,
+                                                      [columnId]: newArray.length > 0 ? newArray : ''
+                                                    };
+                                                  }
+                                                });
+                                              }}
+                                            >
+                                              {allFilteredSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                            </Button>
+                                          </div>
+                                        );
+                                      }
                                     })()}
                                   </div>
                                   <div 
@@ -3011,23 +3384,25 @@ export function ContactList({
                           cursor: 'pointer'
                         }}
                       >
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={selectedContacts.has(contact.id)}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              handleSelectContact(contact.id);
-                            }}
-                            className="contacts-checkbox"
-                          />
-                        </td>
+                        {canCreate && (
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedContacts.has(contact.id)}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleSelectContact(contact.id);
+                              }}
+                              className="contacts-checkbox"
+                            />
+                          </td>
+                        )}
                         {getOrderedVisibleColumns().map((columnId) => renderCell(contact, columnId))}
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={getOrderedVisibleColumns().length + 1} style={{ textAlign: 'center', padding: '40px' }}>
+                      <td colSpan={getOrderedVisibleColumns().length + (canCreate ? 1 : 0)} style={{ textAlign: 'center', padding: '40px' }}>
                         <p className="contacts-empty">Aucun contact trouvé</p>
                       </td>
                     </tr>
@@ -3240,7 +3615,7 @@ export function ContactList({
                 </Button>
               </div>
               <div className="contacts-bulk-actions-buttons">
-                {canEditGeneral && (
+                {canEditInformationsTab && (
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
@@ -3454,6 +3829,7 @@ export function ContactList({
           setStatusChangeNote('');
           setStatusChangeNoteCategoryId('');
           setStatusModalFilterType('lead');
+          setFieldErrors({});
           // Reset client form
           setClientFormData({
             platformId: '',
@@ -3502,6 +3878,7 @@ export function ContactList({
                     setStatusChangeNote('');
                     setStatusChangeNoteCategoryId('');
                     setStatusModalFilterType('lead');
+                    setFieldErrors({});
                     // Reset client form
                     setClientFormData({
                       platformId: '',
@@ -3639,9 +4016,14 @@ export function ContactList({
                       // Find the selected status (can be from any type for display purposes)
                       const selectedStatus = statuses.find((s: any) => s.id === selectedStatusId);
                       if (selectedStatus) {
-                        // Check if user has view permission on this status
                         const normalizedStatusId = String(selectedStatus.id).trim();
-                        if (statusViewPermissions.has(normalizedStatusId)) {
+                        // Check if contact is in fosse (teleoperator and confirmateur are null/empty)
+                        const contactInFosse = isContactInFosse(selectedContact);
+                        // Check if user has view permission on this status - use fosse_statuses if contact is in fosse
+                        const hasPermission = contactInFosse 
+                          ? fosseStatusViewPermissions.has(normalizedStatusId)
+                          : statusViewPermissions.has(normalizedStatusId);
+                        if (hasPermission) {
                           return (
                             <SelectValue asChild>
                               <span 
@@ -3666,9 +4048,18 @@ export function ContactList({
                     {statuses
                       .filter((status) => {
                         if (!status.id || status.id.trim() === '') return false;
-                        // Filter by view permissions
                         const normalizedStatusId = String(status.id).trim();
-                        if (!statusViewPermissions.has(normalizedStatusId)) return false;
+                        
+                        // Check if contact is in fosse (teleoperator and confirmateur are null/empty)
+                        const contactInFosse = isContactInFosse(selectedContact);
+                        
+                        // Filter by view permissions - use fosse_statuses if contact is in fosse, otherwise use regular statuses
+                        if (contactInFosse) {
+                          if (!fosseStatusViewPermissions.has(normalizedStatusId)) return false;
+                        } else {
+                          if (!statusViewPermissions.has(normalizedStatusId)) return false;
+                        }
+                        
                         // Apply forced status filter if on Fosse page
                         if (forcedStatusFilterValues && !forcedStatusFilterValues.has(normalizedStatusId)) {
                           return false;
@@ -3762,8 +4153,8 @@ export function ContactList({
                 })()}
               </div>
               <div className="modal-form-field">
-                <Label htmlFor="statusNote">
-                  Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
+                <Label htmlFor="statusNote" style={fieldErrors.note ? { color: '#ef4444' } : {}}>
+                  Note <span style={{ color: '#ef4444' }}>*</span>
                 </Label>
                 {/* Show category tabs if user has permission and categories are available */}
                 {accessibleCategories.length > 0 && (
@@ -3786,20 +4177,25 @@ export function ContactList({
                 )}
                 <Textarea
                   id="statusNote"
-                  placeholder={requiresNoteForStatusChange 
-                    ? "Saisissez une note expliquant le changement de statut..."
-                    : "Saisissez une note expliquant le changement de statut (optionnel)..."
-                  }
+                  placeholder="Saisissez une note expliquant le changement de statut..."
                   value={statusChangeNote}
-                  onChange={(e) => setStatusChangeNote(e.target.value)}
+                  onChange={(e) => {
+                    setStatusChangeNote(e.target.value);
+                    if (fieldErrors.note) {
+                      setFieldErrors(prev => {
+                        const newErrors = { ...prev };
+                        delete newErrors.note;
+                        return newErrors;
+                      });
+                    }
+                  }}
                   rows={4}
-                  className="resize-none"
+                  className={`resize-none ${fieldErrors.note ? 'border-red-500' : ''}`}
+                  required
                 />
-                {requiresNoteForStatusChange && (
-                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                    Une note est obligatoire pour changer le statut.
-                  </p>
-                )}
+                <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                  Une note est obligatoire pour changer le statut.
+                </p>
               </div>
               {/* Event fields - show when selected status has isEvent=true */}
               {(() => {
@@ -3862,6 +4258,31 @@ export function ContactList({
                         </Select>
                       </div>
                     </div>
+                    <div className="modal-form-field">
+                      <Label htmlFor="eventTeleoperator">Téléopérateur</Label>
+                      <Select
+                        value={eventTeleoperatorId || 'none'}
+                        onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
+                      >
+                        <SelectTrigger id="eventTeleoperator">
+                          <SelectValue placeholder="Sélectionner un téléopérateur" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                          {users
+                            ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                            .map((user) => {
+                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                              return (
+                                <SelectItem key={user.id} value={user.id}>
+                                  {displayName}
+                                </SelectItem>
+                              );
+                            })}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </>
                 );
               })()}
@@ -3876,10 +4297,12 @@ export function ContactList({
                     setStatusChangeNote('');
                     setStatusChangeNoteCategoryId('');
                     setStatusModalFilterType('lead');
+                    setFieldErrors({});
                     // Reset event fields
                     setEventDate('');
                     setEventHour('09');
                     setEventMinute('00');
+                    setEventTeleoperatorId('');
                     // Reset client form
                     setClientFormData({
                       platformId: '',
@@ -3909,7 +4332,7 @@ export function ContactList({
                     onClick={handleUpdateStatus}
                     disabled={
                       isSavingClientForm ||
-                      (requiresNoteForStatusChange && !statusChangeNote.trim() && !selectedStatusIsClientDefault) ||
+                      !statusChangeNote.trim() ||
                       ((() => {
                         const selectedStatus = statuses.find(s => s.id === selectedStatusId);
                         const isEventStatus = selectedStatus && selectedStatus.isEvent;
@@ -3940,39 +4363,42 @@ export function ContactList({
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-platform">Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
-                        <Select
-                          value={clientFormData.platformId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, platformId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
-                        >
-                          <SelectTrigger id="client-platform">
-                            <SelectValue placeholder="Sélectionner une plateforme" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Aucune</SelectItem>
-                            {platforms
-                              .filter((platform) => platform.id && platform.id.trim() !== '')
-                              .map((platform) => (
-                                <SelectItem key={platform.id} value={platform.id}>
-                                  {platform.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                        <Label htmlFor="client-platform" style={fieldErrors.platformId ? { color: '#ef4444' } : {}}>Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <div className="flex gap-2">
+                          <Select
+                            value={clientFormData.platformId || 'none'}
+                            onValueChange={(value) => updateFormField('platformId', value === 'none' ? '' : value)}
+                            disabled={isSavingClientForm || !canEditFieldInModal('platformId', selectedContact, selectedStatusId)}
+                            style={{ flex: 1 }}
+                          >
+                            <SelectTrigger id="client-platform" className={fieldErrors.platformId ? 'border-red-500' : ''}>
+                              <SelectValue placeholder="Sélectionner une plateforme" />
+                            </SelectTrigger>
+                            <SelectContent style={{ zIndex: 10010 }}>
+                              <SelectItem value="none">Aucune</SelectItem>
+                              {platforms
+                                .filter((platform) => platform.id && platform.id.trim() !== '')
+                                .map((platform) => (
+                                  <SelectItem key={platform.id} value={platform.id}>
+                                    {platform.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-teleoperator">Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-teleoperator" style={fieldErrors.teleoperatorId ? { color: '#ef4444' } : {}}>Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.teleoperatorId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, teleoperatorId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('teleoperatorId', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-teleoperator">
+                          <SelectTrigger id="client-teleoperator" className={fieldErrors.teleoperatorId ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner un téléopérateur" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucun</SelectItem>
                             {users
                               ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
@@ -3990,25 +4416,27 @@ export function ContactList({
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-nom-scene">Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-nom-scene" style={fieldErrors.nomDeScene ? { color: '#ef4444' } : {}}>Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Input
                         id="client-nom-scene"
                         value={clientFormData.nomDeScene}
-                        onChange={(e) => setClientFormData({ ...clientFormData, nomDeScene: e.target.value })}
-                        disabled={isSavingClientForm}
+                        onChange={(e) => updateFormField('nomDeScene', e.target.value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('nomDeScene', selectedContact, selectedStatusId)}
                         required
+                        className={fieldErrors.nomDeScene ? 'border-red-500' : ''}
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-prenom">Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-prenom" style={fieldErrors.firstName ? { color: '#ef4444' } : {}}>Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-prenom"
                           value={clientFormData.firstName}
-                          onChange={(e) => setClientFormData({ ...clientFormData, firstName: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('firstName', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('firstName', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.firstName ? 'border-red-500' : ''}
                         />
                       </div>
                       <div className="modal-form-field">
@@ -4017,59 +4445,62 @@ export function ContactList({
                           id="client-nom"
                           value={clientFormData.lastName}
                           onChange={(e) => setClientFormData({ ...clientFormData, lastName: e.target.value })}
-                          disabled={isSavingClientForm}
+                          disabled={isSavingClientForm || !canEditFieldInModal('lastName', selectedContact, selectedStatusId)}
                         />
                       </div>
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-email">E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-email" style={fieldErrors.emailClient ? { color: '#ef4444' } : {}}>E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Input
                         id="client-email"
                         type="email"
                         value={clientFormData.emailClient}
-                        onChange={(e) => setClientFormData({ ...clientFormData, emailClient: e.target.value })}
-                        disabled={isSavingClientForm}
+                        onChange={(e) => updateFormField('emailClient', e.target.value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('email', selectedContact, selectedStatusId)}
                         required
+                        className={fieldErrors.emailClient ? 'border-red-500' : ''}
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-telephone">Téléphone du client</Label>
+                        <Label htmlFor="client-telephone" style={fieldErrors.telephoneClient ? { color: '#ef4444' } : {}}>Téléphone 1 <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-telephone"
                           type="number"
                           value={clientFormData.telephoneClient}
-                          onChange={(e) => setClientFormData({ ...clientFormData, telephoneClient: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('telephoneClient', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('phone', selectedContact, selectedStatusId)}
+                          required
+                          className={fieldErrors.telephoneClient ? 'border-red-500' : ''}
                         />
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-portable">Portable du client</Label>
+                        <Label htmlFor="client-portable">Téléphone 2</Label>
                         <Input
                           id="client-portable"
                           type="number"
                           value={clientFormData.portableClient}
                           onChange={(e) => setClientFormData({ ...clientFormData, portableClient: e.target.value })}
-                          disabled={isSavingClientForm}
+                          disabled={isSavingClientForm || !canEditFieldInModal('mobile', selectedContact, selectedStatusId)}
                         />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-contrat">Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-contrat" style={fieldErrors.contrat ? { color: '#ef4444' } : {}}>Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.contrat || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, contrat: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('contrat', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('contrat', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-contrat">
+                          <SelectTrigger id="client-contrat" className={fieldErrors.contrat ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner un statut de contrat" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucun</SelectItem>
                             <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
                             <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
@@ -4080,16 +4511,16 @@ export function ContactList({
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-source">Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-source" style={fieldErrors.sourceId ? { color: '#ef4444' } : {}}>Source <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.sourceId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, sourceId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('sourceId', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('sourceId', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-source">
+                          <SelectTrigger id="client-source" className={fieldErrors.sourceId ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner une source" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucune</SelectItem>
                             {sources
                               .filter((source) => source.id && source.id.trim() !== '')
@@ -4105,15 +4536,16 @@ export function ContactList({
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-montant">Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-montant" style={fieldErrors.montantEncaisse ? { color: '#ef4444' } : {}}>Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-montant"
                           type="number"
                           step="0.01"
                           value={clientFormData.montantEncaisse}
-                          onChange={(e) => setClientFormData({ ...clientFormData, montantEncaisse: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('montantEncaisse', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('montantEncaisse', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.montantEncaisse ? 'border-red-500' : ''}
                         />
                         <p className="text-xs text-slate-500 mt-1">
                           Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
@@ -4121,30 +4553,31 @@ export function ContactList({
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-bonus">Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-bonus" style={fieldErrors.bonus ? { color: '#ef4444' } : {}}>Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-bonus"
                           type="number"
                           step="0.01"
                           value={clientFormData.bonus}
-                          onChange={(e) => setClientFormData({ ...clientFormData, bonus: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('bonus', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('bonus', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.bonus ? 'border-red-500' : ''}
                         />
                       </div>
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-paiement">Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Select
                         value={clientFormData.paiement || 'none'}
-                        onValueChange={(value) => setClientFormData({ ...clientFormData, paiement: value === 'none' ? '' : value })}
-                        disabled={isSavingClientForm}
+                        onValueChange={(value) => updateFormField('paiement', value === 'none' ? '' : value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('paiement', selectedContact, selectedStatusId)}
                       >
-                        <SelectTrigger id="client-paiement">
+                        <SelectTrigger id="client-paiement" className={fieldErrors.paiement ? 'border-red-500' : ''}>
                           <SelectValue placeholder="Sélectionner un mode de paiement" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent style={{ zIndex: 10010 }}>
                           <SelectItem value="none">Aucun</SelectItem>
                           <SelectItem value="carte">Carte</SelectItem>
                           <SelectItem value="virement">Virement</SelectItem>
@@ -4294,39 +4727,42 @@ export function ContactList({
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-platform">Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
-                        <Select
-                          value={clientFormData.platformId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, platformId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
-                        >
-                          <SelectTrigger id="client-platform">
-                            <SelectValue placeholder="Sélectionner une plateforme" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Aucune</SelectItem>
-                            {platforms
-                              .filter((platform) => platform.id && platform.id.trim() !== '')
-                              .map((platform) => (
-                                <SelectItem key={platform.id} value={platform.id}>
-                                  {platform.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                        <Label htmlFor="client-platform" style={fieldErrors.platformId ? { color: '#ef4444' } : {}}>Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <div className="flex gap-2">
+                          <Select
+                            value={clientFormData.platformId || 'none'}
+                            onValueChange={(value) => updateFormField('platformId', value === 'none' ? '' : value)}
+                            disabled={isSavingClientForm || !canEditFieldInModal('platformId', selectedContact, selectedStatusId)}
+                            style={{ flex: 1 }}
+                          >
+                            <SelectTrigger id="client-platform" className={fieldErrors.platformId ? 'border-red-500' : ''}>
+                              <SelectValue placeholder="Sélectionner une plateforme" />
+                            </SelectTrigger>
+                            <SelectContent style={{ zIndex: 10010 }}>
+                              <SelectItem value="none">Aucune</SelectItem>
+                              {platforms
+                                .filter((platform) => platform.id && platform.id.trim() !== '')
+                                .map((platform) => (
+                                  <SelectItem key={platform.id} value={platform.id}>
+                                    {platform.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-teleoperator">Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-teleoperator" style={fieldErrors.teleoperatorId ? { color: '#ef4444' } : {}}>Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.teleoperatorId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, teleoperatorId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('teleoperatorId', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-teleoperator">
+                          <SelectTrigger id="client-teleoperator" className={fieldErrors.teleoperatorId ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner un téléopérateur" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucun</SelectItem>
                             {users
                               ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
@@ -4344,25 +4780,27 @@ export function ContactList({
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-nom-scene">Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-nom-scene" style={fieldErrors.nomDeScene ? { color: '#ef4444' } : {}}>Nom de scène <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Input
                         id="client-nom-scene"
                         value={clientFormData.nomDeScene}
-                        onChange={(e) => setClientFormData({ ...clientFormData, nomDeScene: e.target.value })}
-                        disabled={isSavingClientForm}
+                        onChange={(e) => updateFormField('nomDeScene', e.target.value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('nomDeScene', selectedContact, selectedStatusId)}
                         required
+                        className={fieldErrors.nomDeScene ? 'border-red-500' : ''}
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-prenom">Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-prenom" style={fieldErrors.firstName ? { color: '#ef4444' } : {}}>Prenom du client <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-prenom"
                           value={clientFormData.firstName}
-                          onChange={(e) => setClientFormData({ ...clientFormData, firstName: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('firstName', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('firstName', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.firstName ? 'border-red-500' : ''}
                         />
                       </div>
                       <div className="modal-form-field">
@@ -4371,59 +4809,62 @@ export function ContactList({
                           id="client-nom"
                           value={clientFormData.lastName}
                           onChange={(e) => setClientFormData({ ...clientFormData, lastName: e.target.value })}
-                          disabled={isSavingClientForm}
+                          disabled={isSavingClientForm || !canEditFieldInModal('lastName', selectedContact, selectedStatusId)}
                         />
                       </div>
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-email">E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-email" style={fieldErrors.emailClient ? { color: '#ef4444' } : {}}>E-mail du client <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Input
                         id="client-email"
                         type="email"
                         value={clientFormData.emailClient}
-                        onChange={(e) => setClientFormData({ ...clientFormData, emailClient: e.target.value })}
-                        disabled={isSavingClientForm}
+                        onChange={(e) => updateFormField('emailClient', e.target.value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('email', selectedContact, selectedStatusId)}
                         required
+                        className={fieldErrors.emailClient ? 'border-red-500' : ''}
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-telephone">Téléphone du client</Label>
+                        <Label htmlFor="client-telephone" style={fieldErrors.telephoneClient ? { color: '#ef4444' } : {}}>Téléphone 1 <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-telephone"
                           type="number"
                           value={clientFormData.telephoneClient}
-                          onChange={(e) => setClientFormData({ ...clientFormData, telephoneClient: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('telephoneClient', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('phone', selectedContact, selectedStatusId)}
+                          required
+                          className={fieldErrors.telephoneClient ? 'border-red-500' : ''}
                         />
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-portable">Portable du client</Label>
+                        <Label htmlFor="client-portable">Téléphone 2</Label>
                         <Input
                           id="client-portable"
                           type="number"
                           value={clientFormData.portableClient}
                           onChange={(e) => setClientFormData({ ...clientFormData, portableClient: e.target.value })}
-                          disabled={isSavingClientForm}
+                          disabled={isSavingClientForm || !canEditFieldInModal('mobile', selectedContact, selectedStatusId)}
                         />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-contrat">Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-contrat" style={fieldErrors.contrat ? { color: '#ef4444' } : {}}>Contrat <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.contrat || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, contrat: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('contrat', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('contrat', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-contrat">
+                          <SelectTrigger id="client-contrat" className={fieldErrors.contrat ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner un statut de contrat" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucun</SelectItem>
                             <SelectItem value="CONTRAT SIGNÉ">CONTRAT SIGNÉ</SelectItem>
                             <SelectItem value="CONTRAT ENVOYÉ MAIS PAS SIGNÉ">CONTRAT ENVOYÉ MAIS PAS SIGNÉ</SelectItem>
@@ -4434,16 +4875,16 @@ export function ContactList({
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-source">Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-source" style={fieldErrors.sourceId ? { color: '#ef4444' } : {}}>Source <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
                           value={clientFormData.sourceId || 'none'}
-                          onValueChange={(value) => setClientFormData({ ...clientFormData, sourceId: value === 'none' ? '' : value })}
-                          disabled={isSavingClientForm}
+                          onValueChange={(value) => updateFormField('sourceId', value === 'none' ? '' : value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('sourceId', selectedContact, selectedStatusId)}
                         >
-                          <SelectTrigger id="client-source">
+                          <SelectTrigger id="client-source" className={fieldErrors.sourceId ? 'border-red-500' : ''}>
                             <SelectValue placeholder="Sélectionner une source" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent style={{ zIndex: 10010 }}>
                             <SelectItem value="none">Aucune</SelectItem>
                             {sources
                               .filter((source) => source.id && source.id.trim() !== '')
@@ -4459,15 +4900,16 @@ export function ContactList({
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
-                        <Label htmlFor="client-montant">Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-montant" style={fieldErrors.montantEncaisse ? { color: '#ef4444' } : {}}>Montant encaissé <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-montant"
                           type="number"
                           step="0.01"
                           value={clientFormData.montantEncaisse}
-                          onChange={(e) => setClientFormData({ ...clientFormData, montantEncaisse: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('montantEncaisse', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('montantEncaisse', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.montantEncaisse ? 'border-red-500' : ''}
                         />
                         <p className="text-xs text-slate-500 mt-1">
                           Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
@@ -4475,30 +4917,31 @@ export function ContactList({
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-bonus">Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-bonus" style={fieldErrors.bonus ? { color: '#ef4444' } : {}}>Bonus <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Input
                           id="client-bonus"
                           type="number"
                           step="0.01"
                           value={clientFormData.bonus}
-                          onChange={(e) => setClientFormData({ ...clientFormData, bonus: e.target.value })}
-                          disabled={isSavingClientForm}
+                          onChange={(e) => updateFormField('bonus', e.target.value)}
+                          disabled={isSavingClientForm || !canEditFieldInModal('bonus', selectedContact, selectedStatusId)}
                           required
+                          className={fieldErrors.bonus ? 'border-red-500' : ''}
                         />
                       </div>
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-paiement">Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
                       <Select
                         value={clientFormData.paiement || 'none'}
-                        onValueChange={(value) => setClientFormData({ ...clientFormData, paiement: value === 'none' ? '' : value })}
-                        disabled={isSavingClientForm}
+                        onValueChange={(value) => updateFormField('paiement', value === 'none' ? '' : value)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('paiement', selectedContact, selectedStatusId)}
                       >
-                        <SelectTrigger id="client-paiement">
+                        <SelectTrigger id="client-paiement" className={fieldErrors.paiement ? 'border-red-500' : ''}>
                           <SelectValue placeholder="Sélectionner un mode de paiement" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent style={{ zIndex: 10010 }}>
                           <SelectItem value="none">Aucun</SelectItem>
                           <SelectItem value="carte">Carte</SelectItem>
                           <SelectItem value="virement">Virement</SelectItem>
@@ -4516,17 +4959,28 @@ export function ContactList({
 
       {/* Status Change Confirmation Modal */}
       {isStatusChangeConfirmOpen && (
-        <div className="modal-overlay" onClick={() => {
-          setIsStatusChangeConfirmOpen(false);
-          const actionType = pendingBulkAction?.type;
-          setPendingBulkAction(null);
-          // Reset the select values
-          if (actionType === 'teleoperator') {
-            setBulkTeleoperatorId('');
-          } else if (actionType === 'confirmateur') {
-            setBulkConfirmateurId('');
-          }
-        }}>
+        <div 
+          className="modal-overlay" 
+          onClick={(e) => {
+            // Only close if clicking directly on the overlay, not on child elements
+            if (e.target === e.currentTarget) {
+              setIsStatusChangeConfirmOpen(false);
+              const actionType = pendingBulkAction?.type;
+              setPendingBulkAction(null);
+              // Reset the select values
+              if (actionType === 'teleoperator') {
+                setBulkTeleoperatorId('');
+              } else if (actionType === 'confirmateur') {
+                setBulkConfirmateurId('');
+              }
+            }
+          }}
+          style={{
+            zIndex: 10006,
+            position: 'fixed',
+            inset: 0,
+          }}
+        >
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

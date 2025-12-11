@@ -9,10 +9,11 @@ class UserSerializer(serializers.ModelSerializer):
     roleId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     teamId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    hrex = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=7)
     
     class Meta:
         model = DjangoUser
-        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'roleId', 'phone', 'teamId']
+        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'roleId', 'phone', 'teamId', 'hrex']
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': False, 'allow_blank': True},
@@ -61,6 +62,7 @@ class UserSerializer(serializers.ModelSerializer):
         role_id = validated_data.pop('roleId', None)
         phone = validated_data.pop('phone', '')
         team_id = validated_data.pop('teamId', None)
+        hrex = validated_data.pop('hrex', '')
         
         # Get and normalize username (already validated and stripped in validate_username)
         username = validated_data.get('username', '').strip()
@@ -110,7 +112,8 @@ class UserSerializer(serializers.ModelSerializer):
             id=user_details_id,
             django_user=user,
             role=role,
-            phone=phone.strip() if phone else ''
+            phone=phone.strip() if phone else '',
+            hrex=hrex.strip() if hrex else ''
         )
         
         # Create TeamMember if teamId provided
@@ -482,13 +485,18 @@ class ContactSerializer(serializers.ModelSerializer):
         previous_status = None
         previous_teleoperator = None
         
+        # Get current status name for comparison
+        current_status_name = instance.status.name if instance.status else ''
+        
         for log in logs:
             # Check for previous status - look for logs where statusName changed
+            # IMPORTANT: Only consider logs where new_status matches the current status
+            # This ensures we get the IMMEDIATE previous status (right before current)
             if previous_status is None and log.old_value and log.new_value:
                 old_status = log.old_value.get('statusName', '')
                 new_status = log.new_value.get('statusName', '')
-                # If status changed (different values), old_value contains the previous status
-                if old_status and old_status != new_status:
+                # If status changed AND new_status matches current status, old_value contains the previous status
+                if old_status and old_status != new_status and new_status == current_status_name:
                     previous_status = old_status
             
             # Check for previous teleoperator - look for logs where teleoperatorName changed
@@ -523,13 +531,14 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     teamId = serializers.SerializerMethodField()
     phone = serializers.SerializerMethodField()
     mobile = serializers.SerializerMethodField()
+    hrex = serializers.CharField(required=False, allow_blank=True, max_length=7)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
     class Meta:
         model = UserDetails
         fields = [
             'id', 'firstName', 'lastName', 'username', 'email',
-            'role', 'phone', 'mobile', 'teamId', 'active', 'createdAt'
+            'role', 'phone', 'mobile', 'teamId', 'active', 'hrex', 'createdAt'
         ]
         read_only_fields = ['id']
 
@@ -690,17 +699,23 @@ class EventSerializer(serializers.ModelSerializer):
     contactName = serializers.SerializerMethodField()
     createdBy = serializers.SerializerMethodField()
     assignedTo = serializers.SerializerMethodField()
+    userId_read = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
-        fields = ['id', 'datetime', 'userId', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
+        fields = ['id', 'datetime', 'userId', 'userId_read', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
         extra_kwargs = {
             'id': {'required': False}
         }
     
+    def get_userId_read(self, obj):
+        """Get the userId as a read-only field for API responses"""
+        return obj.userId.id if obj.userId else None
+    
     def get_contactName(self, obj):
         if obj.contactId:
-            return f"{obj.contactId.fname} {obj.contactId.lname}"
+            name = f"{obj.contactId.fname or ''} {obj.contactId.lname or ''}".strip()
+            return name if name else None
         return None
     
     def get_createdBy(self, obj):
@@ -747,6 +762,8 @@ class EventSerializer(serializers.ModelSerializer):
         ret = super().to_representation(instance)
         # Expose contactId in API response
         ret['contactId'] = instance.contactId.id if instance.contactId else None
+        # Expose userId in API response directly from instance (userId field is write_only so not in ret)
+        ret['userId'] = instance.userId.id if instance.userId else None
         # Convertir l'UTC stocké en heure locale pour l'affichage
         if instance.datetime:
             # Le datetime stocké est déjà aware (avec timezone UTC)
@@ -1105,7 +1122,7 @@ class PermissionSerializer(serializers.ModelSerializer):
     statusId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     
     # Only these components are allowed to have statusId
-    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories']
+    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories', 'fosse_statuses']
     
     class Meta:
         model = Permission
@@ -1122,7 +1139,7 @@ class PermissionSerializer(serializers.ModelSerializer):
         if not component or not action:
             return data  # Let other validations handle missing required fields
         
-        # Only 'statuses' and 'note_categories' components are allowed to have statusId
+        # Only 'statuses', 'note_categories', and 'fosse_statuses' components are allowed to have statusId
         if status_id and component not in self.STATUS_ALLOWED_COMPONENTS:
             raise serializers.ValidationError(
                 f"Component '{component}' cannot have statusId. "

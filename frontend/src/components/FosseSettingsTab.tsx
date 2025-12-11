@@ -34,11 +34,16 @@ interface FosseSettings {
   updatedAt: string;
 }
 
-// Available columns for Fosse page
+// Default columns to show by default (on the left)
+const DEFAULT_COLUMNS = ['createdAt', 'previousStatus', 'source', 'previousTeleoperator'];
+
+// Available columns for Fosse page (reorganized with default columns first)
 const AVAILABLE_COLUMNS = [
   { id: 'createdAt', label: 'Créé le' },
-  { id: 'fullName', label: 'Nom entier' },
+  { id: 'previousStatus', label: 'Statut précédent' },
   { id: 'source', label: 'Source' },
+  { id: 'previousTeleoperator', label: 'Téléopérateur précédent' },
+  { id: 'fullName', label: 'Nom entier' },
   { id: 'phone', label: 'Téléphone' },
   { id: 'mobile', label: 'Portable' },
   { id: 'email', label: 'E-Mail' },
@@ -61,8 +66,6 @@ const AVAILABLE_COLUMNS = [
   { id: 'confirmateur', label: 'Confirmateur' },
   { id: 'creator', label: 'Créateur' },
   { id: 'managerTeam', label: 'Équipe' },
-  { id: 'previousStatus', label: 'Statut précédent' },
-  { id: 'previousTeleoperator', label: 'Téléopérateur précédent' },
 ];
 
 // Columns that support filtering
@@ -100,6 +103,7 @@ export function FosseSettingsTab() {
   const [pendingTextFilterValues, setPendingTextFilterValues] = useState<Record<string, string>>({});
   const [pendingDateRangeFilters, setPendingDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>({});
   const [pendingMultiSelectFilters, setPendingMultiSelectFilters] = useState<Record<string, string[]>>({});
+  const [showAllColumns, setShowAllColumns] = useState<Record<string, boolean>>({});
 
   // Load Fosse default status
   const loadFosseDefaultStatus = async () => {
@@ -426,7 +430,7 @@ export function FosseSettingsTab() {
     switch (column.optionsType) {
       case 'statuses':
         if (columnId === 'previousStatus') {
-          // For previousStatus, use status names (since it stores names, not IDs)
+          // For previousStatus, use status names (since it stores names, not IDs) - same as Fosse page
           // Filter by status type (lead or client) - same logic as status filter
           return statuses
             .filter((status) => {
@@ -442,7 +446,7 @@ export function FosseSettingsTab() {
               return true;
             })
             .map(status => ({
-              id: status.name, // Use name since previousStatus stores the name, not ID
+              id: status.name, // Use name for filtering since previousStatus stores names - same as Fosse page
               label: status.name
             }));
         }
@@ -509,141 +513,46 @@ export function FosseSettingsTab() {
       // Get order from settings or use 'created_at_desc' as default
       const orderParam = order || setting?.defaultOrder || 'created_at_desc';
       
-      // Load contacts - we'll filter and sort them client-side
-      const data = await apiCall(`/api/contacts/fosse/?page=1&page_size=100`);
-      let contacts = data?.results || data?.contacts || [];
-      
-      // Apply forced filters if they exist
+      // Build query parameters with forced filters for preview
+      // Send forced filters as query params so preview shows what contacts would be visible with these filters
       const forcedFilters = setting?.forcedFilters || {};
+      const queryParams = new URLSearchParams();
+      queryParams.append('page', '1');
+      queryParams.append('page_size', '100');
+      queryParams.append('order', orderParam);
       
-      // Filter contacts based on forced filters
-      contacts = contacts.filter((contact: any) => {
-        // Apply each filter
-        for (const [columnId, filterConfig] of Object.entries(forcedFilters)) {
-          const config = filterConfig as { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } };
-          
-          if ((config.type === 'defined' || config.type === 'open') && config.values && config.values.length > 0) {
-            // Multi-select filter (status, source, creator, etc.) - works for both 'defined' and 'open' types
-            const values = config.values;
-            const hasEmpty = values.includes('__empty__');
-            const regularValues = values.filter(v => v !== '__empty__');
-            
-            let matches = false;
-            
-            if (columnId === 'status') {
-              // If no regular values selected, only check empty option
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !contact.statusId;
-              } else {
-                // Check if contact matches regular values or empty option
-                matches = regularValues.includes(contact.statusId);
-                if (hasEmpty && !contact.statusId) matches = true;
-              }
-            } else if (columnId === 'source') {
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !contact.sourceId;
-              } else {
-                matches = regularValues.includes(contact.sourceId);
-                if (hasEmpty && !contact.sourceId) matches = true;
-              }
-            } else if (columnId === 'creator') {
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !contact.creatorId;
-              } else {
-                matches = regularValues.includes(contact.creatorId);
-                if (hasEmpty && !contact.creatorId) matches = true;
-              }
-            } else if (columnId === 'managerTeam') {
-              const contactTeamId = contact.managerTeamId;
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !contactTeamId;
-              } else {
-                matches = regularValues.includes(contactTeamId);
-                if (hasEmpty && !contactTeamId) matches = true;
-              }
-            } else if (columnId === 'previousStatus') {
-              const previousStatus = contact.previousStatus || '';
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !previousStatus;
-              } else {
-                matches = regularValues.includes(previousStatus);
-                if (hasEmpty && !previousStatus) matches = true;
-              }
-            } else if (columnId === 'previousTeleoperator') {
-              const previousTeleoperator = contact.previousTeleoperator || '';
-              if (regularValues.length === 0) {
-                matches = hasEmpty && !previousTeleoperator;
-              } else {
-                matches = regularValues.includes(previousTeleoperator);
-                if (hasEmpty && !previousTeleoperator) matches = true;
-              }
+      // Add forced filters as query parameters (same format as ContactList uses)
+      for (const [columnId, filterConfig] of Object.entries(forcedFilters)) {
+        const config = filterConfig as { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } };
+        
+        if ((config.type === 'defined' || config.type === 'open') && config.values && config.values.length > 0) {
+          // Multi-select filter - send multiple query params
+          // Values are already names for previousStatus (same as Fosse page)
+          config.values.forEach((val) => {
+            queryParams.append(`filter_${columnId}`, val);
+          });
+        } else if (config.type === 'open') {
+          if (config.value !== undefined && config.value !== '') {
+            // Text filter
+            queryParams.append(`filter_${columnId}`, config.value);
+          } else if (config.dateRange) {
+            // Date range filter
+            if (config.dateRange.from) {
+              queryParams.append(`filter_${columnId}_from`, config.dateRange.from);
             }
-            
-            if (!matches) return false;
-          } else if (config.type === 'open') {
-            // Text filter or date range filter
-            if (config.value !== undefined && config.value !== '') {
-              // Text filter (email, fullName, etc.)
-              const filterValue = config.value.toLowerCase();
-              
-              if (columnId === 'email') {
-                const email = (contact.email || '').toLowerCase();
-                if (!email.includes(filterValue)) return false;
-              } else if (columnId === 'fullName') {
-                const fullName = (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '').toLowerCase();
-                if (!fullName.includes(filterValue)) return false;
-              } else if (columnId === 'phone') {
-                const phone = (contact.phone || '').toString().replace(/\s/g, '');
-                const filterPhone = filterValue.replace(/\s/g, '');
-                if (!phone.includes(filterPhone)) return false;
-              } else if (columnId === 'mobile') {
-                const mobile = (contact.mobile || '').toString().replace(/\s/g, '');
-                const filterMobile = filterValue.replace(/\s/g, '');
-                if (!mobile.includes(filterMobile)) return false;
-              } else if (columnId === 'firstName') {
-                const firstName = (contact.firstName || '').toLowerCase();
-                if (!firstName.includes(filterValue)) return false;
-              } else if (columnId === 'lastName') {
-                const lastName = (contact.lastName || '').toLowerCase();
-                if (!lastName.includes(filterValue)) return false;
-              } else if (columnId === 'city') {
-                const city = (contact.city || '').toLowerCase();
-                if (!city.includes(filterValue)) return false;
-              } else if (columnId === 'address') {
-                const address = (contact.address || '').toLowerCase();
-                if (!address.includes(filterValue)) return false;
-              }
-            } else if (config.dateRange) {
-              // Date range filter
-              const dateRange = config.dateRange;
-              
-              if (columnId === 'createdAt' && dateRange.from) {
-                const contactDate = contact.createdAt ? new Date(contact.createdAt).getTime() : 0;
-                const fromDate = new Date(dateRange.from + 'T00:00:00').getTime();
-                if (contactDate < fromDate) return false;
-              }
-              if (columnId === 'createdAt' && dateRange.to) {
-                const contactDate = contact.createdAt ? new Date(contact.createdAt).getTime() : 0;
-                const toDate = new Date(dateRange.to + 'T23:59:59').getTime();
-                if (contactDate > toDate) return false;
-              }
-              if (columnId === 'updatedAt' && dateRange.from) {
-                const contactDate = contact.lastLogDate ? new Date(contact.lastLogDate).getTime() : (contact.updatedAt ? new Date(contact.updatedAt).getTime() : 0);
-                const fromDate = new Date(dateRange.from + 'T00:00:00').getTime();
-                if (contactDate < fromDate) return false;
-              }
-              if (columnId === 'updatedAt' && dateRange.to) {
-                const contactDate = contact.lastLogDate ? new Date(contact.lastLogDate).getTime() : (contact.updatedAt ? new Date(contact.updatedAt).getTime() : 0);
-                const toDate = new Date(dateRange.to + 'T23:59:59').getTime();
-                if (contactDate > toDate) return false;
-              }
+            if (config.dateRange.to) {
+              queryParams.append(`filter_${columnId}_to`, config.dateRange.to);
             }
           }
         }
-        
-        return true;
-      });
+      }
       
+      // Load contacts with filters applied server-side
+      const data = await apiCall(`/api/contacts/fosse/?${queryParams.toString()}`);
+      let contacts = data?.results || data?.contacts || [];
+      
+      // Backend already filtered and sorted contacts, but keep client-side sort as fallback
+      // (in case backend doesn't handle sorting correctly)
       // Sort contacts based on order setting
       switch (orderParam) {
         case 'created_at_asc':
@@ -760,7 +669,7 @@ export function FosseSettingsTab() {
         options.push(...teamOptions);
         break;
       case 'previousStatus':
-        // Filter by status type (lead or client) - same logic as status filter
+        // For previousStatus, use status names (since it stores names, not IDs) - same as Fosse page
         const previousStatusOptions = statuses
           .filter((status) => {
             if (!status.id || status.id.trim() === '') return false;
@@ -775,7 +684,7 @@ export function FosseSettingsTab() {
             return true;
           })
           .map(status => ({
-            id: status.name, // Use name since previousStatus stores the name, not ID
+            id: status.name, // Use name for filtering since previousStatus stores names - same as Fosse page
             label: status.name
           }));
         options.push(...previousStatusOptions);
@@ -940,9 +849,20 @@ export function FosseSettingsTab() {
       }
     } else if (filterType === 'defined' && values !== undefined) {
       // Set filter to defined with values
+      // For previousStatus, store as names (same as Fosse page)
+      let normalizedValues = values;
+      if (columnId === 'previousStatus') {
+        // Convert any old ID values to names (for backward compatibility)
+        normalizedValues = values.map(val => {
+          // If val is an ID, convert to name; otherwise keep as-is (already a name)
+          const status = statuses.find(s => s.id === val);
+          return status ? status.name : val;
+        });
+      }
+      
       const newFilters = {
         ...currentFilters,
-        [columnId]: { type: 'defined' as const, values }
+        [columnId]: { type: 'defined' as const, values: normalizedValues }
       };
       if (setting) {
         updateSettings(roleId, { forcedFilters: newFilters });
@@ -1214,71 +1134,74 @@ export function FosseSettingsTab() {
                                   Toutes les colonnes sont affichées. Les colonnes en surbrillance ne seront pas visibles pour ce rôle mais vous pouvez configurer des filtres forcés dessus.
                                 </p>
                               </div>
-                              {loadingPreview ? (
-                                <div className="p-8 text-center text-sm text-slate-500">
-                                  Chargement de l'aperçu...
+                              <div style={{ position: 'relative', width: '100%' }}>
+                                {/* Horizontal scrollbar on top */}
+                                <div 
+                                  id={`preview-scroll-top-${role.id}`}
+                                  style={{
+                                    width: '100%',
+                                    height: '12px',
+                                    overflowX: 'auto',
+                                    overflowY: 'hidden',
+                                    marginBottom: '0',
+                                    backgroundColor: '#f8fafc',
+                                    borderBottom: '1px solid #e2e8f0'
+                                  }}
+                                >
+                                  <div id={`preview-scroll-content-${role.id}`} style={{ height: '1px' }}></div>
                                 </div>
-                              ) : (
-                                <div style={{ position: 'relative', width: '100%' }}>
-                                  {/* Horizontal scrollbar on top */}
-                                  <div 
-                                    id={`preview-scroll-top-${role.id}`}
-                                    style={{
-                                      width: '100%',
-                                      height: '12px',
-                                      overflowX: 'auto',
-                                      overflowY: 'hidden',
-                                      marginBottom: '0',
-                                      backgroundColor: '#f8fafc',
-                                      borderBottom: '1px solid #e2e8f0'
-                                    }}
-                                  >
-                                    <div id={`preview-scroll-content-${role.id}`} style={{ height: '1px' }}></div>
-                                  </div>
-                                  {/* Table wrapper with scrollbars */}
-                                  <div 
-                                    id={`preview-scroll-wrapper-${role.id}`}
-                                    className="contacts-table-wrapper" 
-                                    style={{ 
-                                      height: '300px', 
-                                      maxHeight: '300px',
-                                      overflowX: 'auto',
-                                      overflowY: 'auto',
-                                      position: 'relative'
-                                    }}
-                                    onScroll={(e) => {
-                                      // Sync top scrollbar with table scroll
-                                      const topScrollbar = document.getElementById(`preview-scroll-top-${role.id}`);
-                                      if (topScrollbar) {
-                                        topScrollbar.scrollLeft = e.currentTarget.scrollLeft;
-                                      }
-                                    }}
-                                  >
-                                    <table className="contacts-table">
-                                    <thead>
-                                      <tr>
-                                        {AVAILABLE_COLUMNS.map((column) => {
-                                          const columnId = column.id;
-                                          const isColumnEnabled = forcedColumns.includes(columnId);
-                                          const filter = forcedFilters[columnId];
-                                          const hasFilter = filter && (
-                                            filter.type === 'defined' 
-                                              ? (filter.values?.length || 0) > 0 
-                                              : filter.type === 'open' && (
-                                                (filter.value !== undefined && filter.value !== '') ||
-                                                (filter.dateRange !== undefined && (filter.dateRange.from || filter.dateRange.to))
-                                              )
-                                          );
-                                          
-                                          return (
-                                            <th 
-                                              key={columnId} 
-                                              style={{ 
-                                                position: 'relative',
-                                                backgroundColor: isColumnEnabled ? '#f8fafc' : '#fef3c7',
-                                                opacity: isColumnEnabled ? 1 : 0.8
-                                              }}
-                                            >
+                                {/* Table wrapper with scrollbars */}
+                                <div 
+                                  id={`preview-scroll-wrapper-${role.id}`}
+                                  className="contacts-table-wrapper" 
+                                  style={{ 
+                                    height: '300px', 
+                                    maxHeight: '300px',
+                                    overflowX: 'auto',
+                                    overflowY: 'auto',
+                                    position: 'relative'
+                                  }}
+                                  onScroll={(e) => {
+                                    // Sync top scrollbar with table scroll
+                                    const topScrollbar = document.getElementById(`preview-scroll-top-${role.id}`);
+                                    if (topScrollbar) {
+                                      topScrollbar.scrollLeft = e.currentTarget.scrollLeft;
+                                    }
+                                  }}
+                                >
+                                  <table className="contacts-table">
+                                  <thead>
+                                    <tr>
+                                      {(() => {
+                                        const isShowingAll = showAllColumns[role.id] || false;
+                                        const visibleColumns = isShowingAll 
+                                          ? AVAILABLE_COLUMNS 
+                                          : AVAILABLE_COLUMNS.filter(col => DEFAULT_COLUMNS.includes(col.id));
+                                        
+                                        return (
+                                          <>
+                                            {visibleColumns.map((column) => {
+                                              const columnId = column.id;
+                                              const isColumnEnabled = forcedColumns.includes(columnId);
+                                              const filter = forcedFilters[columnId];
+                                              const hasFilter = filter && (
+                                                filter.type === 'defined' 
+                                                  ? (filter.values?.length || 0) > 0 
+                                                  : filter.type === 'open' && (
+                                                    (filter.value !== undefined && filter.value !== '') ||
+                                                    (filter.dateRange !== undefined && (filter.dateRange.from || filter.dateRange.to))
+                                                  )
+                                              );
+                                              
+                                              return (
+                                                <th 
+                                                  key={columnId} 
+                                                  style={{ 
+                                                    position: 'relative',
+                                                    backgroundColor: isColumnEnabled ? '#f8fafc' : '#fef3c7',
+                                                    opacity: isColumnEnabled ? 1 : 0.8
+                                                  }}
+                                                >
                                               <Popover 
                                                 open={openFilterColumn === `${role.id}-${columnId}`}
                                                 onOpenChange={(open) => {
@@ -1455,9 +1378,13 @@ export function FosseSettingsTab() {
                                                             
                                                             const currentFilter = forcedFilters[columnId];
                                                             const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
-                                                            const selectedValues = pendingValues !== undefined 
+                                                            let rawSelectedValues = pendingValues !== undefined 
                                                               ? pendingValues 
                                                               : (currentFilter?.values || []);
+                                                            
+                                                            // For previousStatus, values are already names (same as Fosse page)
+                                                            const selectedValues = rawSelectedValues;
+                                                            
                                                             const allFilteredSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selectedValues.includes(opt.id));
                                                             
                                                             return (
@@ -1526,9 +1453,12 @@ export function FosseSettingsTab() {
                                                             const currentFilter = forcedFilters[columnId];
                                                             const pendingValues = pendingMultiSelectFilters[`${role.id}-${columnId}`];
                                                             // Use pending values if they exist, otherwise use current filter values
-                                                            const selectedValues = pendingValues !== undefined 
+                                                            let rawSelectedValues = pendingValues !== undefined 
                                                               ? pendingValues 
                                                               : (currentFilter?.values || []);
+                                                            
+                                                            // For previousStatus, values are already names (same as Fosse page)
+                                                            const selectedValues = rawSelectedValues;
                                                             
                                                             return filteredOptions.map((option, index) => {
                                                               const isChecked = selectedValues.includes(option.id);
@@ -1973,47 +1903,102 @@ export function FosseSettingsTab() {
                                                 </PopoverContent>
                                               </Popover>
                                             </th>
-                              );
-                            })}
+                                              );
+                                            })}
+                                            {!isShowingAll && (
+                                              <th 
+                                                key="voir-plus"
+                                                style={{ 
+                                                  position: 'relative',
+                                                  backgroundColor: '#f8fafc',
+                                                  minWidth: '120px'
+                                                }}
+                                              >
+                                                <button
+                                                  onClick={() => {
+                                                    setShowAllColumns(prev => ({
+                                                      ...prev,
+                                                      [role.id]: true
+                                                    }));
+                                                  }}
+                                                  className="contacts-column-header-button"
+                                                  style={{
+                                                    backgroundColor: '#f1f5f9',
+                                                    borderColor: '#cbd5e1',
+                                                    width: '100%',
+                                                    cursor: 'pointer'
+                                                  }}
+                                                >
+                                                  Voir plus
+                                                </button>
+                                              </th>
+                                            )}
+                                          </>
+                                        );
+                                      })()}
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {previewContacts.length === 0 ? (
-                                        <tr>
-                                          <td 
-                                            colSpan={AVAILABLE_COLUMNS.length}
-                                            className="p-8 text-center text-sm text-slate-500"
-                                            style={{ backgroundColor: 'transparent' }}
-                                          >
-                                            Aucun contact disponible pour l'aperçu
-                                          </td>
-                                        </tr>
-                                      ) : (
-                                        previewContacts.map((contact) => (
-                                        <tr key={contact.id}>
-                                          {AVAILABLE_COLUMNS.map((column) => {
-                                            const columnId = column.id;
-                                            const isColumnEnabled = forcedColumns.includes(columnId);
-                                            return (
-                                              <td 
-                                                key={columnId}
-                                                style={{
-                                                  backgroundColor: isColumnEnabled ? 'transparent' : '#fef3c7',
-                                                  opacity: isColumnEnabled ? 1 : 0.7
-                                                }}
-                                              >
-                                                {renderPreviewCellContent(contact, columnId)}
-                                              </td>
-                                            );
-                                          })}
-                                        </tr>
-                                        ))
-                                      )}
+                                      {(() => {
+                                        const isShowingAll = showAllColumns[role.id] || false;
+                                        const visibleColumns = isShowingAll 
+                                          ? AVAILABLE_COLUMNS 
+                                          : AVAILABLE_COLUMNS.filter(col => DEFAULT_COLUMNS.includes(col.id));
+                                        const columnCount = visibleColumns.length + (!isShowingAll ? 1 : 0); // +1 for "Voir plus" button
+                                        
+                                        return (
+                                          <>
+                                            {loadingPreview ? (
+                                              <tr>
+                                                <td 
+                                                  colSpan={columnCount}
+                                                  className="p-8 text-center text-sm text-slate-500"
+                                                  style={{ backgroundColor: 'transparent' }}
+                                                >
+                                                  Chargement de l'aperçu...
+                                                </td>
+                                              </tr>
+                                            ) : previewContacts.length === 0 ? (
+                                              <tr>
+                                                <td 
+                                                  colSpan={columnCount}
+                                                  className="p-8 text-center text-sm text-slate-500"
+                                                  style={{ backgroundColor: 'transparent' }}
+                                                >
+                                                  Aucun contact disponible pour l'aperçu
+                                                </td>
+                                              </tr>
+                                            ) : (
+                                              previewContacts.map((contact) => (
+                                              <tr key={contact.id}>
+                                                {visibleColumns.map((column) => {
+                                                  const columnId = column.id;
+                                                  const isColumnEnabled = forcedColumns.includes(columnId);
+                                                  return (
+                                                    <td 
+                                                      key={columnId}
+                                                      style={{
+                                                        backgroundColor: isColumnEnabled ? 'transparent' : '#fef3c7',
+                                                        opacity: isColumnEnabled ? 1 : 0.7
+                                                      }}
+                                                    >
+                                                      {renderPreviewCellContent(contact, columnId)}
+                                                    </td>
+                                                  );
+                                                })}
+                                                {!isShowingAll && (
+                                                  <td key="voir-plus-empty" style={{ backgroundColor: '#f8fafc' }}></td>
+                                                )}
+                                              </tr>
+                                              ))
+                                            )}
+                                          </>
+                                        );
+                                      })()}
                                     </tbody>
                                   </table>
                           </div>
                                 </div>
-                              )}
                             </div>
                           )}
                         </div>

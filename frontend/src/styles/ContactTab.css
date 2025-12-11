@@ -69,8 +69,8 @@
 
 .contact-appointment-card.past {
   border-color: rgb(203 213 225);
-  background-color: rgb(248 250 252);
-  opacity: 0.6;
+  background-color: rgb(241 245 249);
+  opacity: 0.5;
 }
 
 /* Note Styles */
@@ -111,6 +111,7 @@
 .contact-icon-calendar.past,
 .contact-icon-clock.past {
   color: rgb(148 163 184);
+  opacity: 1;
 }
 
 .contact-icon-calendar:not(.past),
@@ -121,6 +122,7 @@
 /* Text Styles */
 .contact-text-past {
   color: rgb(148 163 184);
+  opacity: 1;
 }
 
 .contact-text-meta {
@@ -130,6 +132,7 @@
 
 .contact-text-meta.past {
   color: rgb(148 163 184);
+  opacity: 1;
 }
 
 .contact-text-comment {
@@ -145,6 +148,7 @@
 
 .contact-text-comment.past {
   color: rgb(148 163 184);
+  opacity: 1;
 }
 
 .contact-text-comment:not(.past) {

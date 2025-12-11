@@ -226,13 +226,13 @@ export function useHasFosseSettingsPermission(): boolean {
 
   const permissions: Permission[] = currentUser.permissions;
 
-  // Check if user has the general 'permissions' view permission
-  // (Fosse settings are part of the permissions/settings system)
+  // Check if user has the 'fosse' create permission
+  // (Fosse settings require create permission on fosse component)
   return permissions.some((perm) => {
-    return perm.component === 'permissions' && 
-           perm.action === 'view' && 
+    return perm.component === 'fosse' && 
+           perm.action === 'create' && 
            !perm.fieldName && // Exclude field-level permissions
-           !perm.statusId; // Only general permissions permission
+           !perm.statusId; // Only general fosse create permission
   });
 }
 

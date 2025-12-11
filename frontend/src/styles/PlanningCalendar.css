@@ -45,11 +45,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
 }
 
 .planning-calendar-nav {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.planning-view-toggle {
+  display: flex;
+  gap: 0.25rem;
+  margin-right: 0.5rem;
 }
 
 /* Calendar Grid */
@@ -211,6 +220,171 @@
   color: #64748b;
 }
 
+/* Week View */
+.planning-week-view {
+  width: 100%;
+}
+
+.planning-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  min-height: 500px;
+}
+
+.planning-week-day {
+  border: 1px solid #e2e8f0;
+  padding: 0.5rem;
+  min-height: 500px;
+  display: flex;
+  flex-direction: column;
+}
+
+.planning-week-day-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 0.5rem;
+}
+
+.planning-week-day-name {
+  font-size: 0.75rem;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.planning-week-day-number {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-top: 0.25rem;
+}
+
+.planning-week-day-events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Day View */
+.planning-day-view {
+  width: 100%;
+}
+
+.planning-day-header {
+  text-align: center;
+  padding: 1rem;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 1rem;
+}
+
+.planning-day-date {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.planning-day-weekday {
+  font-size: 1rem;
+  color: #64748b;
+  margin-top: 0.25rem;
+}
+
+.planning-day-hours {
+  display: flex;
+  flex-direction: column;
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.planning-day-hour {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+  min-height: 80px;
+  min-width: fit-content;
+}
+
+.planning-day-hour-current {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.planning-day-hour-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #475569;
+  text-align: right;
+  padding-top: 0.25rem;
+  flex-shrink: 0;
+  width: 80px;
+}
+
+.planning-day-hour-content {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-width: 0;
+}
+
+.planning-day-event {
+  background-color: #dbeafe;
+  border-left: 3px solid #3b82f6;
+  padding: 0.5rem;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.planning-day-event:hover {
+  background-color: #bfdbfe;
+}
+
+.planning-day-event-disabled {
+  opacity: 0.7;
+  cursor: default !important;
+}
+
+.planning-day-event-disabled:hover {
+  background-color: #dbeafe;
+  cursor: default !important;
+}
+
+.planning-day-event-time {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1e40af;
+  margin-bottom: 0.25rem;
+}
+
+.planning-day-event-client {
+  font-size: 0.875rem;
+  color: #1e293b;
+  font-weight: 500;
+}
+
+.planning-day-event-comment {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
 /* Force 24-hour format for time inputs */
 .time-input-24h::-webkit-datetime-edit-meridiem-field,
 input[type="time"]::-webkit-datetime-edit-meridiem-field {
@@ -234,5 +408,21 @@ input[type="time"] {
 .time-input-24h::-moz-datetime-edit-meridiem-field,
 input[type="time"]::-moz-datetime-edit-meridiem-field {
   display: none !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .planning-week-grid {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .planning-week-day {
+    min-height: auto;
+  }
+
+  .planning-day-hour {
+    grid-template-columns: 60px 1fr;
+  }
 }
 

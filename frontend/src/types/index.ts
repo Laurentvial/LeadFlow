@@ -10,6 +10,7 @@ export interface User {
   roleName?: string; // Role name for display
   teamId: string | null;
   active: boolean;
+  hrex?: string; // Hex color code for user (e.g., #FF5733)
   isTeleoperateur?: boolean;
   isConfirmateur?: boolean;
   dataAccess?: 'all' | 'team_only' | 'own_only'; // Data access level from role

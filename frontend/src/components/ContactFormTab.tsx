@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
-import { Plus, Pencil, Trash2, FileText, X, GripVertical } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, X, GripVertical, Server } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { useHasPermission } from '../hooks/usePermissions';
+import { usePlatforms } from '../hooks/usePlatforms';
 import {
   DndContext,
   closestCenter,
@@ -32,6 +33,13 @@ interface NoteCategory {
   name: string;
   orderIndex: number;
   createdAt: string;
+}
+
+interface Platform {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 function SortableCategoryItem({ 
@@ -130,6 +138,17 @@ export function ContactFormTab() {
   const [categoryLoading, setCategoryLoading] = useState(false);
   const [categoryError, setCategoryError] = useState('');
   const [isReordering, setIsReordering] = useState(false);
+  
+  // Platform state
+  const { platforms, loading: platformsLoading, reload: reloadPlatforms } = usePlatforms();
+  const [isPlatformModalOpen, setIsPlatformModalOpen] = useState(false);
+  const [isEditPlatformModalOpen, setIsEditPlatformModalOpen] = useState(false);
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
+  const [platformForm, setPlatformForm] = useState({
+    name: '',
+  });
+  const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformError, setPlatformError] = useState('');
   
   // Permission checks for note categories management (general permissions, not category-specific)
   const canView = useHasPermission('note_categories', 'view', null, null);
@@ -290,6 +309,76 @@ export function ContactFormTab() {
     } finally {
       setIsReordering(false);
     }
+  }
+
+  // Platform handlers
+  async function handleCreatePlatform() {
+    setPlatformError('');
+    setPlatformLoading(true);
+    try {
+      await apiCall('/api/platforms/', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: platformForm.name,
+        }),
+      });
+      toast.success('Plateforme créée avec succès');
+      setIsPlatformModalOpen(false);
+      setPlatformForm({ name: '' });
+      reloadPlatforms();
+    } catch (error: any) {
+      const message = error?.data?.error || error.message || 'Erreur lors de la création de la plateforme';
+      setPlatformError(message);
+      toast.error(message);
+    } finally {
+      setPlatformLoading(false);
+    }
+  }
+
+  async function handleUpdatePlatform() {
+    if (!selectedPlatform) return;
+    setPlatformError('');
+    setPlatformLoading(true);
+    try {
+      await apiCall(`/api/platforms/${selectedPlatform.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: platformForm.name,
+        }),
+      });
+      toast.success('Plateforme mise à jour avec succès');
+      setIsEditPlatformModalOpen(false);
+      setSelectedPlatform(null);
+      setPlatformForm({ name: '' });
+      reloadPlatforms();
+    } catch (error: any) {
+      const message = error?.data?.error || error.message || 'Erreur lors de la mise à jour de la plateforme';
+      setPlatformError(message);
+      toast.error(message);
+    } finally {
+      setPlatformLoading(false);
+    }
+  }
+
+  async function handleDeletePlatform(platformId: string) {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette plateforme ?')) return;
+    try {
+      await apiCall(`/api/platforms/${platformId}/`, {
+        method: 'DELETE',
+      });
+      toast.success('Plateforme supprimée avec succès');
+      reloadPlatforms();
+    } catch (error: any) {
+      toast.error(error?.data?.error || error.message || 'Erreur lors de la suppression de la plateforme');
+    }
+  }
+
+  function handleEditPlatform(platform: Platform) {
+    setSelectedPlatform(platform);
+    setPlatformForm({
+      name: platform.name,
+    });
+    setIsEditPlatformModalOpen(true);
   }
 
   if (loading) {
@@ -474,6 +563,200 @@ export function ContactFormTab() {
                 </div>
               </SortableContext>
             </DndContext>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Platforms Section */}
+      {canCreate && (
+        <div className="users-teams-action-bar" style={{ marginTop: '24px' }}>
+          <Button onClick={() => setIsPlatformModalOpen(true)}>
+            <Plus className="users-teams-icon users-teams-icon-with-margin" />
+            Créer une plateforme
+          </Button>
+        </div>
+      )}
+
+      {/* Create Platform Modal */}
+      {isPlatformModalOpen && (
+        <div className="modal-overlay" onClick={() => {
+          setIsPlatformModalOpen(false);
+          setPlatformError('');
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Créer une nouvelle plateforme</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => {
+                  setIsPlatformModalOpen(false);
+                  setPlatformError('');
+                }}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleCreatePlatform();
+              }}
+              className="modal-form"
+            >
+              <div className="modal-form-field">
+                <Label htmlFor="platform-name">Nom de la plateforme</Label>
+                <Input
+                  id="platform-name"
+                  value={platformForm.name}
+                  onChange={(e) => setPlatformForm({ ...platformForm, name: e.target.value })}
+                  placeholder="Ex: Bnp, Revolut, Paypal..."
+                  required
+                />
+              </div>
+              {platformError && (
+                <div className="bg-red-50 text-red-600 px-4 py-2 text-sm">
+                  {platformError}
+                </div>
+              )}
+              {platformLoading && <LoadingIndicator />}
+              <div className="modal-form-actions">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsPlatformModalOpen(false);
+                    setPlatformError('');
+                  }}
+                  disabled={platformLoading}
+                >
+                  Annuler
+                </Button>
+                <Button type="submit" disabled={platformLoading}>
+                  {platformLoading ? 'Création...' : 'Créer'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Platform Modal */}
+      {isEditPlatformModalOpen && selectedPlatform && (
+        <div className="modal-overlay" onClick={() => {
+          setIsEditPlatformModalOpen(false);
+          setPlatformError('');
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Modifier la plateforme</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => {
+                  setIsEditPlatformModalOpen(false);
+                  setPlatformError('');
+                }}
+              >
+                <X className="planning-icon-md" />
+              </Button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleUpdatePlatform();
+              }}
+              className="modal-form"
+            >
+              <div className="modal-form-field">
+                <Label htmlFor="edit-platform-name">Nom de la plateforme</Label>
+                <Input
+                  id="edit-platform-name"
+                  value={platformForm.name}
+                  onChange={(e) => setPlatformForm({ ...platformForm, name: e.target.value })}
+                  placeholder="Ex: Bnp, Revolut, Paypal..."
+                  required
+                />
+              </div>
+              {platformError && (
+                <div className="bg-red-50 text-red-600 px-4 py-2 text-sm">
+                  {platformError}
+                </div>
+              )}
+              {platformLoading && <LoadingIndicator />}
+              <div className="modal-form-actions">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsEditPlatformModalOpen(false);
+                    setPlatformError('');
+                  }}
+                  disabled={platformLoading}
+                >
+                  Annuler
+                </Button>
+                <Button type="submit" disabled={platformLoading}>
+                  {platformLoading ? 'Mise à jour...' : 'Enregistrer'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Platforms List */}
+      <Card style={{ marginTop: '24px' }}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Server className="w-5 h-5" />
+            Plateformes
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {platformsLoading ? (
+            <LoadingIndicator />
+          ) : platforms.length === 0 ? (
+            <p className="text-slate-500">Aucune plateforme créée</p>
+          ) : (
+            <div className="space-y-2">
+              {platforms
+                .filter((platform) => platform.id && platform.id.trim() !== '')
+                .map((platform) => (
+                  <div
+                    key={platform.id}
+                    className="flex items-center justify-between p-4 border hover:bg-slate-50 bg-white"
+                  >
+                    <div className="flex-1">
+                      <h3 className="font-semibold">{platform.name}</h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditPlatform(platform)}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {canDelete && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeletePlatform(platform.id)}
+                        >
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
           )}
         </CardContent>
       </Card>

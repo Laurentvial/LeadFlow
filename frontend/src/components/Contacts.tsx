@@ -8,14 +8,44 @@ interface ContactsProps {
 }
 
 export function Contacts({ onSelectContact }: ContactsProps) {
-  // Permission checks
-  const canCreate = useHasPermission('contacts', 'create');
-  const canEditGeneral = useHasPermission('contacts', 'edit');
-  const canViewGeneral = useHasPermission('contacts', 'view');
-  const canDelete = useHasPermission('contacts', 'delete');
-  
   // Get all status permissions
   const { currentUser } = useUser();
+  
+  // Check if user has permission to edit informations tab (replaces old contacts edit permission)
+  const canEditInformationsTab = React.useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'edit' && 
+      p.fieldName === 'informations' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
+  // Check if user has permission to view any contact tab (replaces old contacts view permission)
+  const canViewAnyContactTab = React.useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to true if no permissions loaded
+    const hasAnyTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view'
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasAnyTabPermission;
+  }, [currentUser?.permissions]);
+  
+  // Check if user has permission to create contacts (for checkbox column visibility)
+  const canCreate = useHasPermission('contacts', 'create');
+  const canDelete = false;
   
   const statusEditPermissions = React.useMemo(() => {
     if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
@@ -100,28 +130,33 @@ export function Contacts({ onSelectContact }: ContactsProps) {
         normalizedStatusId = str;
       }
     }
-    if (!normalizedStatusId) {
-      return canViewGeneral;
+    // Check if user has view permission on the contact's status
+    if (normalizedStatusId) {
+      const canViewStatus = statusViewPermissions.has(normalizedStatusId);
+      return canViewStatus;
     }
-    if (!canViewGeneral) {
-      return false;
-    }
-    const canViewStatus = statusViewPermissions.has(normalizedStatusId);
-    return canViewStatus;
-  }, [canViewGeneral, statusViewPermissions, isTeleoperatorForContact, isConfirmateurForContact]);
+    // If contact has no status, check if user can view any contact tab
+    return canViewAnyContactTab;
+  }, [canViewAnyContactTab, statusViewPermissions, isTeleoperatorForContact, isConfirmateurForContact]);
   
   const canEditContact = React.useCallback((contact: any, statusIdOverride?: string | null): boolean => {
-    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
-    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
-    if (!normalizedStatusId) {
-      return canEditGeneral;
-    }
-    if (!canEditGeneral) {
+    // First check: user must have permission to edit informations tab
+    if (!canEditInformationsTab) {
       return false;
     }
+    
+    const contactStatusId = statusIdOverride !== undefined ? statusIdOverride : contact?.statusId;
+    const normalizedStatusId = contactStatusId ? String(contactStatusId).trim() : null;
+    
+    // If contact has no status, only need tab permission (already checked above)
+    if (!normalizedStatusId) {
+      return true;
+    }
+    
+    // If contact has a status, user MUST have status-specific edit permission
     const canEditStatus = statusEditPermissions.has(normalizedStatusId);
     return canEditStatus;
-  }, [canEditGeneral, statusEditPermissions]);
+  }, [canEditInformationsTab, statusEditPermissions]);
 
   return (
     <ContactList
@@ -140,8 +175,8 @@ export function Contacts({ onSelectContact }: ContactsProps) {
       statusEditPermissions={statusEditPermissions}
       canCreate={canCreate}
       canDelete={canDelete}
-      canEditGeneral={canEditGeneral}
-      canViewGeneral={canViewGeneral}
+      canEditGeneral={canEditInformationsTab}
+      canViewGeneral={canViewAnyContactTab}
     />
   );
 }

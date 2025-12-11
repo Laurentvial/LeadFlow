@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { User, Users, Edit } from 'lucide-react';
-import { useHasPermission } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 
 interface ContactManagementInfoProps {
   contact: any;
@@ -11,7 +11,24 @@ interface ContactManagementInfoProps {
 }
 
 export function ContactManagementInfo({ contact, onEdit }: ContactManagementInfoProps) {
-  const canEdit = useHasPermission('contacts', 'edit');
+  const { currentUser } = useUser();
+  
+  // Check if user has permission to edit informations tab (replaces old contacts edit permission)
+  const canEdit = useMemo(() => {
+    if (!currentUser?.permissions) return false;
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'edit' && 
+      p.fieldName === 'informations' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
 
   return (
     <Card>

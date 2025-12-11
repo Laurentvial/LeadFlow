@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -6,25 +6,27 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search, BarChart3 } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { useHasPermission } from '../hooks/usePermissions';
 import { AppointmentCard } from './AppointmentCard';
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from './ui/chart';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from 'recharts@2.15.2';
 import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
 import '../styles/PageHeader.css';
 import { toast } from 'sonner';
 
-export function PlanningCalendar() {
+export function PlanningAdministrateur() {
   const { currentUser } = useUser();
   const { users } = useUsers();
   
   // Permission checks
-  const canCreate = useHasPermission('planning', 'create');
-  const canEdit = useHasPermission('planning', 'edit');
-  const canDelete = useHasPermission('planning', 'delete');
+  const canCreate = useHasPermission('planning_administrateur', 'create');
+  const canEdit = useHasPermission('planning_administrateur', 'edit');
+  const canDelete = useHasPermission('planning_administrateur', 'delete');
   
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [pastEvents, setPastEvents] = useState<any[]>([]);
@@ -37,6 +39,9 @@ export function PlanningCalendar() {
   const dayHoursRef = useRef<HTMLDivElement>(null); // Ref for day hours container
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
+  const [graphData, setGraphData] = useState<any[]>([]);
+  const [graphLoading, setGraphLoading] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [upcomingEventsPage, setUpcomingEventsPage] = useState(1);
@@ -49,6 +54,9 @@ export function PlanningCalendar() {
   const [clientSearchFocused, setClientSearchFocused] = useState(false);
   const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
   const [editClientSearchFocused, setEditClientSearchFocused] = useState(false);
+  const [hoveredEvent, setHoveredEvent] = useState<any>(null);
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 });
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [formData, setFormData] = useState({
     date: '',
     hour: '09',
@@ -79,6 +87,15 @@ export function PlanningCalendar() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Auto-scroll to current hour in day view
@@ -168,10 +185,11 @@ export function PlanningCalendar() {
     
     try {
       // Load upcoming events and past events with pagination in parallel
+      // Use all_events=true to bypass permission filtering (admin-only page)
       const [upcomingEventsData, pastEventsData, contactsData] = await Promise.all([
-        apiCall(`/api/events/?future_only=true&page=${upcomingPage}&page_size=100`), // Load upcoming events with pagination (large page size)
-        apiCall(`/api/events/?past_only=true&page=${pastPage}&page_size=10`), // Load past events with pagination
-        (upcomingPage === 1 && pastPage === 1) ? apiCall('/api/contacts/') : Promise.resolve(null) // Only load contacts on first page
+        apiCall(`/api/events/?future_only=true&all_events=true&page=${upcomingPage}&page_size=100`), // Load upcoming events with pagination (large page size)
+        apiCall(`/api/events/?past_only=true&all_events=true&page=${pastPage}&page_size=10`), // Load past events with pagination
+        (upcomingPage === 1 && pastPage === 1) ? apiCall('/api/contacts/?all_contacts=true&page_size=2000') : Promise.resolve(null) // Load contacts on first page (max 2000 for performance), bypass permission filtering
       ]);
       
       const now = new Date();
@@ -242,7 +260,7 @@ export function PlanningCalendar() {
         body: JSON.stringify({
           datetime: `${formData.date}T${timeString}`,
           contactId: formData.clientId,
-          userId: currentUser?.id || null,
+          userId: formData.userId || currentUser?.id || null,
         }),
       });
       
@@ -268,6 +286,20 @@ export function PlanningCalendar() {
     setEditingEvent(event);
     const selectedClientId = event.clientId_read || event.contactId || '';
     const selectedClient = contacts.find(c => c.id === selectedClientId);
+    
+    // Get contact name: prefer from contacts array, then from event's contactName/clientName, then empty
+    let contactName = '';
+    if (selectedClient) {
+      contactName = `${selectedClient.fname} ${selectedClient.lname}`.trim();
+    } else if (event.contactName) {
+      contactName = event.contactName;
+    } else if (event.clientName) {
+      contactName = event.clientName;
+    } else if (selectedClientId) {
+      // Try to get name using getEventClientName helper
+      contactName = getEventClientName(event);
+    }
+    
     setEditFormData({
       date: dateStr,
       hour: hour,
@@ -275,7 +307,7 @@ export function PlanningCalendar() {
       clientId: selectedClientId,
       userId: event.userId || currentUser?.id || ''
     });
-    setEditClientSearchQuery(selectedClient ? `${selectedClient.fname} ${selectedClient.lname}` : '');
+    setEditClientSearchQuery(contactName);
     setIsEditModalOpen(true);
   }
 
@@ -347,15 +379,31 @@ export function PlanningCalendar() {
   // Filter contacts based on search query for create modal
   const filteredContacts = contacts.filter((client) => {
     if (!clientSearchQuery) return false; // Only show results when typing
-    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
-    return fullName.includes(clientSearchQuery.toLowerCase());
+    const query = clientSearchQuery.toLowerCase();
+    const fname = (client.fname || client.firstName || '').toLowerCase();
+    const lname = (client.lname || client.lastName || '').toLowerCase();
+    const fullName = `${fname} ${lname}`.trim();
+    const email = (client.email || '').toLowerCase();
+    // Search in first name, last name, full name, and email
+    return fullName.includes(query) || 
+           fname.includes(query) || 
+           lname.includes(query) || 
+           email.includes(query);
   });
 
   // Filter contacts based on search query for edit modal
   const filteredEditContacts = contacts.filter((client) => {
     if (!editClientSearchQuery) return false; // Only show results when typing
-    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
-    return fullName.includes(editClientSearchQuery.toLowerCase());
+    const query = editClientSearchQuery.toLowerCase();
+    const fname = (client.fname || client.firstName || '').toLowerCase();
+    const lname = (client.lname || client.lastName || '').toLowerCase();
+    const fullName = `${fname} ${lname}`.trim();
+    const email = (client.email || '').toLowerCase();
+    // Search in first name, last name, full name, and email
+    return fullName.includes(query) || 
+           fname.includes(query) || 
+           lname.includes(query) || 
+           email.includes(query);
   });
 
   // Get selected client name
@@ -365,9 +413,12 @@ export function PlanningCalendar() {
     return client ? `${client.fname} ${client.lname}` : 'Sélectionner un contact';
   };
 
-  // Get client name from event (from clientName field or lookup from contacts)
+  // Get client name from event (from contactName/clientName field or lookup from contacts)
   const getEventClientName = (event: any) => {
-    // First try to use clientName if available
+    // First try to use contactName (from backend) or clientName (for backward compatibility)
+    if (event.contactName) {
+      return event.contactName;
+    }
     if (event.clientName) {
       return event.clientName;
     }
@@ -380,6 +431,56 @@ export function PlanningCalendar() {
       }
     }
     return 'Sans nom';
+  };
+
+  // Get user name from userId
+  const getUserName = (userId: string | null | undefined) => {
+    if (!userId) return 'Non assigné';
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      return `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+    }
+    return 'Utilisateur inconnu';
+  };
+
+  // Handle event hover
+  const handleEventMouseEnter = (event: any, e: React.MouseEvent) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredEvent(event);
+      // Adjust position to prevent going off-screen
+      const modalWidth = 400;
+      const modalHeight = 300;
+      let x = e.clientX + 10;
+      let y = e.clientY + 10;
+      
+      // Adjust if would go off right edge
+      if (x + modalWidth > window.innerWidth) {
+        x = e.clientX - modalWidth - 10;
+      }
+      
+      // Adjust if would go off bottom edge
+      if (y + modalHeight > window.innerHeight) {
+        y = e.clientY - modalHeight - 10;
+      }
+      
+      // Ensure it doesn't go off left or top edges
+      x = Math.max(10, x);
+      y = Math.max(10, y);
+      
+      setHoverPosition({ x, y });
+    }, 300); // Small delay before showing
+  };
+
+  const handleEventMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredEvent(null);
+    }, 100); // Small delay before hiding
   };
 
   function getEventsForDay(day: number) {
@@ -488,20 +589,142 @@ export function PlanningCalendar() {
     }
   }
 
+  // Load graph data for current month
+  const loadGraphData = useCallback(async () => {
+    setGraphLoading(true);
+    try {
+      const currentMonth = selectedDate.getMonth();
+      const currentYear = selectedDate.getFullYear();
+      const startDate = new Date(currentYear, currentMonth, 1);
+      const endDate = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59);
+      
+      // Fetch all events for the month
+      const allEvents: any[] = [];
+      let page = 1;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const response = await apiCall(`/api/events/?all_events=true&page=${page}&page_size=100`);
+        const events = response?.events || response || [];
+        const filteredEvents = events.filter((event: any) => {
+          if (!event.datetime) return false;
+          const eventDate = new Date(event.datetime);
+          return eventDate >= startDate && eventDate <= endDate;
+        });
+        allEvents.push(...filteredEvents);
+        
+        hasMore = response?.has_next || false;
+        if (events.length < 100) hasMore = false;
+        page++;
+      }
+      
+      console.log('All events for month:', allEvents.length);
+      if (allEvents.length > 0) {
+        console.log('Sample event (full):', JSON.stringify(allEvents[0], null, 2));
+        console.log('Sample event userId:', allEvents[0].userId);
+        console.log('Sample event assignedTo:', allEvents[0].assignedTo);
+        console.log('Sample event createdBy:', allEvents[0].createdBy);
+      }
+      
+      // Aggregate events by day and user
+      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      const aggregatedData: any[] = [];
+      
+      // Get all unique user IDs
+      const userIds = new Set<string>();
+      const eventsWithoutUserId: any[] = [];
+      allEvents.forEach(event => {
+        if (event.userId) {
+          userIds.add(event.userId);
+        } else {
+          eventsWithoutUserId.push(event);
+        }
+      });
+      
+      console.log('Unique user IDs found:', Array.from(userIds));
+      console.log('Events without userId:', eventsWithoutUserId.length);
+      if (eventsWithoutUserId.length > 0 && eventsWithoutUserId.length < 5) {
+        console.log('Sample events without userId:', eventsWithoutUserId.slice(0, 3));
+      }
+      
+      // Create data structure for each day
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayData: any = {
+          day: day,
+          date: `${day}/${currentMonth + 1}`
+        };
+        
+        // Initialize count for each user
+        userIds.forEach(userId => {
+          const user = users.find(u => u.id === userId);
+          const userName = user 
+            ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `User ${userId}`
+            : `User ${userId}`;
+          dayData[userName] = 0;
+        });
+        
+        // Count events for this day
+        const dayEvents = allEvents.filter(event => {
+          if (!event.datetime) return false;
+          const eventDate = new Date(event.datetime);
+          return eventDate.getDate() === day && eventDate.getMonth() === currentMonth;
+        });
+        
+        dayEvents.forEach(event => {
+          if (event.userId) {
+            const user = users.find(u => u.id === event.userId);
+            const userName = user 
+              ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `User ${event.userId}`
+              : `User ${event.userId}`;
+            if (dayData[userName] !== undefined) {
+              dayData[userName] = (dayData[userName] || 0) + 1;
+            }
+          }
+        });
+        
+        aggregatedData.push(dayData);
+      }
+      
+      console.log('Graph data loaded:', aggregatedData);
+      console.log('Total events:', allEvents.length);
+      setGraphData(aggregatedData);
+    } catch (error) {
+      console.error('Error loading graph data:', error);
+      toast.error('Erreur lors du chargement des données du graphique');
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [selectedDate, users]);
+
+  // Load graph data when modal opens
+  useEffect(() => {
+    if (isGraphModalOpen) {
+      loadGraphData();
+    }
+  }, [isGraphModalOpen, loadGraphData]);
+
   return (
     <div className="planning-container">
       <div className="page-header">
         <div className="page-title-section">
-          <h1 className="page-title">Planning</h1>
-          <p className="page-subtitle">Gestion des rendez-vous</p>
+          <h1 className="page-title">Planning Administrateur</h1>
+          <p className="page-subtitle">Gestion des rendez-vous administrateur</p>
         </div>
         
-        {canCreate && (
-          <Button type="button" onClick={() => setIsModalOpen(true)}>
-            <Plus className="planning-icon planning-icon-with-margin" />
-            Ajouter un rendez-vous
-          </Button>
-        )}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {canCreate && (
+            <>
+              <Button type="button" onClick={() => setIsModalOpen(true)}>
+                <Plus className="planning-icon planning-icon-with-margin" />
+                Ajouter un rendez-vous
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setIsGraphModalOpen(true)}>
+                <BarChart3 className="planning-icon planning-icon-with-margin" />
+                Statistiques
+              </Button>
+            </>
+          )}
+        </div>
         
         {isModalOpen && (
           <div className="modal-overlay" onClick={() => {
@@ -636,6 +859,28 @@ export function PlanningCalendar() {
                   )}
                 </div>
                 
+                <div className="modal-form-field">
+                  <Label>Utilisateur</Label>
+                  <Select
+                    value={formData.userId || ''}
+                    onValueChange={(value) => setFormData({ ...formData, userId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionner un utilisateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={user.id}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
                 <div className="modal-form-actions">
                   <Button type="button" variant="outline" onClick={() => {
                     setIsModalOpen(false);
@@ -651,6 +896,112 @@ export function PlanningCalendar() {
                   )}
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {isGraphModalOpen && (
+          <div className="modal-overlay" onClick={() => setIsGraphModalOpen(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '90vw', width: '1000px' }}>
+              <div className="modal-header">
+                <h2 className="modal-title">
+                  Statistiques des événements - {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                </h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="modal-close"
+                  onClick={() => setIsGraphModalOpen(false)}
+                >
+                  <X className="planning-icon-md" />
+                </Button>
+              </div>
+              <div style={{ padding: '20px', minHeight: '400px' }}>
+                {graphLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+                    <div>Chargement des données...</div>
+                  </div>
+                ) : graphData.length === 0 ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+                    <div>Aucune donnée disponible pour ce mois</div>
+                  </div>
+                ) : (() => {
+                  // Get all user names from the data
+                  const userNames = new Set<string>();
+                  graphData.forEach(day => {
+                    Object.keys(day).forEach(key => {
+                      if (key !== 'day' && key !== 'date') {
+                        userNames.add(key);
+                      }
+                    });
+                  });
+                  
+                  if (userNames.size === 0) {
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+                        <div>Aucun utilisateur avec des événements ce mois</div>
+                      </div>
+                    );
+                  }
+                  
+                  const config: any = {};
+                  const colors = [
+                    '#8884d8',
+                    '#82ca9d',
+                    '#ffc658',
+                    '#ff7300',
+                    '#00ff00',
+                    '#0088fe',
+                    '#00c49f',
+                    '#ffbb28',
+                    '#ff8042',
+                    '#8884d8'
+                  ];
+                  
+                  Array.from(userNames).forEach((userName, index) => {
+                    config[userName] = {
+                      label: userName,
+                      color: colors[index % colors.length]
+                    };
+                  });
+                  
+                  console.log('Rendering chart with data:', graphData.slice(0, 3), '...');
+                  console.log('User names:', Array.from(userNames));
+                  
+                  return (
+                    <div style={{ width: '100%', height: '500px', minHeight: '500px' }}>
+                      <ChartContainer
+                        config={config}
+                        className="w-full"
+                        style={{ height: '500px', minHeight: '500px', aspectRatio: 'auto' }}
+                      >
+                        <BarChart data={graphData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="date" 
+                            angle={-45}
+                            textAnchor="end"
+                            height={100}
+                            interval={Math.max(0, Math.floor(graphData.length / 15))}
+                          />
+                          <YAxis />
+                          <ChartTooltip content={<ChartTooltipContent />} />
+                          <Legend />
+                          {Array.from(userNames).map((userName, index) => (
+                            <Bar 
+                              key={userName}
+                              dataKey={userName} 
+                              fill={colors[index % colors.length]}
+                              name={userName}
+                            />
+                          ))}
+                        </BarChart>
+                      </ChartContainer>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </div>
         )}
@@ -794,6 +1145,28 @@ export function PlanningCalendar() {
                   )}
                 </div>
 
+                <div className="modal-form-field">
+                  <Label>Utilisateur</Label>
+                  <Select
+                    value={editFormData.userId || ''}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, userId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sélectionner un utilisateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={user.id}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="modal-form-actions">
                   <Button
                     type="button"
@@ -821,8 +1194,8 @@ export function PlanningCalendar() {
         )}
       </div>
 
-      {/* Calendar and Events List Side by Side */}
-      <div className="planning-content-grid">
+      {/* Calendar Only */}
+      <div>
         <Card>
           <CardHeader>
             <div className="planning-calendar-header">
@@ -925,13 +1298,25 @@ export function PlanningCalendar() {
                           const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
                           
                           return (
-                            <div key={event.id} className="planning-event-badge">
+                            <div 
+                              key={event.id} 
+                              className="planning-event-badge"
+                              onMouseEnter={(e) => handleEventMouseEnter(event, e)}
+                              onMouseLeave={handleEventMouseLeave}
+                              style={{ cursor: 'pointer' }}
+                            >
                               <div className="planning-event-time">
                                 <Clock className="planning-icon-sm" />
                                 {time}
                               </div>
-                              {event.clientName && (
-                                <div className="planning-event-client">{event.clientName}</div>
+                              {(event.contactName || event.clientName) && (
+                                <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                              )}
+                              {event.userId && (
+                                <div className="planning-event-user" style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>
+                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', marginRight: '2px' }} />
+                                  {getUserName(event.userId)}
+                                </div>
                               )}
                             </div>
                           );
@@ -990,13 +1375,25 @@ export function PlanningCalendar() {
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
                             
                             return (
-                              <div key={event.id} className="planning-event-badge">
+                              <div 
+                                key={event.id} 
+                                className="planning-event-badge"
+                                onMouseEnter={(e) => handleEventMouseEnter(event, e)}
+                                onMouseLeave={handleEventMouseLeave}
+                                style={{ cursor: 'pointer' }}
+                              >
                                 <div className="planning-event-time">
                                   <Clock className="planning-icon-sm" />
                                   {time}
                                 </div>
-                                {event.clientName && (
-                                  <div className="planning-event-client">{event.clientName}</div>
+                                {(event.contactName || event.clientName) && (
+                                  <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                                )}
+                                {event.userId && (
+                                  <div className="planning-event-user" style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>
+                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', marginRight: '2px' }} />
+                                    {getUserName(event.userId)}
+                                  </div>
                                 )}
                               </div>
                             );
@@ -1046,10 +1443,18 @@ export function PlanningCalendar() {
                                 key={event.id}
                                 className={`planning-day-event ${!canEdit ? 'planning-day-event-disabled' : ''}`}
                                 onClick={canEdit ? () => handleEditEvent(event) : undefined}
+                                onMouseEnter={(e) => handleEventMouseEnter(event, e)}
+                                onMouseLeave={handleEventMouseLeave}
                                 style={{ cursor: canEdit ? 'pointer' : 'default' }}
                               >
                                 <div className="planning-day-event-time">{time}</div>
                                 <div className="planning-day-event-client">{getEventClientName(event)}</div>
+                                {event.userId && (
+                                  <div className="planning-day-event-user" style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <User className="w-3 h-3" />
+                                    {getUserName(event.userId)}
+                                  </div>
+                                )}
                                 {event.comment && (
                                   <div className="planning-day-event-comment">{event.comment}</div>
                                 )}
@@ -1065,196 +1470,105 @@ export function PlanningCalendar() {
             )}
           </CardContent>
         </Card>
-
-        {/* Events List */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>
-                Liste des rendez-vous
-                {(selectedDay !== null || view === 'day') && (
-                  <span className="text-sm font-normal text-slate-500 ml-2">
-                    ({view === 'day' ? selectedDate.getDate() : selectedDay}/{selectedDate.getMonth() + 1}/{selectedDate.getFullYear()})
-                  </span>
-                )}
-                {view === 'week' && selectedDay === null && (
-                  <span className="text-sm font-normal text-slate-500 ml-2">
-                    (Semaine)
-                  </span>
-                )}
-              </CardTitle>
-              {(selectedDay !== null || view === 'day') && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setSelectedDay(null);
-                    if (view === 'day') {
-                      setView('month');
-                    }
-                  }}
-                >
-                  Afficher tout
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px' }}>
-                <p style={{ color: '#64748b', fontSize: '14px' }}>
-                  Chargement...
-                </p>
-              </div>
-            ) : (() => {
-              // Filter events by selected day if a day is selected or in day view
-              // Also ensure upcoming events are truly in the future and past events are truly in the past
-              const now = new Date();
-              let filteredUpcomingEvents = upcomingEvents.filter(event => {
-                if (!event.datetime) return false;
-                return new Date(event.datetime) > now;
-              });
-              let filteredPastEvents = pastEvents.filter(event => {
-                if (!event.datetime) return false;
-                return new Date(event.datetime) <= now;
-              });
-              
-              // Filter by day if selected or in day view
-              if (selectedDay !== null || view === 'day') {
-                const dayToFilter = view === 'day' ? selectedDate.getDate() : selectedDay;
-                const dateToFilter = view === 'day' ? selectedDate : new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDay!);
-                const selectedDateStr = `${dateToFilter.getFullYear()}-${String(dateToFilter.getMonth() + 1).padStart(2, '0')}-${String(dayToFilter).padStart(2, '0')}`;
-                filteredUpcomingEvents = filteredUpcomingEvents.filter(event => {
-                  if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate === selectedDateStr;
-                });
-                filteredPastEvents = filteredPastEvents.filter(event => {
-                  if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate === selectedDateStr;
-                });
-              } else if (view === 'week') {
-                // Filter events for the current week
-                const weekDays = getWeekDays();
-                const weekStartStr = weekDays[0].toISOString().split('T')[0];
-                const weekEndStr = weekDays[6].toISOString().split('T')[0];
-                filteredUpcomingEvents = filteredUpcomingEvents.filter(event => {
-                  if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate >= weekStartStr && eventDate <= weekEndStr;
-                });
-                filteredPastEvents = filteredPastEvents.filter(event => {
-                  if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate >= weekStartStr && eventDate <= weekEndStr;
-                });
-              }
-
-              const hasUpcomingEvents = filteredUpcomingEvents.length > 0;
-              const hasPastEvents = filteredPastEvents.length > 0;
-              const hasAnyEvents = hasUpcomingEvents || hasPastEvents;
-
-              return hasAnyEvents ? (
-                <div className="space-y-6">
-                  {/* Upcoming Events Section */}
-                  {hasUpcomingEvents && (
-                    <div>
-                      <h3 className="text-lg font-semibold mb-3 text-slate-700">Prochains evenements</h3>
-                      <div className="space-y-3">
-                        {filteredUpcomingEvents
-                          .sort((a, b) => {
-                            const dateA = new Date(a.datetime).getTime();
-                            const dateB = new Date(b.datetime).getTime();
-                            return dateA - dateB; // Sort ascending (earliest first)
-                          })
-                          .map((event) => {
-                            const contactId = event.clientId_read || event.contactId;
-                            const notes = contactId ? (contactNotes[contactId] || []) : [];
-                            const cardProps: any = {
-                              appointment: event,
-                              variant: 'planning' as const,
-                              showActions: canEdit || canDelete,
-                              notes: notes,
-                            };
-                            if (canEdit) cardProps.onEdit = handleEditEvent;
-                            if (canDelete) cardProps.onDelete = handleDeleteEvent;
-                            return (
-                              <AppointmentCard
-                                key={event.id}
-                                {...cardProps}
-                              />
-                            );
-                          })}
-                      </div>
-                      {(selectedDay === null && view !== 'day') && upcomingEventsHasMore && (
-                        <div className="flex justify-center pt-4">
-                          <Button
-                            onClick={handleLoadMoreUpcoming}
-                            disabled={loadingMoreUpcomingEvents}
-                            variant="outline"
-                            className="w-full"
-                          >
-                            {loadingMoreUpcomingEvents ? 'Chargement...' : 'Charger plus d\'événements'}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Past Events Section */}
-                  {hasPastEvents && (
-                    <div>
-                      <h3 className="text-lg font-semibold mb-3 text-slate-700">Anciens evenements</h3>
-                      <div className="space-y-3">
-                        {filteredPastEvents
-                          .sort((a, b) => {
-                            const dateA = new Date(a.datetime).getTime();
-                            const dateB = new Date(b.datetime).getTime();
-                            return dateB - dateA; // Sort descending (most recent first)
-                          })
-                          .map((event) => {
-                            const contactId = event.clientId_read || event.contactId;
-                            const notes = contactId ? (contactNotes[contactId] || []) : [];
-                            const cardProps: any = {
-                              appointment: event,
-                              variant: 'planning' as const,
-                              showActions: false, // No edit/delete for past events
-                              notes: notes,
-                            };
-                            return (
-                              <AppointmentCard
-                                key={event.id}
-                                {...cardProps}
-                              />
-                            );
-                          })}
-                      </div>
-                      {(selectedDay === null && view !== 'day') && pastEventsHasMore && (
-                        <div className="flex justify-center pt-4">
-                          <Button
-                            onClick={handleLoadMorePast}
-                            disabled={loadingMorePastEvents}
-                            variant="outline"
-                            className="w-full"
-                          >
-                            {loadingMorePastEvents ? 'Chargement...' : 'Charger plus d\'anciens événements'}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="planning-empty-message">
-                  {selectedDay !== null ? 'Aucun rendez-vous pour cette date' : 'Aucun rendez-vous'}
-                </p>
-              );
-            })()}
-          </CardContent>
-        </Card>
       </div>
+
+      {/* Event Hover Modal */}
+      {hoveredEvent && (
+        <div
+          className="modal-overlay"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'transparent',
+            pointerEvents: 'none',
+            zIndex: 9999,
+          }}
+          onMouseEnter={() => setHoveredEvent(hoveredEvent)}
+          onMouseLeave={handleEventMouseLeave}
+        >
+          <div
+            className="modal-content"
+            style={{
+              position: 'fixed',
+              left: `${hoverPosition.x + 10}px`,
+              top: `${hoverPosition.y + 10}px`,
+              maxWidth: '400px',
+              pointerEvents: 'auto',
+              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+              padding: '12px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header" style={{ paddingBottom: '8px', padding: 0 }}>
+              <h3 className="modal-title" style={{ fontSize: '16px', margin: 0 }}>Détails du rendez-vous</h3>
+            </div>
+            <div style={{ padding: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Date et heure</div>
+                  <div style={{ fontSize: '14px', color: '#1e293b' }}>
+                    {new Date(hoveredEvent.datetime).toLocaleDateString('fr-FR', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric'
+                    })}
+                    {' à '}
+                    {new Date(hoveredEvent.datetime).toLocaleTimeString('fr-FR', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Contact</div>
+                  <div style={{ fontSize: '14px', color: '#1e293b' }}>
+                    {getEventClientName(hoveredEvent)}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Utilisateur</div>
+                  <div style={{ fontSize: '14px', color: '#1e293b' }}>
+                    {getUserName(hoveredEvent.userId)}
+                  </div>
+                </div>
+
+                {hoveredEvent.comment && (
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Commentaire</div>
+                    <div style={{ fontSize: '14px', color: '#1e293b', whiteSpace: 'pre-wrap' }}>
+                      {hoveredEvent.comment}
+                    </div>
+                  </div>
+                )}
+
+                {hoveredEvent.created_at && (
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Créé le</div>
+                    <div style={{ fontSize: '14px', color: '#1e293b' }}>
+                      {new Date(hoveredEvent.created_at).toLocaleDateString('fr-FR', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-export default PlanningCalendar;
+export default PlanningAdministrateur;
+

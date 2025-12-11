@@ -128,6 +128,7 @@ class UserDetails(models.Model):
     django_user = models.OneToOneField(DjangoUser, on_delete=models.CASCADE, related_name='user_details')
     role_id = models.ForeignKey('Role', on_delete=models.SET_NULL, null=True, blank=True, related_name='users', db_column='role_id')
     phone = models.BigIntegerField(null=True, blank=True)
+    hrex = models.CharField(max_length=7, default="", blank=True)  # Hex color code (e.g., #FF5733)
     active = models.BooleanField(null=False, default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

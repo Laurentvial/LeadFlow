@@ -740,77 +740,67 @@ class ContactView(generics.ListAPIView):
         # This is set in list() method after applying filters
         if hasattr(self, '_filtered_queryset') and self._filtered_queryset is not None:
             return self._filtered_queryset
-        """
-        Filter contacts based on user's role data_access level:
-        - own_only: 
-            - If user is teleoperateur: Only contacts where user is teleoperator
-            - If user is confirmateur: Only contacts where user is confirmateur
-            - Otherwise: Contacts where user is teleoperator, confirmateur, or creator
-        - team_only: Contacts where user is assigned OR contacts from users in the same team
-        - all: All contacts (no filtering)
-        """
-        queryset = Contact.objects.all()
-        user = self.request.user
         
-        # Get user's role and data_access level
-        try:
-            user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
-            if user_details.role:
-                data_access = user_details.role.data_access
-                
-                if data_access == 'own_only':
-                    # Check if user is teleoperateur or confirmateur
-                    is_teleoperateur = user_details.role.is_teleoperateur
-                    is_confirmateur = user_details.role.is_confirmateur
+        # Check if all_contacts=true parameter is provided (for admin views)
+        all_contacts = self.request.query_params.get('all_contacts', 'false').lower() == 'true'
+        if all_contacts:
+            # Bypass permission filtering and return all contacts
+            queryset = Contact.objects.all()
+        else:
+            """
+            Filter contacts based on user's role data_access level:
+            - own_only: 
+                - If user is teleoperateur: Only contacts where user is teleoperator
+                - If user is confirmateur: Only contacts where user is confirmateur
+                - Otherwise: Contacts where user is teleoperator, confirmateur, or creator
+            - team_only: Contacts where user is assigned OR contacts from users in the same team
+            - all: All contacts (no filtering)
+            """
+            queryset = Contact.objects.all()
+            user = self.request.user
+            
+            # Get user's role and data_access level
+            try:
+                user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
+                if user_details.role:
+                    data_access = user_details.role.data_access
                     
-                    if is_teleoperateur and is_confirmateur:
-                        # User is both: show contacts where user is teleoperator OR confirmateur
+                    if data_access == 'own_only':
+                        # Only show contacts where user is linked as teleoperateur OR confirmateur
+                        # Do not include creator field - only teleoperateur and confirmateur
                         queryset = queryset.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user)
                         )
-                    elif is_teleoperateur:
-                        # Teleoperateur with own_only: only show contacts where user is teleoperator
-                        queryset = queryset.filter(teleoperator=user)
-                    elif is_confirmateur:
-                        # Confirmateur with own_only: only show contacts where user is confirmateur
-                        queryset = queryset.filter(confirmateur=user)
-                    else:
-                        # Default behavior: show contacts where user is teleoperator, confirmateur, or creator
-                        queryset = queryset.filter(
-                            models.Q(teleoperator=user) |
-                            models.Q(confirmateur=user) |
-                            models.Q(creator=user)
-                        )
-                elif data_access == 'team_only':
-                    # Get user's team members
-                    team_member = user_details.team_memberships.select_related('team').first()
-                    if team_member:
-                        team = team_member.team
-                        # Get all users in the same team
-                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
-                        # Show contacts where:
-                        # - User is teleoperator, confirmateur, or creator
-                        # - OR contact's teleoperator/confirmateur/creator is in the same team
-                        queryset = queryset.filter(
-                            models.Q(teleoperator=user) |
-                            models.Q(confirmateur=user) |
-                            models.Q(creator=user) |
-                            models.Q(teleoperator__id__in=team_user_ids) |
-                            models.Q(confirmateur__id__in=team_user_ids) |
-                            models.Q(creator__id__in=team_user_ids)
-                        )
-                    else:
-                        # User has no team, fall back to own_only behavior
-                        queryset = queryset.filter(
-                            models.Q(teleoperator=user) |
-                            models.Q(confirmateur=user) |
-                            models.Q(creator=user)
-                        )
-                # If data_access is 'all', show all contacts (no filtering)
-        except UserDetails.DoesNotExist:
-            # If user has no UserDetails, show no contacts (safety default)
-            queryset = Contact.objects.none()
+                    elif data_access == 'team_only':
+                        # Get user's team members
+                        team_member = user_details.team_memberships.select_related('team').first()
+                        if team_member:
+                            team = team_member.team
+                            # Get all users in the same team
+                            team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                            # Show contacts where:
+                            # - User is teleoperator, confirmateur, or creator
+                            # - OR contact's teleoperator/confirmateur/creator is in the same team
+                            queryset = queryset.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user) |
+                                models.Q(creator=user) |
+                                models.Q(teleoperator__id__in=team_user_ids) |
+                                models.Q(confirmateur__id__in=team_user_ids) |
+                                models.Q(creator__id__in=team_user_ids)
+                            )
+                        else:
+                            # User has no team, fall back to own_only behavior
+                            queryset = queryset.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user) |
+                                models.Q(creator=user)
+                            )
+                    # If data_access is 'all', show all contacts (no filtering)
+            except UserDetails.DoesNotExist:
+                # If user has no UserDetails, show no contacts (safety default)
+                queryset = Contact.objects.none()
         
         # Optimize queries with select_related for ForeignKey relationships
         # This prevents N+1 queries when accessing related objects
@@ -1018,6 +1008,8 @@ class ContactView(generics.ListAPIView):
                 # IMPORTANT: If regular_values exist, we should filter by them
                 if regular_values:
                     if column_id == 'status':
+                        # Filter by current status (status_id field) - NOT previous status from logs
+                        # This ensures we only show contacts with the most recent/latest status
                         q_objects.append(models.Q(status_id__in=regular_values))
                     elif column_id == 'source':
                         print(f"[DEBUG] Filtering by source_id__in={regular_values}")
@@ -1052,38 +1044,58 @@ class ContactView(generics.ListAPIView):
                             models.Q(confirmateur__user_details__team_memberships__team_id__in=regular_values)
                         )
                     elif column_id == 'previousStatus':
-                        # Filter by previous status from logs
-                        # The serializer finds the most recent status change log (ordered by -created_at)
-                        # where old_value.statusName != new_value.statusName
-                        # We'll find contacts that have at least one status change log with matching old_value.statusName
+                        # Filter by IMMEDIATE previous status (the status right before the current one)
+                        # NOT any status in the history - only the most recent previous status
                         from .models import Log
-                        from django.db.models import OuterRef, Exists
                         
-                        # Find contacts that have logs with old_value.statusName matching filter values
-                        # where status actually changed (old != new)
                         matching_contact_ids = set()
                         print(f"[CONTACT DEBUG] previousStatus filter - regular_values: {regular_values}")
-                        for status_name in regular_values:
-                            print(f"[CONTACT DEBUG] previousStatus filter - searching for status_name: '{status_name}'")
-                            # Find logs where status changed and old_value.statusName matches
-                            matching_logs = Log.objects.filter(
-                                contact_id=OuterRef('pk'),
-                                old_value__statusName=status_name,
+                        
+                        # Get all contacts with status change logs
+                        contacts_with_logs = Contact.objects.filter(
+                            contact_logs__old_value__statusName__isnull=False,
+                            contact_logs__new_value__statusName__isnull=False
+                        ).exclude(
+                            contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
+                        ).distinct()
+                        
+                        print(f"[CONTACT DEBUG] Found {contacts_with_logs.count()} contacts with status change logs")
+                        
+                        for contact in contacts_with_logs:
+                            # Get current status name for this contact
+                            current_status_name = contact.status.name if contact.status else ''
+                            
+                            # Get the most recent status change log where new_status matches current status
+                            # This ensures we get the IMMEDIATE previous status (right before current)
+                            most_recent_log = Log.objects.filter(
+                                contact_id=contact,
+                                old_value__statusName__isnull=False,
                                 new_value__statusName__isnull=False
                             ).exclude(
                                 old_value__statusName=models.F('new_value__statusName')
-                            )
+                            ).order_by('-created_at')
                             
-                            # Get contacts that have at least one matching log
-                            # Note: This finds contacts with ANY matching status change, not necessarily the most recent
-                            # For exact matching, we'd need to check the most recent one, but that's very complex
-                            contacts = Contact.objects.filter(
-                                Exists(matching_logs)
-                            ).values_list('id', flat=True)
+                            # Find the log where new_status matches the current status
+                            # IMPORTANT: Match serializer logic exactly - check old_status != new_status and old_status is truthy
+                            matching_log = None
+                            for log in most_recent_log:
+                                if log.old_value and log.new_value:
+                                    old_status = log.old_value.get('statusName', '') if log.old_value else ''
+                                    new_status = log.new_value.get('statusName', '') if log.new_value else ''
+                                    # Match serializer logic: old_status must be truthy, different from new_status, and new_status matches current
+                                    if old_status and old_status != new_status and new_status == current_status_name:
+                                        matching_log = log
+                                        break
                             
-                            contact_list = list(contacts)
-                            print(f"[CONTACT DEBUG] previousStatus filter - found {len(contact_list)} contacts for status_name: '{status_name}'")
-                            matching_contact_ids.update(contact_list)
+                            if matching_log:
+                                previous_status = matching_log.old_value.get('statusName', '') if matching_log.old_value else ''
+                                # Check if the immediate previous status matches any of the filter values
+                                if previous_status in regular_values:
+                                    matching_contact_ids.add(contact.id)
+                                    print(f"[CONTACT DEBUG] Contact {contact.id} - current: '{current_status_name}', previous: '{previous_status}' - MATCH")
+                            elif not current_status_name:
+                                # Contact has no current status - check if empty is selected
+                                pass
                         
                         print(f"[CONTACT DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
                         
@@ -1327,9 +1339,11 @@ class ContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 50000 per page for "all" option)
-            if page_size > 50000:
-                page_size = 50000
+            # Ensure reasonable page size (max 2000 per page to prevent performance issues)
+            # Large page sizes cause slow queries, massive serialization, and ASGI shutdown issues
+            MAX_PAGE_SIZE = 2000
+            if page_size > MAX_PAGE_SIZE:
+                page_size = MAX_PAGE_SIZE
             if page_size < 1:
                 page_size = 100
             
@@ -1339,7 +1353,7 @@ class ContactView(generics.ListAPIView):
             class ContactPagination(PageNumberPagination):
                 page_size = pagination_page_size
                 page_size_query_param = 'page_size'
-                max_page_size = 50000
+                max_page_size = MAX_PAGE_SIZE
             
             # Get base queryset
             queryset = self.get_queryset()
@@ -1354,30 +1368,13 @@ class ContactView(generics.ListAPIView):
             # Use pagination
             self.pagination_class = ContactPagination
             
-            # Debug: Check queryset count before pagination
-            final_count = queryset.count()
-            print(f"[DEBUG] Final queryset count before pagination: {final_count}")
-            
+            # PERFORMANCE FIX: Don't call queryset.count() here - it's slow for large datasets
+            # DRF's pagination already handles counting efficiently, so we rely on that
+            # Only calculate count if needed for debugging (disabled by default)
             try:
                 response = super().list(request, *args, **kwargs)
                 
-                # Debug: Check what pagination returned
-                pagination_count = response.data.get('count', 0)
-                print(f"[DEBUG] Pagination returned count: {pagination_count}")
-                print(f"[DEBUG] Expected count: {final_count}, Actual pagination count: {pagination_count}")
-                
-                # If pagination count doesn't match, use our calculated count
-                if pagination_count != final_count:
-                    print(f"[DEBUG] WARNING: Pagination count mismatch! Using calculated count: {final_count}")
-                    return Response({
-                        'contacts': response.data['results'],
-                        'total': final_count,
-                        'next': response.data.get('next'),
-                        'previous': response.data.get('previous'),
-                        'page': page,
-                        'page_size': page_size
-                    })
-                
+                # Use pagination's count directly - it's already optimized
                 return Response({
                     'contacts': response.data['results'],
                     'total': response.data['count'],
@@ -1395,9 +1392,10 @@ class ContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 50000)
-                if limit > 50000:
-                    limit = 50000
+                # Ensure limit is reasonable (max 2000 to prevent performance issues)
+                MAX_LIMIT = 2000
+                if limit > MAX_LIMIT:
+                    limit = MAX_LIMIT
                 if limit < 1:
                     limit = 1
                 # Get base queryset
@@ -1437,7 +1435,7 @@ class ContactView(generics.ListAPIView):
         class DefaultContactPagination(PageNumberPagination):
             page_size = 50  # Default page size matching frontend default
             page_size_query_param = 'page_size'
-            max_page_size = 50000  # Allow up to 50000 for "all" option
+            max_page_size = 2000  # Max 2000 to prevent performance issues
         
         self.pagination_class = DefaultContactPagination
         queryset = self.get_queryset()
@@ -1545,9 +1543,27 @@ class FosseContactView(generics.ListAPIView):
                     # Handle empty string as None
                     default_order = fosse_setting.default_order if fosse_setting.default_order and fosse_setting.default_order.strip() else None
                     
+                    # Collect query parameter filters first to check which columns have explicit filters
+                    # Query parameters override forced filters for those columns (for preview functionality)
+                    query_param_columns = set()
+                    for key in request.query_params.keys():
+                        if key.startswith('filter_'):
+                            if key.endswith('_from') or key.endswith('_to'):
+                                base_column = key.replace('filter_', '').replace('_from', '').replace('_to', '')
+                                query_param_columns.add(base_column)
+                            else:
+                                column_id = key.replace('filter_', '')
+                                query_param_columns.add(column_id)
+                    
                     # Apply forced filters server-side (both 'defined' and 'open' types)
                     # This ensures forced filters are always applied even if frontend doesn't send them
+                    # BUT: Skip forced filters for columns that have query parameters (query params override forced filters)
                     for column_id, filter_config in forced_filters.items():
+                        # Skip this column if query parameters are present (they override forced filters)
+                        # This allows preview to show contacts with configured filters
+                        if column_id in query_param_columns:
+                            continue
+                            
                         config = filter_config if isinstance(filter_config, dict) else {}
                         config_type = config.get('type')
                         config_values = config.get('values')
@@ -1573,6 +1589,8 @@ class FosseContactView(generics.ListAPIView):
                             # Add regular value filters if any
                             if regular_values:
                                 if column_id == 'status':
+                                    # Filter by current status (status_id field) - NOT previous status from logs
+                                    # This ensures we only show contacts with the most recent/latest status
                                     q_objects.append(models.Q(status_id__in=regular_values))
                                 elif column_id == 'source':
                                     q_objects.append(models.Q(source_id__in=regular_values))
@@ -1587,30 +1605,71 @@ class FosseContactView(generics.ListAPIView):
                                 elif column_id == 'civility':
                                     q_objects.append(models.Q(civility__in=regular_values))
                                 elif column_id == 'previousStatus':
-                                    # Filter by previous status from logs - same logic as regular filter
+                                    # Filter by IMMEDIATE previous status (the status right before the current one)
+                                    # NOT any status in the history - only the most recent previous status
+                                    # Match the same logic as regular filter
                                     from .models import Log
-                                    from django.db.models import OuterRef, Exists
                                     
                                     matching_contact_ids = set()
-                                    for status_name in regular_values:
-                                        matching_logs = Log.objects.filter(
-                                            contact_id=OuterRef('pk'),
-                                            old_value__statusName=status_name,
+                                    print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - regular_values: {regular_values}")
+                                    
+                                    # Get all contacts with status change logs
+                                    contacts_with_logs = Contact.objects.filter(
+                                        contact_logs__old_value__statusName__isnull=False,
+                                        contact_logs__new_value__statusName__isnull=False
+                                    ).exclude(
+                                        contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
+                                    ).distinct()
+                                    
+                                    print(f"[FOSSE FORCED FILTER DEBUG] Found {contacts_with_logs.count()} contacts with status change logs")
+                                    
+                                    for contact in contacts_with_logs:
+                                        # Get current status name for this contact
+                                        current_status_name = contact.status.name if contact.status else ''
+                                        
+                                        # Get the most recent status change log where new_status matches current status
+                                        # This ensures we get the IMMEDIATE previous status (right before current)
+                                        most_recent_log = Log.objects.filter(
+                                            contact_id=contact,
+                                            old_value__statusName__isnull=False,
                                             new_value__statusName__isnull=False
                                         ).exclude(
                                             old_value__statusName=models.F('new_value__statusName')
-                                        )
-                                        # Get contacts that have matching logs - use all contacts, not just current queryset
-                                        # because we need to find contacts by their log history
-                                        contacts = Contact.objects.filter(
-                                            Exists(matching_logs)
-                                        ).values_list('id', flat=True)
-                                        matching_contact_ids.update(contacts)
+                                        ).order_by('-created_at')
+                                        
+                                        # Find the log where new_status matches the current status
+                                        # IMPORTANT: Match serializer logic exactly - check old_status != new_status and old_status is truthy
+                                        matching_log = None
+                                        for log in most_recent_log:
+                                            if log.old_value and log.new_value:
+                                                old_status = log.old_value.get('statusName', '') if log.old_value else ''
+                                                new_status = log.new_value.get('statusName', '') if log.new_value else ''
+                                                # Match serializer logic: old_status must be truthy, different from new_status, and new_status matches current
+                                                if old_status and old_status != new_status and new_status == current_status_name:
+                                                    matching_log = log
+                                                    break
+                                        
+                                        if matching_log:
+                                            previous_status = matching_log.old_value.get('statusName', '') if matching_log.old_value else ''
+                                            # Check if the immediate previous status matches any of the filter values
+                                            if previous_status in regular_values:
+                                                matching_contact_ids.add(contact.id)
+                                                print(f"[FOSSE FORCED FILTER DEBUG] Contact {contact.id} - current: '{current_status_name}', previous: '{previous_status}' - MATCH")
+                                    
+                                    print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
                                     
                                     if matching_contact_ids:
                                         q_objects.append(models.Q(id__in=matching_contact_ids))
-                                    # If no matches found and has_empty is False, we'll exclude all contacts below
-                                    # If has_empty is True, empty_q will be added below, but only if empty was explicitly selected
+                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - Added Q object with {len(matching_contact_ids)} contact IDs")
+                                    elif not has_empty:
+                                        # No matches and no empty option - exclude all (strict filter)
+                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - No matches found and empty not selected, excluding all contacts")
+                                        queryset = queryset.none()
+                                        break
+                                    # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
+                                    # The empty filter (already added below) will be applied, showing only contacts with empty previousStatus
+                                    elif has_empty:
+                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - No matches found but empty selected, will show only empty contacts")
                                 elif column_id == 'previousTeleoperator':
                                     # Filter by previous teleoperator from logs - same logic as regular filter
                                     from .models import Log
@@ -1945,6 +2004,8 @@ class FosseContactView(generics.ListAPIView):
                 # Add regular value filters if any
                 if regular_values:
                     if column_id == 'status':
+                        # Filter by current status (status_id field) - NOT previous status from logs
+                        # This ensures we only show contacts with the most recent/latest status
                         q_objects.append(models.Q(status_id__in=regular_values))
                     elif column_id == 'source':
                         print(f"[FOSSE DEBUG] Applying source filter with values: {regular_values}")
@@ -1974,39 +2035,62 @@ class FosseContactView(generics.ListAPIView):
                         queryset = queryset.none()
                         break
                     elif column_id == 'previousStatus':
-                        # Filter by previous status from logs
-                        # The serializer finds the most recent status change log (ordered by -created_at)
-                        # where old_value.statusName != new_value.statusName
+                        # Filter by IMMEDIATE previous status (the status right before the current one)
+                        # NOT any status in the history - only the most recent previous status
                         # We'll find contacts that have at least one status change log with matching old_value.statusName
                         # This is an approximation - ideally we'd match exactly the most recent one, but that's complex
                         from .models import Log
-                        from django.db.models import OuterRef, Exists
                         
                         # Find contacts that have logs with old_value.statusName matching filter values
                         # where status actually changed (old != new)
                         matching_contact_ids = set()
                         print(f"[FOSSE DEBUG] previousStatus filter - regular_values: {regular_values}")
-                        for status_name in regular_values:
-                            print(f"[FOSSE DEBUG] previousStatus filter - searching for status_name: '{status_name}'")
-                            # Find logs where status changed and old_value.statusName matches
-                            matching_logs = Log.objects.filter(
-                                contact_id=OuterRef('pk'),
-                                old_value__statusName=status_name,
+                        
+                        # Get all contacts with status change logs
+                        contacts_with_logs = Contact.objects.filter(
+                            contact_logs__old_value__statusName__isnull=False,
+                            contact_logs__new_value__statusName__isnull=False
+                        ).exclude(
+                            contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
+                        ).distinct()
+                        
+                        print(f"[FOSSE DEBUG] Found {contacts_with_logs.count()} contacts with status change logs")
+                        
+                        for contact in contacts_with_logs:
+                            # Get current status name for this contact
+                            current_status_name = contact.status.name if contact.status else ''
+                            
+                            # Get the most recent status change log where new_status matches current status
+                            # This ensures we get the IMMEDIATE previous status (right before current)
+                            most_recent_log = Log.objects.filter(
+                                contact_id=contact,
+                                old_value__statusName__isnull=False,
                                 new_value__statusName__isnull=False
                             ).exclude(
                                 old_value__statusName=models.F('new_value__statusName')
-                            )
+                            ).order_by('-created_at')
                             
-                            # Get contacts that have at least one matching log
-                            # Note: This finds contacts with ANY matching status change, not necessarily the most recent
-                            # For exact matching, we'd need to check the most recent one, but that's very complex
-                            contacts = Contact.objects.filter(
-                                Exists(matching_logs)
-                            ).values_list('id', flat=True)
+                            # Find the log where new_status matches the current status
+                            # IMPORTANT: Match serializer logic exactly - check old_status != new_status and old_status is truthy
+                            matching_log = None
+                            for log in most_recent_log:
+                                if log.old_value and log.new_value:
+                                    old_status = log.old_value.get('statusName', '') if log.old_value else ''
+                                    new_status = log.new_value.get('statusName', '') if log.new_value else ''
+                                    # Match serializer logic: old_status must be truthy, different from new_status, and new_status matches current
+                                    if old_status and old_status != new_status and new_status == current_status_name:
+                                        matching_log = log
+                                        break
                             
-                            contact_list = list(contacts)
-                            print(f"[FOSSE DEBUG] previousStatus filter - found {len(contact_list)} contacts for status_name: '{status_name}'")
-                            matching_contact_ids.update(contact_list)
+                            if matching_log:
+                                previous_status = matching_log.old_value.get('statusName', '') if matching_log.old_value else ''
+                                # Check if the immediate previous status matches any of the filter values
+                                if previous_status in regular_values:
+                                    matching_contact_ids.add(contact.id)
+                                    print(f"[FOSSE DEBUG] Contact {contact.id} - current: '{current_status_name}', previous: '{previous_status}' - MATCH")
+                            elif not current_status_name:
+                                # Contact has no current status - check if empty is selected
+                                pass
                         
                         print(f"[FOSSE DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
                         
@@ -2185,9 +2269,10 @@ class FosseContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 50000 per page for "all" option)
-            if page_size > 50000:
-                page_size = 50000
+            # Ensure reasonable page size (max 2000 per page to prevent performance issues)
+            MAX_PAGE_SIZE = 2000
+            if page_size > MAX_PAGE_SIZE:
+                page_size = MAX_PAGE_SIZE
             if page_size < 1:
                 page_size = 100
             
@@ -2197,7 +2282,7 @@ class FosseContactView(generics.ListAPIView):
             class FosseContactPagination(PageNumberPagination):
                 page_size = pagination_page_size
                 page_size_query_param = 'page_size'
-                max_page_size = 50000
+                max_page_size = MAX_PAGE_SIZE
             
             queryset = self.get_queryset()
             queryset = self._apply_filters_fosse(queryset, request)
@@ -2227,9 +2312,10 @@ class FosseContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 50000)
-                if limit > 50000:
-                    limit = 50000
+                # Ensure limit is reasonable (max 2000 to prevent performance issues)
+                MAX_LIMIT = 2000
+                if limit > MAX_LIMIT:
+                    limit = MAX_LIMIT
                 if limit < 1:
                     limit = 1
                 # Get base queryset
@@ -3762,6 +3848,8 @@ def user_update(request, user_id):
                 user_details.phone = None
         else:
             user_details.phone = None
+    if 'hrex' in request.data:
+        user_details.hrex = request.data.get('hrex', '').strip() or ''
     
     # Update team membership using TeamMember table
     if 'teamId' in request.data:
@@ -3816,6 +3904,13 @@ def event_list(request):
     # Allow filtering by contactId if provided as query parameter
     contact_id = request.query_params.get('contactId', None)
     
+    # Allow filtering by future/past events
+    future_only = request.query_params.get('future_only', 'false').lower() == 'true'
+    past_only = request.query_params.get('past_only', 'false').lower() == 'true'
+    
+    # Allow bypassing permission filtering for admin views (all_events=true)
+    all_events = request.query_params.get('all_events', 'false').lower() == 'true'
+    
     # Check if pagination is requested (for contactId filtering)
     requested_page = request.query_params.get('page')
     requested_page_size = request.query_params.get('page_size')
@@ -3868,102 +3963,96 @@ def event_list(request):
             serializer = EventSerializer(events, many=True)
             return Response({'events': serializer.data})
     else:
-        # Filter events based on user's role data_access level
-        # Events are filtered based on the contacts the user can access
-        try:
-            user_details = UserDetails.objects.get(django_user=user)
-            if user_details.role:
-                data_access = user_details.role.data_access
-                
-                if data_access == 'all':
-                    # User has access to all contacts, so show all events (including events without contacts)
-                    events = Event.objects.all().select_related('userId', 'contactId').order_by('datetime')
-                elif data_access == 'team_only':
-                    # Get user's team members
-                    team_member = user_details.team_memberships.first()
-                    if team_member:
-                        team = team_member.team
-                        # Get all users in the same team
-                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
-                        # Get contacts accessible to the user or their team
-                        accessible_contact_ids = Contact.objects.filter(
-                            models.Q(teleoperator=user) |
-                            models.Q(confirmateur=user) |
-                            models.Q(creator=user) |
-                            models.Q(teleoperator__id__in=team_user_ids) |
-                            models.Q(confirmateur__id__in=team_user_ids) |
-                            models.Q(creator__id__in=team_user_ids)
-                        ).values_list('id', flat=True)
-                        # Return events for accessible contacts OR events created by team members (even without contactId)
-                        events = Event.objects.filter(
-                            models.Q(contactId__id__in=accessible_contact_ids) |
-                            models.Q(contactId__isnull=True, userId__id__in=team_user_ids)
-                        ).select_related('userId', 'contactId').order_by('datetime')
-                    else:
-                        # User has no team, fall back to own_only behavior
-                        is_teleoperateur = user_details.role.is_teleoperateur
-                        is_confirmateur = user_details.role.is_confirmateur
-                        
-                        if is_teleoperateur and is_confirmateur:
-                            accessible_contact_ids = Contact.objects.filter(
-                                models.Q(teleoperator=user) |
-                                models.Q(confirmateur=user)
-                            ).values_list('id', flat=True)
-                        elif is_teleoperateur:
-                            accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
-                        elif is_confirmateur:
-                            accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
-                        else:
+        # If all_events=true, bypass permission filtering and return all events (admin view)
+        if all_events:
+            events = Event.objects.all().select_related('userId', 'contactId')
+        else:
+            # Filter events based on user's role data_access level
+            # Events are filtered based on the contacts the user can access
+            try:
+                user_details = UserDetails.objects.get(django_user=user)
+                if user_details.role:
+                    data_access = user_details.role.data_access
+                    
+                    if data_access == 'all':
+                        # User has access to all contacts, so show all events (including events without contacts)
+                        events = Event.objects.all().select_related('userId', 'contactId')
+                    elif data_access == 'team_only':
+                        # Get user's team members
+                        team_member = user_details.team_memberships.first()
+                        if team_member:
+                            team = team_member.team
+                            # Get all users in the same team
+                            team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                            # Get contacts accessible to the user or their team
                             accessible_contact_ids = Contact.objects.filter(
                                 models.Q(teleoperator=user) |
                                 models.Q(confirmateur=user) |
-                                models.Q(creator=user)
+                                models.Q(creator=user) |
+                                models.Q(teleoperator__id__in=team_user_ids) |
+                                models.Q(confirmateur__id__in=team_user_ids) |
+                                models.Q(creator__id__in=team_user_ids)
                             ).values_list('id', flat=True)
-                        # Return events for accessible contacts OR events created by user (even without contactId)
-                        events = Event.objects.filter(
-                            models.Q(contactId__id__in=accessible_contact_ids) |
-                            models.Q(contactId__isnull=True, userId=user)
-                        ).select_related('userId', 'contactId').order_by('datetime')
-                else:  # own_only
-                    # Check if user is teleoperateur or confirmateur
-                    is_teleoperateur = user_details.role.is_teleoperateur
-                    is_confirmateur = user_details.role.is_confirmateur
-                    
-                    if is_teleoperateur and is_confirmateur:
-                        # User is both: show events for contacts where user is teleoperator OR confirmateur
+                            # Return events for accessible contacts OR events created by team members (even without contactId)
+                            events = Event.objects.filter(
+                                models.Q(contactId__id__in=accessible_contact_ids) |
+                                models.Q(contactId__isnull=True, userId__id__in=team_user_ids)
+                            ).select_related('userId', 'contactId')
+                        else:
+                            # User has no team, fall back to own_only behavior
+                            is_teleoperateur = user_details.role.is_teleoperateur
+                            is_confirmateur = user_details.role.is_confirmateur
+                            
+                            if is_teleoperateur and is_confirmateur:
+                                accessible_contact_ids = Contact.objects.filter(
+                                    models.Q(teleoperator=user) |
+                                    models.Q(confirmateur=user)
+                                ).values_list('id', flat=True)
+                            elif is_teleoperateur:
+                                accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
+                            elif is_confirmateur:
+                                accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
+                            else:
+                                accessible_contact_ids = Contact.objects.filter(
+                                    models.Q(teleoperator=user) |
+                                    models.Q(confirmateur=user) |
+                                    models.Q(creator=user)
+                                ).values_list('id', flat=True)
+                            # Return events for accessible contacts OR events created by user (even without contactId)
+                            events = Event.objects.filter(
+                                models.Q(contactId__id__in=accessible_contact_ids) |
+                                models.Q(contactId__isnull=True, userId=user)
+                            ).select_related('userId', 'contactId')
+                    else:  # own_only
+                        # Show events where BOTH conditions are true:
+                        # 1. User is assigned to the event (userId = user)
+                        # 2. AND the contact is assigned to the user (teleoperateur or confirmateur)
                         accessible_contact_ids = Contact.objects.filter(
                             models.Q(teleoperator=user) |
                             models.Q(confirmateur=user)
                         ).values_list('id', flat=True)
-                    elif is_teleoperateur:
-                        # Teleoperateur with own_only: only show events for contacts where user is teleoperator
-                        accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
-                    elif is_confirmateur:
-                        # Confirmateur with own_only: only show events for contacts where user is confirmateur
-                        accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
-                    else:
-                        # Default behavior: show events for contacts where user is teleoperator, confirmateur, or creator
-                        accessible_contact_ids = Contact.objects.filter(
-                            models.Q(teleoperator=user) |
-                            models.Q(confirmateur=user) |
-                            models.Q(creator=user)
-                        ).values_list('id', flat=True)
-                    # Return events for accessible contacts OR events created by user (even without contactId)
-                    events = Event.objects.filter(
-                        models.Q(contactId__id__in=accessible_contact_ids) |
-                        models.Q(contactId__isnull=True, userId=user)
-                    ).select_related('userId', 'contactId').order_by('datetime')
-            else:
-                # User has no role, show no events (safety default)
+                        
+                        events = Event.objects.filter(
+                            userId=user,
+                            contactId__id__in=accessible_contact_ids
+                        ).select_related('userId', 'contactId')
+                else:
+                    # User has no role, show no events (safety default)
+                    events = Event.objects.none()
+            except UserDetails.DoesNotExist:
+                # If user has no UserDetails, show no events (safety default)
                 events = Event.objects.none()
-        except UserDetails.DoesNotExist:
-            # If user has no UserDetails, show no events (safety default)
-            events = Event.objects.none()
+    
+    # Filter by future/past if requested
+    now = timezone.now()
+    if future_only:
+        events = events.filter(datetime__gt=now)
+    elif past_only:
+        events = events.filter(datetime__lte=now)
     
     # Order events: future events first (ascending), then past events (descending)
     # This ensures future events appear at the top when paginated
     # Past events should show most recent first
-    now = timezone.now()
     # Use raw SQL to properly order: future events ASC, past events DESC
     # For past events, we'll use a large timestamp minus the difference to invert order
     from django.db import connection
@@ -4002,21 +4091,30 @@ def event_list(request):
         page_size = int(requested_page_size) if requested_page_size else 10  # Default 10 events per page
         page = int(requested_page) if requested_page else 1
         
-        # Ensure reasonable page size (max 100 per page)
-        if page_size > 100:
-            page_size = 100
+        # Check if user has 'all' data access - allow larger page sizes
+        max_page_size = 100
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role and user_details.role.data_access == 'all':
+                max_page_size = 1000  # Allow up to 1000 events per page for admins
+        except UserDetails.DoesNotExist:
+            pass
+        
+        # Ensure reasonable page size
+        if page_size > max_page_size:
+            page_size = max_page_size
         if page_size < 1:
             page_size = 10
         
         # Create pagination class with proper page_size
-        def create_event_pagination(page_size_val):
+        def create_event_pagination(page_size_val, max_page_size_val):
             class EventPagination(PageNumberPagination):
                 page_size = page_size_val
                 page_size_query_param = 'page_size'
-                max_page_size = 100
+                max_page_size = max_page_size_val
             return EventPagination
         
-        EventPagination = create_event_pagination(page_size)
+        EventPagination = create_event_pagination(page_size, max_page_size)
         paginator = EventPagination()
         paginated_events = paginator.paginate_queryset(events, request)
         

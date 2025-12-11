@@ -244,7 +244,7 @@ function DateInput({ value, onChange, className, label, autoInitialize = true, .
         <PopoverContent 
           className="w-auto p-0" 
           align="start" 
-          style={{ zIndex: 10003 }}
+          style={{ zIndex: 10008 }}
           onClick={(e) => {
             // Only stop propagation for clicks outside the calendar navigation
             const target = e.target as HTMLElement;

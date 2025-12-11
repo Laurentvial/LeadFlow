@@ -67,8 +67,8 @@ def create_permissions_for_new_status(sender, instance, created, **kwargs):
         return  # No matching roles exist, nothing to do
     
     # Create permissions for components that are allowed to have statusId
-    # Only 'statuses' and 'note_categories' components can have status-specific permissions
-    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories']
+    # Only 'statuses', 'note_categories', and 'fosse_statuses' components can have status-specific permissions
+    STATUS_ALLOWED_COMPONENTS = ['statuses', 'note_categories', 'fosse_statuses']
     permissions_for_status = []
     for component in PREDEFINED_COMPONENTS:
         # Only create status-specific permissions for allowed components

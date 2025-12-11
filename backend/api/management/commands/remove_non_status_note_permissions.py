@@ -1,14 +1,14 @@
 """
-Management command to remove permissions where component is not 'statuses' or 'note_categories' 
+Management command to remove permissions where component is not 'statuses', 'note_categories', or 'fosse_statuses' 
 but has statusId set.
-Only 'statuses' and 'note_categories' components should have status-specific permissions.
+Only 'statuses', 'note_categories', and 'fosse_statuses' components should have status-specific permissions.
 """
 from django.core.management.base import BaseCommand
 from api.models import Permission, PermissionRole
 
 
 class Command(BaseCommand):
-    help = 'Remove permissions where component is not statuses/note_categories but has statusId'
+    help = 'Remove permissions where component is not statuses/note_categories/fosse_statuses but has statusId'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -20,24 +20,24 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         dry_run = options['dry_run']
         
-        # Find permissions where component is NOT 'statuses' or 'note_categories' but has statusId
+        # Find permissions where component is NOT 'statuses', 'note_categories', or 'fosse_statuses' but has statusId
         invalid_permissions = Permission.objects.filter(
             status__isnull=False
-        ).exclude(component__in=['statuses', 'note_categories'])
+        ).exclude(component__in=['statuses', 'note_categories', 'fosse_statuses'])
         
         count = invalid_permissions.count()
         
         if count == 0:
             self.stdout.write(
                 self.style.SUCCESS(
-                    'No invalid permissions found. All permissions with statusId are for "statuses" or "note_categories" components.'
+                    'No invalid permissions found. All permissions with statusId are for "statuses", "note_categories", or "fosse_statuses" components.'
                 )
             )
             return
         
         self.stdout.write(
             self.style.WARNING(
-                f'Found {count} permission(s) where component is not "statuses" or "note_categories" but has statusId:'
+                f'Found {count} permission(s) where component is not "statuses", "note_categories", or "fosse_statuses" but has statusId:'
             )
         )
         
@@ -105,7 +105,7 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS(
                     f'Successfully removed {deleted_perms[0]} permission(s) '
-                    'where component is not "statuses" or "note_categories" but has statusId.'
+                    'where component is not "statuses", "note_categories", or "fosse_statuses" but has statusId.'
                 )
             )
 

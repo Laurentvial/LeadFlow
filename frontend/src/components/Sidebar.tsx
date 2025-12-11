@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -78,7 +78,21 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   // Check permissions for all menu items using direct permission check
   const hasDashboardPermission = checkUserPermission('dashboard', 'view');
   const hasPlanningPermission = checkUserPermission('planning', 'view');
-  const hasContactsPermission = checkUserPermission('contacts', 'view');
+  const hasPlanningAdministrateurPermission = checkUserPermission('planning_administrateur', 'view');
+  // Check if user can view any contact tab (replaces old contacts view permission)
+  const hasContactsPermission = React.useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to true if no permissions loaded
+    const hasAnyTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view'
+    );
+    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasAnyTabPermission;
+  }, [currentUser?.permissions]);
   const hasFossePermission = checkUserPermission('fosse', 'view');
   const hasUsersPermission = checkUserPermission('users', 'view');
   const hasPermissionsPermission = checkUserPermission('permissions', 'view');
@@ -129,8 +143,8 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       return false;
     }
     return currentUser.permissions.some((perm: any) => {
-      return perm.component === 'permissions' && 
-             perm.action === 'view' && 
+      return perm.component === 'fosse' && 
+             perm.action === 'create' && 
              !perm.fieldName &&
              !perm.statusId;
     });
@@ -162,6 +176,16 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       permissionAction: 'view' as const,
     },
     { 
+      id: 'planning-administrateur', 
+      label: 'Planning Administrateur', 
+      icon: Calendar, 
+      roles: ['admin', 'teamleader', 'gestionnaire'], 
+      path: '/planning-administrateur',
+      requiresPermission: true,
+      permissionComponent: 'planning_administrateur',
+      permissionAction: 'view' as const,
+    },
+    { 
       id: 'contacts', 
       label: 'Contacts', 
       icon: UserCircle, 
@@ -186,8 +210,8 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
           label: 'Configuration de la fosse',
           path: '/fosse/configuration',
           requiresPermission: true,
-          permissionComponent: 'permissions',
-          permissionAction: 'view' as const,
+          permissionComponent: 'fosse',
+          permissionAction: 'create' as const,
         }
       ] : undefined,
     },
@@ -246,6 +270,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     const component = (item as any).permissionComponent;
     if (component === 'dashboard') return hasDashboardPermission;
     if (component === 'planning') return hasPlanningPermission;
+    if (component === 'planning_administrateur') return hasPlanningAdministrateurPermission;
     if (component === 'contacts') return hasContactsPermission;
     if (component === 'fosse') return hasFossePermission;
     if (component === 'mails') return hasMailsPermission;
