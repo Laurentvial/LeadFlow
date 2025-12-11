@@ -623,20 +623,6 @@ export function ContactList({
   // Ref to track if loadData is currently running to prevent concurrent calls
   const isLoadingDataRef = React.useRef<boolean>(false);
   
-  // Get forced status filter values from Fosse settings (for status modal filtering)
-  const forcedStatusFilterValues = React.useMemo(() => {
-    if (!isFossePage || !fosseSettings) {
-      return null;
-    }
-    const forcedFilters = fosseSettings.forcedFilters || {};
-    const statusFilter = forcedFilters['status'];
-    if (statusFilter && statusFilter.type === 'defined' && statusFilter.values && statusFilter.values.length > 0) {
-      // Normalize status IDs to strings for comparison
-      return new Set(statusFilter.values.map((id: string) => String(id).trim()));
-    }
-    return null;
-  }, [isFossePage, fosseSettings]);
-  
   // Load Fosse settings for current user's role
   useEffect(() => {
     if (isFossePage && currentUser?.role) {
@@ -4060,10 +4046,6 @@ export function ContactList({
                           if (!statusViewPermissions.has(normalizedStatusId)) return false;
                         }
                         
-                        // Apply forced status filter if on Fosse page
-                        if (forcedStatusFilterValues && !forcedStatusFilterValues.has(normalizedStatusId)) {
-                          return false;
-                        }
                         // Filter by status type - only show statuses matching the current filter type
                         // Strict check: must match exactly and be either 'lead' or 'client'
                         if (!status.type || status.type !== statusModalFilterType) {

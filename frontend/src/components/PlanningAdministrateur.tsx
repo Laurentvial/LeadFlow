@@ -6,14 +6,14 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search, BarChart3 } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search, BarChart3, Filter } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { useHasPermission } from '../hooks/usePermissions';
 import { AppointmentCard } from './AppointmentCard';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from './ui/chart';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from 'recharts@2.15.2';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from 'recharts';
 import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
 import '../styles/PageHeader.css';
@@ -30,7 +30,7 @@ export function PlanningAdministrateur() {
   
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [pastEvents, setPastEvents] = useState<any[]>([]);
-  const [contacts, setContacts] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]); // Cache of searched/selected contacts
   const [contactNotes, setContactNotes] = useState<Record<string, any[]>>({});
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -52,11 +52,17 @@ export function PlanningAdministrateur() {
   const [loadingMorePastEvents, setLoadingMorePastEvents] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientSearchFocused, setClientSearchFocused] = useState(false);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [clientSearchResults, setClientSearchResults] = useState<any[]>([]);
   const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
   const [editClientSearchFocused, setEditClientSearchFocused] = useState(false);
+  const [editClientSearchLoading, setEditClientSearchLoading] = useState(false);
+  const [editClientSearchResults, setEditClientSearchResults] = useState<any[]>([]);
   const [hoveredEvent, setHoveredEvent] = useState<any>(null);
   const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 });
-  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formData, setFormData] = useState({
     date: '',
     hour: '09',
@@ -71,6 +77,14 @@ export function PlanningAdministrateur() {
     clientId: '',
     userId: ''
   });
+  
+  // Filter sidebar state
+  const [isFilterSidebarOpen, setIsFilterSidebarOpen] = useState(true);
+  const [filterUserId, setFilterUserId] = useState<string>('');
+  const [filterContactId, setFilterContactId] = useState<string>('');
+  const [filterContactSearchQuery, setFilterContactSearchQuery] = useState('');
+  const [filterContactSearchFocused, setFilterContactSearchFocused] = useState(false);
+  const [filterContactSearchResults, setFilterContactSearchResults] = useState<any[]>([]);
 
   // Initialize userId with current user and today's date when modal opens
   useEffect(() => {
@@ -89,11 +103,19 @@ export function PlanningAdministrateur() {
     loadData();
   }, []);
 
+  // Reload events when selectedDate or view changes to load events for the current period
+  useEffect(() => {
+    loadData();
+  }, [selectedDate, view]);
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (hoverTimeoutRef.current) {
         clearTimeout(hoverTimeoutRef.current);
+      }
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
       }
     };
   }, []);
@@ -155,22 +177,52 @@ export function PlanningAdministrateur() {
     }
   };
 
-  // Load notes for all contacts in events when events change
+  // Load notes and fetch missing contacts for all contacts in events when events change
   useEffect(() => {
     const allEvents = [...upcomingEvents, ...pastEvents];
     const contactIds = new Set<string>();
+    const missingContactIds = new Set<string>();
     
     allEvents.forEach(event => {
       const contactId = event.clientId_read || event.contactId;
-      if (contactId && !contactNotes[contactId] && !notesLoading[contactId]) {
+      if (contactId) {
         contactIds.add(contactId);
+        // Check if contact is missing from cache
+        const contactInCache = contacts.find(c => c.id === contactId);
+        if (!contactInCache && !notesLoading[contactId]) {
+          missingContactIds.add(contactId);
+        }
+        // Load notes if not already loaded
+        if (!contactNotes[contactId] && !notesLoading[contactId]) {
+          loadContactNotes(contactId);
+        }
       }
     });
 
-    // Load notes for all unique contacts
-    contactIds.forEach(contactId => {
-      loadContactNotes(contactId);
-    });
+    // Fetch missing contacts from API
+    const fetchMissingContacts = async () => {
+      for (const contactId of missingContactIds) {
+        try {
+          const contactData = await apiCall(`/api/contacts/${contactId}/`);
+          if (contactData) {
+            setContacts(prev => {
+              const exists = prev.find(c => c.id === contactId);
+              if (!exists) {
+                return [...prev, contactData];
+              }
+              return prev;
+            });
+          }
+        } catch (error) {
+          console.error(`Error fetching contact ${contactId}:`, error);
+          // Continue with other contacts
+        }
+      }
+    };
+
+    if (missingContactIds.size > 0) {
+      fetchMissingContacts();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upcomingEvents, pastEvents]);
 
@@ -184,28 +236,58 @@ export function PlanningAdministrateur() {
     }
     
     try {
-      // Load upcoming events and past events with pagination in parallel
-      // Use all_events=true to bypass permission filtering (admin-only page)
-      const [upcomingEventsData, pastEventsData, contactsData] = await Promise.all([
-        apiCall(`/api/events/?future_only=true&all_events=true&page=${upcomingPage}&page_size=100`), // Load upcoming events with pagination (large page size)
-        apiCall(`/api/events/?past_only=true&all_events=true&page=${pastPage}&page_size=10`), // Load past events with pagination
-        (upcomingPage === 1 && pastPage === 1) ? apiCall('/api/contacts/?all_contacts=true&page_size=2000') : Promise.resolve(null) // Load contacts on first page (max 2000 for performance), bypass permission filtering
-      ]);
+      // Always load all events for the current month (regardless of view)
+      const year = selectedDate.getFullYear();
+      const month = selectedDate.getMonth();
+      const startDate = new Date(year, month, 1);
+      const endDate = new Date(year, month + 1, 0, 23, 59, 59);
       
+      // Load all events for the current period without pagination limits
+      // Use all_events=true to bypass permission filtering (admin-only page)
+      // Load events in the date range for the current view
+      const allEvents: any[] = [];
+      let page = 1;
+      let hasMore = true;
+      
+      // Load all events for the period by paginating through all pages
+      while (hasMore) {
+        const response = await apiCall(`/api/events/?all_events=true&page=${page}&page_size=2000`);
+        const events = response?.events || response || [];
+        
+        // Filter events to the current period
+        const filteredEvents = events.filter((event: any) => {
+          if (!event.datetime) return false;
+          const eventDate = new Date(event.datetime);
+          return eventDate >= startDate && eventDate <= endDate;
+        });
+        
+        allEvents.push(...filteredEvents);
+        
+        hasMore = response?.has_next || false;
+        if (events.length < 2000) hasMore = false;
+        page++;
+        
+        // Safety limit to prevent infinite loops
+        if (page > 100) break;
+      }
+      
+      // Separate into upcoming and past events
       const now = new Date();
-      const upcomingArray = (upcomingEventsData?.events || upcomingEventsData || []).filter((event: any) => {
+      const upcomingArray = allEvents.filter((event: any) => {
         if (!event.datetime) return false;
         return new Date(event.datetime) > now;
       });
-      const pastArray = (pastEventsData?.events || pastEventsData || []).filter((event: any) => {
+      const pastArray = allEvents.filter((event: any) => {
         if (!event.datetime) return false;
         return new Date(event.datetime) <= now;
       });
       
+      console.log('Filtered upcoming events:', upcomingArray.length);
+      console.log('Filtered past events:', pastArray.length);
+      
       if (upcomingPage === 1 && pastPage === 1) {
         setUpcomingEvents(upcomingArray);
         setPastEvents(pastArray);
-        setContacts(contactsData?.contacts || contactsData || []);
       } else {
         // Append events when loading more
         if (appendUpcoming) {
@@ -221,19 +303,156 @@ export function PlanningAdministrateur() {
         }
       }
       
-      // Update pagination state for both upcoming and past events
-      setUpcomingEventsHasMore(upcomingEventsData?.has_next || false);
-      setUpcomingEventsPage(upcomingPage);
-      setPastEventsHasMore(pastEventsData?.has_next || false);
-      setPastEventsPage(pastPage);
-    } catch (error) {
+      // Update pagination state - we're loading all events, so no more pages
+      setUpcomingEventsHasMore(false);
+      setUpcomingEventsPage(1);
+      setPastEventsHasMore(false);
+      setPastEventsPage(1);
+    } catch (error: any) {
       console.error('Error loading planning data:', error);
+      console.error('Error details:', error.message, error.status, error.response);
+      toast.error(`Erreur lors du chargement des événements: ${error.message || 'Erreur inconnue'}`);
     } finally {
       setLoading(false);
       setLoadingMoreUpcomingEvents(false);
       setLoadingMorePastEvents(false);
     }
   }
+
+  // Search contacts on-demand when user types
+  async function searchContacts(query: string, isEdit: boolean = false, isFilter: boolean = false) {
+    if (!query || query.trim().length < 2) {
+      if (isEdit) {
+        setEditClientSearchResults([]);
+      } else if (isFilter) {
+        setFilterContactSearchResults([]);
+      } else {
+        setClientSearchResults([]);
+      }
+      return;
+    }
+
+    if (isEdit) {
+      setEditClientSearchLoading(true);
+    } else if (isFilter) {
+      // No loading state for filter, but we can add one if needed
+    } else {
+      setClientSearchLoading(true);
+    }
+
+    try {
+      const response = await apiCall(`/api/contacts/?all_contacts=true&search=${encodeURIComponent(query.trim())}&page_size=50`);
+      const searchResults = response?.contacts || response || [];
+      
+      if (isEdit) {
+        setEditClientSearchResults(searchResults);
+        // Add to contacts cache
+        setContacts(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newContacts = searchResults.filter((c: any) => !existingIds.has(c.id));
+          return [...prev, ...newContacts];
+        });
+      } else if (isFilter) {
+        setFilterContactSearchResults(searchResults);
+        // Add to contacts cache
+        setContacts(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newContacts = searchResults.filter((c: any) => !existingIds.has(c.id));
+          return [...prev, ...newContacts];
+        });
+      } else {
+        setClientSearchResults(searchResults);
+        // Add to contacts cache
+        setContacts(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newContacts = searchResults.filter((c: any) => !existingIds.has(c.id));
+          return [...prev, ...newContacts];
+        });
+      }
+    } catch (error: any) {
+      console.error('Error searching contacts:', error);
+      toast.error(`Erreur lors de la recherche de contacts: ${error.message || 'Erreur inconnue'}`);
+      if (isEdit) {
+        setEditClientSearchResults([]);
+      } else if (isFilter) {
+        setFilterContactSearchResults([]);
+      } else {
+        setClientSearchResults([]);
+      }
+    } finally {
+      if (isEdit) {
+        setEditClientSearchLoading(false);
+      } else if (!isFilter) {
+        setClientSearchLoading(false);
+      }
+    }
+  }
+
+  // Debounced search function
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterContactSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (clientSearchQuery && clientSearchFocused) {
+      searchTimeoutRef.current = setTimeout(() => {
+        searchContacts(clientSearchQuery, false);
+      }, 300); // Debounce by 300ms
+    } else {
+      setClientSearchResults([]);
+    }
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [clientSearchQuery, clientSearchFocused]);
+
+  useEffect(() => {
+    if (editSearchTimeoutRef.current) {
+      clearTimeout(editSearchTimeoutRef.current);
+    }
+    
+    if (editClientSearchQuery && editClientSearchFocused) {
+      editSearchTimeoutRef.current = setTimeout(() => {
+        searchContacts(editClientSearchQuery, true);
+      }, 300); // Debounce by 300ms
+    } else {
+      setEditClientSearchResults([]);
+    }
+
+    return () => {
+      if (editSearchTimeoutRef.current) {
+        clearTimeout(editSearchTimeoutRef.current);
+      }
+    };
+  }, [editClientSearchQuery, editClientSearchFocused]);
+
+  // Filter contact search debounce
+  useEffect(() => {
+    if (filterContactSearchTimeoutRef.current) {
+      clearTimeout(filterContactSearchTimeoutRef.current);
+    }
+    
+    if (filterContactSearchQuery && filterContactSearchFocused) {
+      filterContactSearchTimeoutRef.current = setTimeout(() => {
+        searchContacts(filterContactSearchQuery, false, true);
+      }, 300);
+    } else {
+      setFilterContactSearchResults([]);
+    }
+
+    return () => {
+      if (filterContactSearchTimeoutRef.current) {
+        clearTimeout(filterContactSearchTimeoutRef.current);
+      }
+    };
+  }, [filterContactSearchQuery, filterContactSearchFocused]);
 
   async function handleLoadMoreUpcoming() {
     const nextPage = upcomingEventsPage + 1;
@@ -276,8 +495,16 @@ export function PlanningAdministrateur() {
     }
   }
 
-  function handleEditEvent(event: any) {
+  async function handleEditEvent(event: any) {
     if (!canEdit) return;
+    
+    // Clear hover modal when clicking to edit
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setHoveredEvent(null);
+    
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
     const hour = eventDate.getHours().toString().padStart(2, '0');
@@ -285,7 +512,7 @@ export function PlanningAdministrateur() {
     
     setEditingEvent(event);
     const selectedClientId = event.clientId_read || event.contactId || '';
-    const selectedClient = contacts.find(c => c.id === selectedClientId);
+    let selectedClient = contacts.find(c => c.id === selectedClientId);
     
     // Get contact name: prefer from contacts array, then from event's contactName/clientName, then empty
     let contactName = '';
@@ -298,14 +525,40 @@ export function PlanningAdministrateur() {
     } else if (selectedClientId) {
       // Try to get name using getEventClientName helper
       contactName = getEventClientName(event);
+      
+      // If contact is not in cache, try to fetch it by ID
+      if (!selectedClient && selectedClientId) {
+        try {
+          const contactData = await apiCall(`/api/contacts/${selectedClientId}/`);
+          if (contactData) {
+            setContacts(prev => {
+              const exists = prev.find(c => c.id === selectedClientId);
+              if (!exists) {
+                return [...prev, contactData];
+              }
+              return prev;
+            });
+            selectedClient = contactData;
+            contactName = `${contactData.fname} ${contactData.lname}`.trim();
+          }
+        } catch (error) {
+          console.error('Error fetching contact for edit:', error);
+          // Continue with existing contactName from event
+        }
+      }
     }
+    
+    // Get the assigned user ID from the event (prioritize userId_read, then userId, then fallback)
+    // Convert to string to ensure it matches Select component value type
+    const assignedUserId = event.userId_read || event.userId;
+    const userIdString = assignedUserId ? String(assignedUserId) : '';
     
     setEditFormData({
       date: dateStr,
       hour: hour,
       minute: minute,
       clientId: selectedClientId,
-      userId: event.userId || currentUser?.id || ''
+      userId: userIdString
     });
     setEditClientSearchQuery(contactName);
     setIsEditModalOpen(true);
@@ -376,35 +629,11 @@ export function PlanningAdministrateur() {
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
   ];
 
-  // Filter contacts based on search query for create modal
-  const filteredContacts = contacts.filter((client) => {
-    if (!clientSearchQuery) return false; // Only show results when typing
-    const query = clientSearchQuery.toLowerCase();
-    const fname = (client.fname || client.firstName || '').toLowerCase();
-    const lname = (client.lname || client.lastName || '').toLowerCase();
-    const fullName = `${fname} ${lname}`.trim();
-    const email = (client.email || '').toLowerCase();
-    // Search in first name, last name, full name, and email
-    return fullName.includes(query) || 
-           fname.includes(query) || 
-           lname.includes(query) || 
-           email.includes(query);
-  });
+  // Use search results for create modal (contacts are loaded on-demand via search)
+  const filteredContacts = clientSearchResults;
 
-  // Filter contacts based on search query for edit modal
-  const filteredEditContacts = contacts.filter((client) => {
-    if (!editClientSearchQuery) return false; // Only show results when typing
-    const query = editClientSearchQuery.toLowerCase();
-    const fname = (client.fname || client.firstName || '').toLowerCase();
-    const lname = (client.lname || client.lastName || '').toLowerCase();
-    const fullName = `${fname} ${lname}`.trim();
-    const email = (client.email || '').toLowerCase();
-    // Search in first name, last name, full name, and email
-    return fullName.includes(query) || 
-           fname.includes(query) || 
-           lname.includes(query) || 
-           email.includes(query);
-  });
+  // Use search results for edit modal (contacts are loaded on-demand via search)
+  const filteredEditContacts = editClientSearchResults;
 
   // Get selected client name
   const getSelectedClientName = (clientId: string) => {
@@ -427,24 +656,111 @@ export function PlanningAdministrateur() {
     if (contactId) {
       const client = contacts.find(c => c.id === contactId);
       if (client) {
-        return `${client.fname || ''} ${client.lname || ''}`.trim() || 'Sans nom';
+        const name = `${client.fname || ''} ${client.lname || ''}`.trim();
+        if (name) {
+          return name;
+        }
       }
+      // If contact not in cache yet, return empty string (will be fetched by useEffect)
+      // This prevents showing "Sans nom" while contact is being loaded
+      return '';
     }
-    return 'Sans nom';
+    return '';
   };
 
   // Get user name from userId
-  const getUserName = (userId: string | null | undefined) => {
+  const getUserName = (userId: string | number | null | undefined) => {
     if (!userId) return 'Non assigné';
-    const user = users.find(u => u.id === userId);
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
     if (user) {
       return `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
     }
+    console.warn('User not found for userId:', userId, 'Available users:', users.map(u => u.id));
     return 'Utilisateur inconnu';
+  };
+
+  // Get user color from userId
+  const getUserColor = (userId: string | number | null | undefined): string => {
+    if (!userId) return '#3b82f6'; // Default blue if no user
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
+    if (user && user.hrex) {
+      return user.hrex;
+    }
+    return '#3b82f6'; // Default blue if user has no color
+  };
+
+  // Get light version of color for background (with opacity)
+  const getLightColor = (color: string): string => {
+    // Convert hex to rgba with opacity
+    let hex = color.replace('#', '');
+    // Handle short hex colors (e.g., #FFF -> #FFFFFF)
+    if (hex.length === 3) {
+      hex = hex.split('').map(char => char + char).join('');
+    }
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.2)`;
+  };
+
+  // Get darker version of color for hover
+  const getDarkerColor = (color: string): string => {
+    // Convert hex to rgba with higher opacity for hover
+    let hex = color.replace('#', '');
+    // Handle short hex colors (e.g., #FFF -> #FFFFFF)
+    if (hex.length === 3) {
+      hex = hex.split('').map(char => char + char).join('');
+    }
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.3)`;
+  };
+
+  // Get user role style based on isTeleoperateur and isConfirmateur
+  const getUserRoleStyle = (userId: string | number | null | undefined): { borderStyle: string; borderWidth: string } => {
+    if (!userId) {
+      return { borderStyle: 'solid', borderWidth: '3px' }; // Default style
+    }
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
+    if (user) {
+      const isTeleoperateur = user.isTeleoperateur === true;
+      const isConfirmateur = user.isConfirmateur === true;
+      
+      // If teleoperateur only (true, false)
+      if (isTeleoperateur && !isConfirmateur) {
+        return { borderStyle: 'dashed', borderWidth: '3px' };
+      }
+      // If confirmateur only (false, true)
+      if (!isTeleoperateur && isConfirmateur) {
+        return { borderStyle: 'double', borderWidth: '4px' };
+      }
+    }
+    // Default style for other cases
+    return { borderStyle: 'solid', borderWidth: '3px' };
+  };
+  
+  // Get userId from event (handles both userId and userId_read fields)
+  const getEventUserId = (event: any): string | null => {
+    if (!event) return null;
+    // Try userId_read first (from serializer), then userId
+    const userId = event.userId_read || event.userId;
+    return userId ? String(userId) : null;
   };
 
   // Handle event hover
   const handleEventMouseEnter = (event: any, e: React.MouseEvent) => {
+    // Don't show hover if a click just happened (within 200ms)
+    if (clickTimeoutRef.current) {
+      return;
+    }
+    
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
     }
@@ -483,25 +799,50 @@ export function PlanningAdministrateur() {
     }, 100); // Small delay before hiding
   };
 
+  // Apply filters to events
+  function applyFilters(events: any[]): any[] {
+    return events.filter(event => {
+      // Filter by user
+      if (filterUserId) {
+        const eventUserId = getEventUserId(event);
+        if (String(eventUserId) !== String(filterUserId)) {
+          return false;
+        }
+      }
+      
+      // Filter by contact
+      if (filterContactId) {
+        const eventContactId = event.clientId_read || event.contactId;
+        if (String(eventContactId) !== String(filterContactId)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }
+
   function getEventsForDay(day: number) {
     const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const allEvents = [...upcomingEvents, ...pastEvents];
-    return allEvents.filter(event => {
+    let filtered = allEvents.filter(event => {
       if (!event.datetime) return false;
       const eventDate = new Date(event.datetime).toISOString().split('T')[0];
       return eventDate === dateStr;
     });
+    return applyFilters(filtered);
   }
 
   // Get events for a specific date
   function getEventsForDate(date: Date) {
     const dateStr = date.toISOString().split('T')[0];
     const allEvents = [...upcomingEvents, ...pastEvents];
-    return allEvents.filter(event => {
+    let filtered = allEvents.filter(event => {
       if (!event.datetime) return false;
       const eventDate = new Date(event.datetime).toISOString().split('T')[0];
       return eventDate === dateStr;
     });
+    return applyFilters(filtered);
   }
 
   // Get events for a specific hour in a day
@@ -585,7 +926,7 @@ export function PlanningAdministrateur() {
         return `${start.getDate()} ${monthNames[start.getMonth()]} - ${end.getDate()} ${monthNames[end.getMonth()]} ${start.getFullYear()}`;
       }
     } else {
-      return `${selectedDate.getDate()} ${monthNames[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`;
+      return `${['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][selectedDate.getDay()]} ${selectedDate.getDate()} ${monthNames[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`;
     }
   }
 
@@ -634,14 +975,17 @@ export function PlanningAdministrateur() {
       const userIds = new Set<string>();
       const eventsWithoutUserId: any[] = [];
       allEvents.forEach(event => {
-        if (event.userId) {
-          userIds.add(event.userId);
+        const eventUserId = getEventUserId(event);
+        if (eventUserId) {
+          userIds.add(eventUserId);
         } else {
           eventsWithoutUserId.push(event);
         }
       });
       
       console.log('Unique user IDs found:', Array.from(userIds));
+      console.log('Users array length:', users.length);
+      console.log('User names mapping:', Array.from(userIds).map(id => ({ id, name: getUserName(id) })));
       console.log('Events without userId:', eventsWithoutUserId.length);
       if (eventsWithoutUserId.length > 0 && eventsWithoutUserId.length < 5) {
         console.log('Sample events without userId:', eventsWithoutUserId.slice(0, 3));
@@ -656,10 +1000,7 @@ export function PlanningAdministrateur() {
         
         // Initialize count for each user
         userIds.forEach(userId => {
-          const user = users.find(u => u.id === userId);
-          const userName = user 
-            ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `User ${userId}`
-            : `User ${userId}`;
+          const userName = getUserName(userId);
           dayData[userName] = 0;
         });
         
@@ -671,13 +1012,13 @@ export function PlanningAdministrateur() {
         });
         
         dayEvents.forEach(event => {
-          if (event.userId) {
-            const user = users.find(u => u.id === event.userId);
-            const userName = user 
-              ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `User ${event.userId}`
-              : `User ${event.userId}`;
+          const eventUserId = getEventUserId(event);
+          if (eventUserId) {
+            const userName = getUserName(eventUserId);
             if (dayData[userName] !== undefined) {
               dayData[userName] = (dayData[userName] || 0) + 1;
+            } else {
+              console.warn('User name not found in dayData:', userName, 'Available keys:', Object.keys(dayData));
             }
           }
         });
@@ -705,7 +1046,142 @@ export function PlanningAdministrateur() {
 
   return (
     <div className="planning-container">
-      <div className="page-header">
+      <div className="planning-with-sidebar">
+        {/* Filter Sidebar */}
+        <div className={`planning-filter-sidebar ${isFilterSidebarOpen ? 'open' : 'collapsed'}`}>
+          <div className="planning-filter-sidebar-header">
+            <div className="planning-filter-sidebar-title">
+              {isFilterSidebarOpen && <span>Filtres</span>}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsFilterSidebarOpen(!isFilterSidebarOpen)}
+              className="planning-filter-toggle"
+            >
+              <Filter className="planning-icon-sm" />
+            </Button>
+          </div>
+          
+          {isFilterSidebarOpen && (
+            <div className="planning-filter-content">
+              <div className="planning-filter-section">
+                <Label>Utilisateur</Label>
+                <Select
+                  value={filterUserId || 'all'}
+                  onValueChange={(value) => setFilterUserId(value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous les utilisateurs" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les utilisateurs</SelectItem>
+                    {users.map((user) => {
+                      const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                      return (
+                        <SelectItem key={user.id} value={String(user.id)}>
+                          {displayName}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="planning-filter-section">
+                <Label>Contact</Label>
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      type="text"
+                      value={filterContactSearchQuery}
+                      onChange={(e) => {
+                        setFilterContactSearchQuery(e.target.value);
+                        setFilterContactSearchFocused(true);
+                      }}
+                      onFocus={() => setFilterContactSearchFocused(true)}
+                      onBlur={() => setTimeout(() => setFilterContactSearchFocused(false), 200)}
+                      className="pl-10"
+                      placeholder="Rechercher un contact"
+                      autoComplete="off"
+                    />
+                  </div>
+                  {filterContactSearchFocused && filterContactSearchQuery && (
+                    <div className="absolute z-[99999] w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                      {filterContactSearchResults.length > 0 ? (
+                        <div className="p-1">
+                          {filterContactSearchResults.map((client) => (
+                            <div
+                              key={client.id}
+                              className="px-3 py-2 cursor-pointer hover:bg-accent rounded-sm text-sm"
+                              onClick={() => {
+                                setFilterContactId(client.id);
+                                setFilterContactSearchQuery(`${client.fname} ${client.lname}`);
+                                setFilterContactSearchFocused(false);
+                                setContacts(prev => {
+                                  const exists = prev.find(c => c.id === client.id);
+                                  if (!exists) {
+                                    return [...prev, client];
+                                  }
+                                  return prev;
+                                });
+                              }}
+                            >
+                              {client.fname} {client.lname}
+                              {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : filterContactSearchQuery.length >= 2 ? (
+                        <div className="p-3 text-sm text-muted-foreground text-center">
+                          Aucun contact trouvé
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+                {filterContactId && (
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      {contacts.find(c => c.id === filterContactId) 
+                        ? `${contacts.find(c => c.id === filterContactId)!.fname} ${contacts.find(c => c.id === filterContactId)!.lname}`
+                        : 'Contact sélectionné'}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setFilterContactId('');
+                        setFilterContactSearchQuery('');
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="planning-filter-section">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setFilterUserId('');
+                    setFilterContactId('');
+                    setFilterContactSearchQuery('');
+                  }}
+                  className="w-full"
+                >
+                  Réinitialiser les filtres
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Main Content */}
+        <div className="planning-main-content">
+          <div className="page-header">
         <div className="page-title-section">
           <h1 className="page-title">Planning Administrateur</h1>
           <p className="page-subtitle">Gestion des rendez-vous administrateur</p>
@@ -714,13 +1190,13 @@ export function PlanningAdministrateur() {
         <div style={{ display: 'flex', gap: '8px' }}>
           {canCreate && (
             <>
-              <Button type="button" onClick={() => setIsModalOpen(true)}>
-                <Plus className="planning-icon planning-icon-with-margin" />
-                Ajouter un rendez-vous
-              </Button>
               <Button type="button" variant="outline" onClick={() => setIsGraphModalOpen(true)}>
                 <BarChart3 className="planning-icon planning-icon-with-margin" />
                 Statistiques
+              </Button>
+              <Button type="button" onClick={() => setIsModalOpen(true)}>
+                <Plus className="planning-icon planning-icon-with-margin" />
+                Ajouter un rendez-vous
               </Button>
             </>
           )}
@@ -809,7 +1285,6 @@ export function PlanningAdministrateur() {
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         type="text"
-                        placeholder="Rechercher un contact..."
                         value={clientSearchQuery}
                         onChange={(e) => {
                           setClientSearchQuery(e.target.value);
@@ -818,6 +1293,7 @@ export function PlanningAdministrateur() {
                         onFocus={() => setClientSearchFocused(true)}
                         onBlur={() => setTimeout(() => setClientSearchFocused(false), 200)}
                         className="pl-10"
+                        autoComplete="off"
                         required
                       />
                     </div>
@@ -833,11 +1309,24 @@ export function PlanningAdministrateur() {
                                   setFormData({ ...formData, clientId: client.id });
                                   setClientSearchQuery(`${client.fname} ${client.lname}`);
                                   setClientSearchFocused(false);
+                                  // Ensure contact is in cache
+                                  setContacts(prev => {
+                                    const exists = prev.find(c => c.id === client.id);
+                                    if (!exists) {
+                                      return [...prev, client];
+                                    }
+                                    return prev;
+                                  });
                                 }}
                               >
                                 {client.fname} {client.lname}
+                                {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
                               </div>
                             ))}
+                          </div>
+                        ) : clientSearchQuery.length >= 2 ? (
+                          <div className="p-3 text-sm text-muted-foreground text-center">
+                            Aucun contact trouvé
                           </div>
                         ) : (
                           <div className="p-3 text-sm text-muted-foreground text-center">
@@ -917,7 +1406,7 @@ export function PlanningAdministrateur() {
                   <X className="planning-icon-md" />
                 </Button>
               </div>
-              <div style={{ padding: '20px', minHeight: '400px' }}>
+              <div style={{ padding: '0px', minHeight: '400px' }}>
                 {graphLoading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
                     <div>Chargement des données...</div>
@@ -946,61 +1435,77 @@ export function PlanningAdministrateur() {
                   }
                   
                   const config: any = {};
-                  const colors = [
-                    '#8884d8',
-                    '#82ca9d',
-                    '#ffc658',
-                    '#ff7300',
-                    '#00ff00',
-                    '#0088fe',
-                    '#00c49f',
-                    '#ffbb28',
-                    '#ff8042',
-                    '#8884d8'
-                  ];
                   
-                  Array.from(userNames).forEach((userName, index) => {
-                    config[userName] = {
-                      label: userName,
-                      color: colors[index % colors.length]
-                    };
+                  // Map user names to their colors from database
+                  const userNameToColorMap = new Map<string, string>();
+                  Array.from(userNames).forEach((userName) => {
+                    // Find the userId for this userName by looking up in users array
+                    const user = users.find(u => {
+                      const userDisplayName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email || `Utilisateur ${u.id}`;
+                      return userDisplayName === userName;
+                    });
+                    
+                    if (user) {
+                      const userColor = getUserColor(user.id);
+                      userNameToColorMap.set(userName, userColor);
+                      config[userName] = {
+                        label: userName,
+                        color: userColor
+                      };
+                    } else {
+                      // Fallback color if user not found
+                      const fallbackColor = '#3b82f6';
+                      userNameToColorMap.set(userName, fallbackColor);
+                      config[userName] = {
+                        label: userName,
+                        color: fallbackColor
+                      };
+                    }
                   });
                   
                   console.log('Rendering chart with data:', graphData.slice(0, 3), '...');
                   console.log('User names:', Array.from(userNames));
+                  console.log('User colors mapping:', Array.from(userNameToColorMap.entries()));
                   
                   return (
                     <div style={{ width: '100%', height: '500px', minHeight: '500px' }}>
                       <ChartContainer
                         config={config}
                         className="w-full"
-                        style={{ height: '500px', minHeight: '500px', aspectRatio: 'auto' }}
+                        style={{ height: '550px', minHeight: '500px', aspectRatio: 'auto' }}
                       >
-                        <BarChart data={graphData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis 
-                            dataKey="date" 
-                            angle={-45}
-                            textAnchor="end"
-                            height={100}
-                            interval={Math.max(0, Math.floor(graphData.length / 15))}
-                          />
-                          <YAxis />
-                          <ChartTooltip content={<ChartTooltipContent />} />
-                          <Legend />
-                          {Array.from(userNames).map((userName, index) => (
-                            <Bar 
+                      <LineChart data={graphData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="date" 
+                          angle={-45}
+                          textAnchor="end"
+                          height={100}
+                          interval={Math.max(0, Math.floor(graphData.length / 15))}
+                        />
+                        <YAxis />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Legend />
+                        {Array.from(userNames).map((userName) => {
+                          const userColor = userNameToColorMap.get(userName) || '#3b82f6';
+                          return (
+                            <Line 
                               key={userName}
+                              type="monotone"
                               dataKey={userName} 
-                              fill={colors[index % colors.length]}
+                              stroke={userColor}
+                              strokeWidth={2}
                               name={userName}
+                              dot={{ r: 4 }}
+                              activeDot={{ r: 6 }}
                             />
-                          ))}
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  );
-                })()}
+                          );
+                        })}
+                      </LineChart>
+                    </ChartContainer>
+                  </div>
+                );
+              })()}
               </div>
             </div>
           </div>
@@ -1095,7 +1600,6 @@ export function PlanningAdministrateur() {
                       <Input
                         id="edit-event-client"
                         type="text"
-                        placeholder="Rechercher un contact..."
                         value={editClientSearchQuery}
                         onChange={(e) => {
                           setEditClientSearchQuery(e.target.value);
@@ -1104,6 +1608,7 @@ export function PlanningAdministrateur() {
                         onFocus={() => setEditClientSearchFocused(true)}
                         onBlur={() => setTimeout(() => setEditClientSearchFocused(false), 200)}
                         className="pl-10"
+                        autoComplete="off"
                         required
                       />
                     </div>
@@ -1119,9 +1624,18 @@ export function PlanningAdministrateur() {
                                   setEditFormData({ ...editFormData, clientId: client.id });
                                   setEditClientSearchQuery(`${client.fname} ${client.lname}`);
                                   setEditClientSearchFocused(false);
+                                  // Ensure contact is in cache
+                                  setContacts(prev => {
+                                    const exists = prev.find(c => c.id === client.id);
+                                    if (!exists) {
+                                      return [...prev, client];
+                                    }
+                                    return prev;
+                                  });
                                 }}
                               >
                                 {client.fname} {client.lname}
+                                {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
                               </div>
                             ))}
                           </div>
@@ -1148,7 +1662,7 @@ export function PlanningAdministrateur() {
                 <div className="modal-form-field">
                   <Label>Utilisateur</Label>
                   <Select
-                    value={editFormData.userId || ''}
+                    value={editFormData.userId ? String(editFormData.userId) : ''}
                     onValueChange={(value) => setEditFormData({ ...editFormData, userId: value })}
                   >
                     <SelectTrigger>
@@ -1158,7 +1672,7 @@ export function PlanningAdministrateur() {
                       {users.map((user) => {
                         const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                         return (
-                          <SelectItem key={user.id} value={user.id}>
+                          <SelectItem key={user.id} value={String(user.id)}>
                             {displayName}
                           </SelectItem>
                         );
@@ -1199,7 +1713,7 @@ export function PlanningAdministrateur() {
         <Card>
           <CardHeader>
             <div className="planning-calendar-header">
-              <CardTitle>
+              <CardTitle className={view === 'day' ? 'planning-day-weekday-number' : ''}>
                 {getViewTitle()}
               </CardTitle>
               <div className="planning-calendar-nav">
@@ -1296,6 +1810,21 @@ export function PlanningAdministrateur() {
                         {dayEvents.slice(0, 3).map((event) => {
                           const eventDate = new Date(event.datetime);
                           const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                          const eventUserId = getEventUserId(event);
+                          const userColor = getUserColor(eventUserId);
+                          const lightColor = getLightColor(userColor);
+                          const roleStyle = getUserRoleStyle(eventUserId);
+                          
+                          // Debug: log event data
+                          if (dayEvents.length > 0 && dayEvents.indexOf(event) === 0) {
+                            console.log('Event data in month view:', {
+                              id: event.id,
+                              assignedTo: event.assignedTo,
+                              createdBy: event.createdBy,
+                              userId: event.userId,
+                              contactName: event.contactName
+                            });
+                          }
                           
                           return (
                             <div 
@@ -1303,7 +1832,13 @@ export function PlanningAdministrateur() {
                               className="planning-event-badge"
                               onMouseEnter={(e) => handleEventMouseEnter(event, e)}
                               onMouseLeave={handleEventMouseLeave}
-                              style={{ cursor: 'pointer' }}
+                              style={{ 
+                                cursor: 'pointer',
+                                backgroundColor: lightColor,
+                                color: userColor,
+                                borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                paddingLeft: '0.5rem'
+                              }}
                             >
                               <div className="planning-event-time">
                                 <Clock className="planning-icon-sm" />
@@ -1312,10 +1847,10 @@ export function PlanningAdministrateur() {
                               {(event.contactName || event.clientName) && (
                                 <div className="planning-event-client">{event.contactName || event.clientName}</div>
                               )}
-                              {event.userId && (
-                                <div className="planning-event-user" style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>
-                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', marginRight: '2px' }} />
-                                  {getUserName(event.userId)}
+                              {eventUserId && (
+                                <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
+                                  <span>{getUserName(eventUserId)}</span>
                                 </div>
                               )}
                             </div>
@@ -1373,6 +1908,10 @@ export function PlanningAdministrateur() {
                           {dayEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const eventUserId = getEventUserId(event);
+                            const userColor = getUserColor(eventUserId);
+                            const lightColor = getLightColor(userColor);
+                            const roleStyle = getUserRoleStyle(eventUserId);
                             
                             return (
                               <div 
@@ -1380,7 +1919,13 @@ export function PlanningAdministrateur() {
                                 className="planning-event-badge"
                                 onMouseEnter={(e) => handleEventMouseEnter(event, e)}
                                 onMouseLeave={handleEventMouseLeave}
-                                style={{ cursor: 'pointer' }}
+                                style={{ 
+                                  cursor: 'pointer',
+                                  backgroundColor: lightColor,
+                                  color: userColor,
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                  paddingLeft: '0.5rem'
+                                }}
                               >
                                 <div className="planning-event-time">
                                   <Clock className="planning-icon-sm" />
@@ -1389,10 +1934,10 @@ export function PlanningAdministrateur() {
                                 {(event.contactName || event.clientName) && (
                                   <div className="planning-event-client">{event.contactName || event.clientName}</div>
                                 )}
-                                {event.userId && (
-                                  <div className="planning-event-user" style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>
-                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', marginRight: '2px' }} />
-                                    {getUserName(event.userId)}
+                                {eventUserId && (
+                                  <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
+                                    <span>{getUserName(eventUserId)}</span>
                                   </div>
                                 )}
                               </div>
@@ -1408,14 +1953,6 @@ export function PlanningAdministrateur() {
 
             {view === 'day' && (
               <div className="planning-day-view">
-                <div className="planning-day-header">
-                  <div className="planning-day-date">
-                    {selectedDate.getDate()} {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
-                  </div>
-                  <div className="planning-day-weekday">
-                    {['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][selectedDate.getDay()]}
-                  </div>
-                </div>
                 <div className="planning-day-hours" ref={dayHoursRef}>
                   {getHours().map((hour) => {
                     const hourEvents = getEventsForHour(selectedDate, hour);
@@ -1437,24 +1974,85 @@ export function PlanningAdministrateur() {
                           {hourEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const eventUserId = getEventUserId(event);
+                            const userColor = getUserColor(eventUserId);
+                            const lightColor = getLightColor(userColor);
+                            const roleStyle = getUserRoleStyle(eventUserId);
+                            
+                            // Debug: log first event in day view
+                            if (hourEvents.length > 0 && hourEvents.indexOf(event) === 0) {
+                              console.log('Day view event:', {
+                                id: event.id,
+                                userId: event.userId,
+                                userId_read: event.userId_read,
+                                eventUserId: eventUserId,
+                                userName: getUserName(eventUserId),
+                                contactName: getEventClientName(event),
+                                usersArrayLength: users.length,
+                                sampleUserIds: users.slice(0, 3).map(u => u.id)
+                              });
+                            }
+                            
+                            const isHovered = hoveredEventId === event.id;
+                            const hoverColor = isHovered ? getDarkerColor(userColor) : lightColor;
                             
                             return (
                               <div
                                 key={event.id}
                                 className={`planning-day-event ${!canEdit ? 'planning-day-event-disabled' : ''}`}
-                                onClick={canEdit ? () => handleEditEvent(event) : undefined}
-                                onMouseEnter={(e) => handleEventMouseEnter(event, e)}
-                                onMouseLeave={handleEventMouseLeave}
-                                style={{ cursor: canEdit ? 'pointer' : 'default' }}
+                                onClick={canEdit ? (e) => {
+                                  // Prevent hover from showing when clicking
+                                  if (hoverTimeoutRef.current) {
+                                    clearTimeout(hoverTimeoutRef.current);
+                                    hoverTimeoutRef.current = null;
+                                  }
+                                  setHoveredEvent(null);
+                                  // Set a flag to prevent hover for a short time after click
+                                  if (clickTimeoutRef.current) {
+                                    clearTimeout(clickTimeoutRef.current);
+                                  }
+                                  clickTimeoutRef.current = setTimeout(() => {
+                                    clickTimeoutRef.current = null;
+                                  }, 200);
+                                  handleEditEvent(event);
+                                } : undefined}
+                                onMouseEnter={(e) => {
+                                  setHoveredEventId(event.id);
+                                  handleEventMouseEnter(event, e);
+                                }}
+                                onMouseLeave={() => {
+                                  setHoveredEventId(null);
+                                  handleEventMouseLeave();
+                                }}
+                                style={{ 
+                                  cursor: canEdit ? 'pointer' : 'default',
+                                  backgroundColor: hoverColor,
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`
+                                }}
                               >
-                                <div className="planning-day-event-time">{time}</div>
-                                <div className="planning-day-event-client">{getEventClientName(event)}</div>
-                                {event.userId && (
-                                  <div className="planning-day-event-user" style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <User className="w-3 h-3" />
-                                    {getUserName(event.userId)}
-                                  </div>
-                                )}
+                                <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
+                                {(() => {
+                                  const contactName = getEventClientName(event);
+                                  const hasContactName = contactName && contactName.trim() !== '';
+                                  
+                                  return (
+                                    <>
+                                      {hasContactName && (
+                                        <div className="planning-day-event-client">{contactName}</div>
+                                      )}
+                                      {eventUserId ? (
+                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
+                                          <User className="w-3 h-3" style={{ flexShrink: 0 }} />
+                                          <span>{getUserName(eventUserId)}</span>
+                                        </div>
+                                      ) : (
+                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', marginTop: hasContactName ? '6px' : '0', fontStyle: 'italic' }}>
+                                          Non assigné
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                                 {event.comment && (
                                   <div className="planning-day-event-comment">{event.comment}</div>
                                 )}
@@ -1535,7 +2133,7 @@ export function PlanningAdministrateur() {
                 <div>
                   <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Utilisateur</div>
                   <div style={{ fontSize: '14px', color: '#1e293b' }}>
-                    {getUserName(hoveredEvent.userId)}
+                    {getUserName(getEventUserId(hoveredEvent))}
                   </div>
                 </div>
 
@@ -1567,6 +2165,8 @@ export function PlanningAdministrateur() {
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

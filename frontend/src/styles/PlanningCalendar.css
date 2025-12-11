@@ -5,6 +5,88 @@
   gap: 1.5rem;
 }
 
+/* Planning with Sidebar Layout */
+.planning-with-sidebar {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+/* Filter Sidebar */
+.planning-filter-sidebar {
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  transition: width 0.3s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.planning-filter-sidebar.open {
+  width: 300px;
+}
+
+.planning-filter-sidebar.collapsed {
+  width: 32px;
+}
+
+.planning-filter-sidebar.collapsed .planning-filter-sidebar-header {
+  padding: 0.25rem;
+  justify-content: center;
+}
+
+.planning-filter-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+}
+
+.planning-filter-sidebar-title {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.planning-filter-toggle {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.planning-filter-content {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.planning-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.planning-filter-section label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #475569;
+}
+
+/* Main Content Area */
+.planning-main-content {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Content Grid - Calendar and Events List Side by Side */
 .planning-content-grid {
   display: grid;
@@ -15,6 +97,14 @@
 @media (max-width: 1024px) {
   .planning-content-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .planning-with-sidebar {
+    flex-direction: column;
+  }
+  
+  .planning-filter-sidebar.open {
+    width: 100%;
   }
 }
 
@@ -109,10 +199,10 @@
 
 /* Event Badge */
 .planning-event-badge {
-  background-color: #dbeafe;
-  color: #1e40af;
+  /* Background and text colors are now set inline based on user color */
   font-size: 0.75rem;
   padding: 0.25rem;
+  border-radius: 4px;
 }
 
 .planning-event-time {
@@ -277,7 +367,7 @@
 }
 
 .planning-day-header {
-  text-align: center;
+  text-align: left;
   padding: 1rem;
   border-bottom: 2px solid #e2e8f0;
   margin-bottom: 1rem;
@@ -295,10 +385,16 @@
   margin-top: 0.25rem;
 }
 
+.planning-day-weekday-number {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
 .planning-day-hours {
   display: flex;
   flex-direction: column;
-  max-height: 600px;
+  max-height: 800px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -309,7 +405,7 @@
   gap: 1rem;
   padding: 0.75rem;
   border-bottom: 1px solid #f1f5f9;
-  min-height: 80px;
+  min-height: 140px;
   min-width: fit-content;
 }
 
@@ -338,11 +434,11 @@
   overflow-y: hidden;
   flex: 1;
   min-width: 0;
+  min-height: 80px;
 }
 
 .planning-day-event {
-  background-color: #dbeafe;
-  border-left: 3px solid #3b82f6;
+  /* Background and border colors are now set inline based on user color */
   padding: 0.5rem;
   border-radius: 4px;
   transition: background-color 0.2s;
@@ -352,7 +448,8 @@
 }
 
 .planning-day-event:hover {
-  background-color: #bfdbfe;
+  /* Hover effect is handled inline with user color */
+  opacity: 0.9;
 }
 
 .planning-day-event-disabled {
@@ -376,6 +473,16 @@
   font-size: 0.875rem;
   color: #1e293b;
   font-weight: 500;
+}
+
+.planning-day-event-user {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.375rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 400;
 }
 
 .planning-day-event-comment {

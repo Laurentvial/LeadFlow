@@ -28,7 +28,7 @@ export function PlanningCalendar() {
   
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
   const [pastEvents, setPastEvents] = useState<any[]>([]);
-  const [contacts, setContacts] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]); // Cache of searched/selected contacts
   const [contactNotes, setContactNotes] = useState<Record<string, any[]>>({});
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -47,8 +47,12 @@ export function PlanningCalendar() {
   const [loadingMorePastEvents, setLoadingMorePastEvents] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientSearchFocused, setClientSearchFocused] = useState(false);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [clientSearchResults, setClientSearchResults] = useState<any[]>([]);
   const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
   const [editClientSearchFocused, setEditClientSearchFocused] = useState(false);
+  const [editClientSearchLoading, setEditClientSearchLoading] = useState(false);
+  const [editClientSearchResults, setEditClientSearchResults] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     date: '',
     hour: '09',
@@ -138,22 +142,52 @@ export function PlanningCalendar() {
     }
   };
 
-  // Load notes for all contacts in events when events change
+  // Load notes and fetch missing contacts for all contacts in events when events change
   useEffect(() => {
     const allEvents = [...upcomingEvents, ...pastEvents];
     const contactIds = new Set<string>();
+    const missingContactIds = new Set<string>();
     
     allEvents.forEach(event => {
       const contactId = event.clientId_read || event.contactId;
-      if (contactId && !contactNotes[contactId] && !notesLoading[contactId]) {
+      if (contactId) {
         contactIds.add(contactId);
+        // Check if contact is missing from cache
+        const contactInCache = contacts.find(c => c.id === contactId);
+        if (!contactInCache && !notesLoading[contactId]) {
+          missingContactIds.add(contactId);
+        }
+        // Load notes if not already loaded
+        if (!contactNotes[contactId] && !notesLoading[contactId]) {
+          loadContactNotes(contactId);
+        }
       }
     });
 
-    // Load notes for all unique contacts
-    contactIds.forEach(contactId => {
-      loadContactNotes(contactId);
-    });
+    // Fetch missing contacts from API
+    const fetchMissingContacts = async () => {
+      for (const contactId of missingContactIds) {
+        try {
+          const contactData = await apiCall(`/api/contacts/${contactId}/`);
+          if (contactData) {
+            setContacts(prev => {
+              const exists = prev.find(c => c.id === contactId);
+              if (!exists) {
+                return [...prev, contactData];
+              }
+              return prev;
+            });
+          }
+        } catch (error) {
+          console.error(`Error fetching contact ${contactId}:`, error);
+          // Continue with other contacts
+        }
+      }
+    };
+
+    if (missingContactIds.size > 0) {
+      fetchMissingContacts();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upcomingEvents, pastEvents]);
 
@@ -168,18 +202,26 @@ export function PlanningCalendar() {
     
     try {
       // Load upcoming events and past events with pagination in parallel
-      const [upcomingEventsData, pastEventsData, contactsData] = await Promise.all([
+      // NOTE: Contacts are no longer loaded here - they are loaded on-demand when searching
+      const [upcomingEventsData, pastEventsData] = await Promise.all([
         apiCall(`/api/events/?future_only=true&page=${upcomingPage}&page_size=100`), // Load upcoming events with pagination (large page size)
         apiCall(`/api/events/?past_only=true&page=${pastPage}&page_size=10`), // Load past events with pagination
-        (upcomingPage === 1 && pastPage === 1) ? apiCall('/api/contacts/') : Promise.resolve(null) // Only load contacts on first page
       ]);
       
+      // Extract events from response - handle both paginated and non-paginated formats
+      const upcomingEvents = Array.isArray(upcomingEventsData) 
+        ? upcomingEventsData 
+        : (upcomingEventsData?.events || []);
+      const pastEvents = Array.isArray(pastEventsData) 
+        ? pastEventsData 
+        : (pastEventsData?.events || []);
+      
       const now = new Date();
-      const upcomingArray = (upcomingEventsData?.events || upcomingEventsData || []).filter((event: any) => {
+      const upcomingArray = upcomingEvents.filter((event: any) => {
         if (!event.datetime) return false;
         return new Date(event.datetime) > now;
       });
-      const pastArray = (pastEventsData?.events || pastEventsData || []).filter((event: any) => {
+      const pastArray = pastEvents.filter((event: any) => {
         if (!event.datetime) return false;
         return new Date(event.datetime) <= now;
       });
@@ -187,7 +229,6 @@ export function PlanningCalendar() {
       if (upcomingPage === 1 && pastPage === 1) {
         setUpcomingEvents(upcomingArray);
         setPastEvents(pastArray);
-        setContacts(contactsData?.contacts || contactsData || []);
       } else {
         // Append events when loading more
         if (appendUpcoming) {
@@ -208,14 +249,115 @@ export function PlanningCalendar() {
       setUpcomingEventsPage(upcomingPage);
       setPastEventsHasMore(pastEventsData?.has_next || false);
       setPastEventsPage(pastPage);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading planning data:', error);
+      console.error('Error details:', error.message, error.status, error.response);
+      toast.error(`Erreur lors du chargement des événements: ${error.message || 'Erreur inconnue'}`);
     } finally {
       setLoading(false);
       setLoadingMoreUpcomingEvents(false);
       setLoadingMorePastEvents(false);
     }
   }
+
+  // Search contacts on-demand when user types
+  async function searchContacts(query: string, isEdit: boolean = false) {
+    if (!query || query.trim().length < 2) {
+      if (isEdit) {
+        setEditClientSearchResults([]);
+      } else {
+        setClientSearchResults([]);
+      }
+      return;
+    }
+
+    if (isEdit) {
+      setEditClientSearchLoading(true);
+    } else {
+      setClientSearchLoading(true);
+    }
+
+    try {
+      const response = await apiCall(`/api/contacts/?search=${encodeURIComponent(query.trim())}&page_size=50`);
+      const searchResults = response?.contacts || response || [];
+      
+      if (isEdit) {
+        setEditClientSearchResults(searchResults);
+        // Add to contacts cache
+        setContacts(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newContacts = searchResults.filter((c: any) => !existingIds.has(c.id));
+          return [...prev, ...newContacts];
+        });
+      } else {
+        setClientSearchResults(searchResults);
+        // Add to contacts cache
+        setContacts(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newContacts = searchResults.filter((c: any) => !existingIds.has(c.id));
+          return [...prev, ...newContacts];
+        });
+      }
+    } catch (error: any) {
+      console.error('Error searching contacts:', error);
+      toast.error(`Erreur lors de la recherche de contacts: ${error.message || 'Erreur inconnue'}`);
+      if (isEdit) {
+        setEditClientSearchResults([]);
+      } else {
+        setClientSearchResults([]);
+      }
+    } finally {
+      if (isEdit) {
+        setEditClientSearchLoading(false);
+      } else {
+        setClientSearchLoading(false);
+      }
+    }
+  }
+
+  // Debounced search function
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (clientSearchQuery && clientSearchFocused) {
+      searchTimeoutRef.current = setTimeout(() => {
+        searchContacts(clientSearchQuery, false);
+      }, 300); // Debounce by 300ms
+    } else {
+      setClientSearchResults([]);
+    }
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [clientSearchQuery, clientSearchFocused]);
+
+  useEffect(() => {
+    if (editSearchTimeoutRef.current) {
+      clearTimeout(editSearchTimeoutRef.current);
+    }
+    
+    if (editClientSearchQuery && editClientSearchFocused) {
+      editSearchTimeoutRef.current = setTimeout(() => {
+        searchContacts(editClientSearchQuery, true);
+      }, 300); // Debounce by 300ms
+    } else {
+      setEditClientSearchResults([]);
+    }
+
+    return () => {
+      if (editSearchTimeoutRef.current) {
+        clearTimeout(editSearchTimeoutRef.current);
+      }
+    };
+  }, [editClientSearchQuery, editClientSearchFocused]);
 
   async function handleLoadMoreUpcoming() {
     const nextPage = upcomingEventsPage + 1;
@@ -258,7 +400,7 @@ export function PlanningCalendar() {
     }
   }
 
-  function handleEditEvent(event: any) {
+  async function handleEditEvent(event: any) {
     if (!canEdit) return;
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
@@ -267,15 +409,55 @@ export function PlanningCalendar() {
     
     setEditingEvent(event);
     const selectedClientId = event.clientId_read || event.contactId || '';
-    const selectedClient = contacts.find(c => c.id === selectedClientId);
+    let selectedClient = contacts.find(c => c.id === selectedClientId);
+    
+    // Get contact name: prefer from contacts array, then from event's contactName/clientName, then empty
+    let contactName = '';
+    if (selectedClient) {
+      contactName = `${selectedClient.fname} ${selectedClient.lname}`.trim();
+    } else if (event.contactName) {
+      contactName = event.contactName;
+    } else if (event.clientName) {
+      contactName = event.clientName;
+    } else if (selectedClientId) {
+      // Try to get name using getEventClientName helper
+      contactName = getEventClientName(event);
+      
+      // If contact is not in cache, try to fetch it by ID
+      if (!selectedClient && selectedClientId) {
+        try {
+          const contactData = await apiCall(`/api/contacts/${selectedClientId}/`);
+          if (contactData) {
+            setContacts(prev => {
+              const exists = prev.find(c => c.id === selectedClientId);
+              if (!exists) {
+                return [...prev, contactData];
+              }
+              return prev;
+            });
+            selectedClient = contactData;
+            contactName = `${contactData.fname} ${contactData.lname}`.trim();
+          }
+        } catch (error) {
+          console.error('Error fetching contact for edit:', error);
+          // Continue with existing contactName from event
+        }
+      }
+    }
+    
+    // Get the assigned user ID from the event (prioritize userId_read, then userId, then fallback)
+    // Convert to string to ensure it matches Select component value type
+    const assignedUserId = event.userId_read || event.userId;
+    const userIdString = assignedUserId ? String(assignedUserId) : '';
+    
     setEditFormData({
       date: dateStr,
       hour: hour,
       minute: minute,
       clientId: selectedClientId,
-      userId: event.userId || currentUser?.id || ''
+      userId: userIdString
     });
-    setEditClientSearchQuery(selectedClient ? `${selectedClient.fname} ${selectedClient.lname}` : '');
+    setEditClientSearchQuery(contactName);
     setIsEditModalOpen(true);
   }
 
@@ -344,19 +526,11 @@ export function PlanningCalendar() {
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
   ];
 
-  // Filter contacts based on search query for create modal
-  const filteredContacts = contacts.filter((client) => {
-    if (!clientSearchQuery) return false; // Only show results when typing
-    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
-    return fullName.includes(clientSearchQuery.toLowerCase());
-  });
+  // Use search results for create modal (contacts are loaded on-demand via search)
+  const filteredContacts = clientSearchResults;
 
-  // Filter contacts based on search query for edit modal
-  const filteredEditContacts = contacts.filter((client) => {
-    if (!editClientSearchQuery) return false; // Only show results when typing
-    const fullName = `${client.fname || ''} ${client.lname || ''}`.toLowerCase();
-    return fullName.includes(editClientSearchQuery.toLowerCase());
-  });
+  // Use search results for edit modal (contacts are loaded on-demand via search)
+  const filteredEditContacts = editClientSearchResults;
 
   // Get selected client name
   const getSelectedClientName = (clientId: string) => {
@@ -365,9 +539,12 @@ export function PlanningCalendar() {
     return client ? `${client.fname} ${client.lname}` : 'Sélectionner un contact';
   };
 
-  // Get client name from event (from clientName field or lookup from contacts)
+  // Get client name from event (from contactName/clientName field or lookup from contacts)
   const getEventClientName = (event: any) => {
-    // First try to use clientName if available
+    // First try to use contactName (from backend) or clientName (for backward compatibility)
+    if (event.contactName) {
+      return event.contactName;
+    }
     if (event.clientName) {
       return event.clientName;
     }
@@ -376,10 +553,16 @@ export function PlanningCalendar() {
     if (contactId) {
       const client = contacts.find(c => c.id === contactId);
       if (client) {
-        return `${client.fname || ''} ${client.lname || ''}`.trim() || 'Sans nom';
+        const name = `${client.fname || ''} ${client.lname || ''}`.trim();
+        if (name) {
+          return name;
+        }
       }
+      // If contact not in cache yet, return empty string (will be fetched by useEffect)
+      // This prevents showing "Sans nom" while contact is being loaded
+      return '';
     }
-    return 'Sans nom';
+    return '';
   };
 
   function getEventsForDay(day: number) {
@@ -586,7 +769,6 @@ export function PlanningCalendar() {
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         type="text"
-                        placeholder="Rechercher un contact..."
                         value={clientSearchQuery}
                         onChange={(e) => {
                           setClientSearchQuery(e.target.value);
@@ -595,6 +777,7 @@ export function PlanningCalendar() {
                         onFocus={() => setClientSearchFocused(true)}
                         onBlur={() => setTimeout(() => setClientSearchFocused(false), 200)}
                         className="pl-10"
+                        autoComplete="off"
                         required
                       />
                     </div>
@@ -610,9 +793,18 @@ export function PlanningCalendar() {
                                   setFormData({ ...formData, clientId: client.id });
                                   setClientSearchQuery(`${client.fname} ${client.lname}`);
                                   setClientSearchFocused(false);
+                                  // Ensure contact is in cache
+                                  setContacts(prev => {
+                                    const exists = prev.find(c => c.id === client.id);
+                                    if (!exists) {
+                                      return [...prev, client];
+                                    }
+                                    return prev;
+                                  });
                                 }}
                               >
                                 {client.fname} {client.lname}
+                                {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
                               </div>
                             ))}
                           </div>
@@ -768,9 +960,18 @@ export function PlanningCalendar() {
                                   setEditFormData({ ...editFormData, clientId: client.id });
                                   setEditClientSearchQuery(`${client.fname} ${client.lname}`);
                                   setEditClientSearchFocused(false);
+                                  // Ensure contact is in cache
+                                  setContacts(prev => {
+                                    const exists = prev.find(c => c.id === client.id);
+                                    if (!exists) {
+                                      return [...prev, client];
+                                    }
+                                    return prev;
+                                  });
                                 }}
                               >
                                 {client.fname} {client.lname}
+                                {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
                               </div>
                             ))}
                           </div>
