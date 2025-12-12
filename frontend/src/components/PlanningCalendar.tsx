@@ -565,6 +565,92 @@ export function PlanningCalendar() {
     return '';
   };
 
+  // Get user name from userId
+  const getUserName = (userId: string | number | null | undefined) => {
+    if (!userId) return 'Non assigné';
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
+    if (user) {
+      return `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+    }
+    console.warn('User not found for userId:', userId, 'Available users:', users.map(u => u.id));
+    return 'Utilisateur inconnu';
+  };
+
+  // Get user color from userId
+  const getUserColor = (userId: string | number | null | undefined): string => {
+    if (!userId) return '#3b82f6'; // Default blue if no user
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
+    if (user && user.hrex) {
+      return user.hrex;
+    }
+    return '#3b82f6'; // Default blue if user has no color
+  };
+
+  // Get light version of color for background (with opacity)
+  const getLightColor = (color: string): string => {
+    // Convert hex to rgba with opacity
+    let hex = color.replace('#', '');
+    // Handle short hex colors (e.g., #FFF -> #FFFFFF)
+    if (hex.length === 3) {
+      hex = hex.split('').map(char => char + char).join('');
+    }
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.2)`;
+  };
+
+  // Get darker version of color for hover
+  const getDarkerColor = (color: string): string => {
+    // Convert hex to rgba with higher opacity for hover
+    let hex = color.replace('#', '');
+    // Handle short hex colors (e.g., #FFF -> #FFFFFF)
+    if (hex.length === 3) {
+      hex = hex.split('').map(char => char + char).join('');
+    }
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.3)`;
+  };
+
+  // Get user role style based on isTeleoperateur and isConfirmateur
+  const getUserRoleStyle = (userId: string | number | null | undefined): { borderStyle: string; borderWidth: string } => {
+    if (!userId) {
+      return { borderStyle: 'solid', borderWidth: '3px' }; // Default style
+    }
+    // Convert to string for comparison (user IDs might be strings or numbers)
+    const userIdStr = String(userId);
+    const user = users.find(u => String(u.id) === userIdStr);
+    if (user) {
+      const isTeleoperateur = user.isTeleoperateur === true;
+      const isConfirmateur = user.isConfirmateur === true;
+      
+      // If teleoperateur only (true, false)
+      if (isTeleoperateur && !isConfirmateur) {
+        return { borderStyle: 'dashed', borderWidth: '3px' };
+      }
+      // If confirmateur only (false, true)
+      if (!isTeleoperateur && isConfirmateur) {
+        return { borderStyle: 'double', borderWidth: '4px' };
+      }
+    }
+    // Default style for other cases
+    return { borderStyle: 'solid', borderWidth: '3px' };
+  };
+  
+  // Get userId from event (handles both userId and userId_read fields)
+  const getEventUserId = (event: any): string | null => {
+    if (!event) return null;
+    // Try userId_read first (from serializer), then userId
+    const userId = event.userId_read || event.userId;
+    return userId ? String(userId) : null;
+  };
+
   function getEventsForDay(day: number) {
     const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const allEvents = [...upcomingEvents, ...pastEvents];
@@ -1124,15 +1210,34 @@ export function PlanningCalendar() {
                         {dayEvents.slice(0, 3).map((event) => {
                           const eventDate = new Date(event.datetime);
                           const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                          const eventUserId = getEventUserId(event);
+                          const userColor = getUserColor(eventUserId);
+                          const lightColor = getLightColor(userColor);
+                          const roleStyle = getUserRoleStyle(eventUserId);
                           
                           return (
-                            <div key={event.id} className="planning-event-badge">
+                            <div 
+                              key={event.id} 
+                              className="planning-event-badge"
+                              style={{ 
+                                backgroundColor: lightColor,
+                                color: userColor,
+                                borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                paddingLeft: '0.5rem'
+                              }}
+                            >
                               <div className="planning-event-time">
                                 <Clock className="planning-icon-sm" />
                                 {time}
                               </div>
-                              {event.clientName && (
-                                <div className="planning-event-client">{event.clientName}</div>
+                              {(event.contactName || event.clientName) && (
+                                <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                              )}
+                              {eventUserId && (
+                                <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
+                                  <span>{getUserName(eventUserId)}</span>
+                                </div>
                               )}
                             </div>
                           );
@@ -1189,15 +1294,34 @@ export function PlanningCalendar() {
                           {dayEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const eventUserId = getEventUserId(event);
+                            const userColor = getUserColor(eventUserId);
+                            const lightColor = getLightColor(userColor);
+                            const roleStyle = getUserRoleStyle(eventUserId);
                             
                             return (
-                              <div key={event.id} className="planning-event-badge">
+                              <div 
+                                key={event.id} 
+                                className="planning-event-badge"
+                                style={{ 
+                                  backgroundColor: lightColor,
+                                  color: userColor,
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                  paddingLeft: '0.5rem'
+                                }}
+                              >
                                 <div className="planning-event-time">
                                   <Clock className="planning-icon-sm" />
                                   {time}
                                 </div>
-                                {event.clientName && (
-                                  <div className="planning-event-client">{event.clientName}</div>
+                                {(event.contactName || event.clientName) && (
+                                  <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                                )}
+                                {eventUserId && (
+                                  <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
+                                    <span>{getUserName(eventUserId)}</span>
+                                  </div>
                                 )}
                               </div>
                             );
@@ -1241,16 +1365,45 @@ export function PlanningCalendar() {
                           {hourEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const eventUserId = getEventUserId(event);
+                            const userColor = getUserColor(eventUserId);
+                            const lightColor = getLightColor(userColor);
+                            const roleStyle = getUserRoleStyle(eventUserId);
                             
                             return (
                               <div
                                 key={event.id}
                                 className={`planning-day-event ${!canEdit ? 'planning-day-event-disabled' : ''}`}
                                 onClick={canEdit ? () => handleEditEvent(event) : undefined}
-                                style={{ cursor: canEdit ? 'pointer' : 'default' }}
+                                style={{ 
+                                  cursor: canEdit ? 'pointer' : 'default',
+                                  backgroundColor: lightColor,
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`
+                                }}
                               >
-                                <div className="planning-day-event-time">{time}</div>
-                                <div className="planning-day-event-client">{getEventClientName(event)}</div>
+                                <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
+                                {(() => {
+                                  const contactName = getEventClientName(event);
+                                  const hasContactName = contactName && contactName.trim() !== '';
+                                  
+                                  return (
+                                    <>
+                                      {hasContactName && (
+                                        <div className="planning-day-event-client">{contactName}</div>
+                                      )}
+                                      {eventUserId ? (
+                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
+                                          <User className="w-3 h-3" style={{ flexShrink: 0 }} />
+                                          <span>{getUserName(eventUserId)}</span>
+                                        </div>
+                                      ) : (
+                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', marginTop: hasContactName ? '6px' : '0', fontStyle: 'italic' }}>
+                                          Non assigné
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                                 {event.comment && (
                                   <div className="planning-day-event-comment">{event.comment}</div>
                                 )}
