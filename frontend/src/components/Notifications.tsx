@@ -214,37 +214,12 @@ export default function Notifications() {
         if (eventNotification) {
           console.log('[Notifications] Received event_notification:', eventNotification);
           console.log('[Notifications] Notification type:', eventNotification.notification_type);
-          console.log('[Notifications] Full notification object:', JSON.stringify(eventNotification, null, 2));
           
           // Event notifications are stored in the database, so reload to get the proper notification
           // This ensures we have the correct ID and all fields from the database
           // The reload will also update the unread count correctly
+          // No toast notification - users will see it in the notification modal
           loadNotifications(true);
-          
-          // Skip toast notification for assignment notifications - only show for reminders
-          const notificationType = eventNotification.notification_type;
-          if (notificationType && notificationType !== 'assigned') {
-            console.log('[Notifications] Showing toast for reminder notification:', {
-              title: eventNotification.title,
-              message: eventNotification.message,
-              type: notificationType
-            });
-            
-            // Use setTimeout to ensure toast is called after current execution context
-            setTimeout(() => {
-              try {
-                toast.info(eventNotification.title || 'Notification événement', {
-                  description: eventNotification.message || '',
-                  duration: 5000, // Show for 5 seconds
-                });
-                console.log('[Notifications] Toast called successfully');
-              } catch (error) {
-                console.error('[Notifications] Error calling toast:', error);
-              }
-            }, 100);
-          } else {
-            console.log('[Notifications] Skipping toast - notification_type is:', notificationType);
-          }
         } else {
           console.warn('[Notifications] event_notification received but notification is missing');
         }
