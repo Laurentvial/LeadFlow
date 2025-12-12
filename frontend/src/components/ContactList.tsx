@@ -1720,6 +1720,108 @@ export function ContactList({
     return column?.label || columnId;
   };
   
+  // Helper function to format active filters for display
+  const formatActiveFilters = (): string => {
+    const activeFilters: string[] = [];
+    
+    // Add search term filter if present
+    if (appliedSearchTerm && appliedSearchTerm.trim() !== '') {
+      activeFilters.push(`Recherche égale à ${appliedSearchTerm}`);
+    }
+    
+    // Add status type filter if not 'all'
+    if (appliedStatusType !== 'all') {
+      const statusTypeLabel = appliedStatusType === 'lead' ? 'Lead' : 'Client';
+      activeFilters.push(`Type de contact égale à ${statusTypeLabel}`);
+    }
+    
+    Object.entries(appliedColumnFilters).forEach(([columnId, filterValue]) => {
+      // Only show filters for visible columns
+      if (!visibleColumns.includes(columnId)) {
+        return;
+      }
+      
+      // Skip empty filters
+      if (!filterValue || 
+          (Array.isArray(filterValue) && filterValue.length === 0) ||
+          (typeof filterValue === 'string' && filterValue.trim() === '') ||
+          (typeof filterValue === 'object' && !Array.isArray(filterValue) && 
+           (!('from' in filterValue) || !filterValue.from) && 
+           (!('to' in filterValue) || !filterValue.to))) {
+        return;
+      }
+      
+      const columnLabel = getColumnLabel(columnId);
+      let filterText = '';
+      
+      // Helper function to get label for a filter value
+      const getFilterValueLabel = (value: string, colId: string): string => {
+        if (value === '__empty__') {
+          return '(Vides)';
+        }
+        
+        switch (colId) {
+          case 'status':
+            const status = statuses.find(s => s.id === value);
+            return status ? status.name : value;
+          case 'previousStatus':
+            const prevStatus = statuses.find(s => s.name === value);
+            return prevStatus ? prevStatus.name : value;
+          case 'creator':
+            const creator = users.find(u => u.id === value);
+            return creator ? `${creator.firstName || ''} ${creator.lastName || ''}`.trim() || creator.username || creator.email || value : value;
+          case 'teleoperator':
+            const teleoperator = teleoperateurs.find(u => u.id === value);
+            return teleoperator ? `${teleoperator.firstName || ''} ${teleoperator.lastName || ''}`.trim() || teleoperator.username || teleoperator.email || value : value;
+          case 'confirmateur':
+            const confirmateur = confirmateurs.find(u => u.id === value);
+            return confirmateur ? `${confirmateur.firstName || ''} ${confirmateur.lastName || ''}`.trim() || confirmateur.username || confirmateur.email || value : value;
+          case 'source':
+            const source = sources.find(s => s.id === value);
+            return source ? source.name : value;
+          case 'managerTeam':
+            const team = teams.find(t => t.id === value);
+            return team ? team.name : value;
+          default:
+            return value;
+        }
+      };
+      
+      if (Array.isArray(filterValue)) {
+        // Multi-select filter
+        const filterLabels: string[] = [];
+        filterValue.forEach(value => {
+          filterLabels.push(getFilterValueLabel(value, columnId));
+        });
+        filterText = filterLabels.join(',');
+      } else if (typeof filterValue === 'object' && filterValue !== null && 'from' in filterValue) {
+        // Date range filter
+        const from = filterValue.from || '';
+        const to = filterValue.to || '';
+        if (from && to) {
+          filterText = `du ${from} au ${to}`;
+        } else if (from) {
+          filterText = `à partir du ${from}`;
+        } else if (to) {
+          filterText = `jusqu'au ${to}`;
+        }
+      } else if (typeof filterValue === 'string') {
+        // Text filter
+        filterText = filterValue;
+      }
+      
+      if (filterText) {
+        activeFilters.push(`${columnLabel} égale à ${filterText}`);
+      }
+    });
+    
+    if (activeFilters.length === 0) {
+      return '';
+    }
+    
+    return activeFilters.join(' ET ');
+  };
+  
   // Helper function to truncate text with ellipsis
   const truncateText = (text: string, maxLength: number = 15): string => {
     if (!text || text.length <= maxLength) return text;
@@ -3588,6 +3690,38 @@ export function ContactList({
         </CardContent>
       </Card>
 
+      {/* Affichage des filtres actifs */}
+      {(() => {
+        const activeFiltersText = formatActiveFilters();
+        if (!activeFiltersText) return null;
+        
+        return (
+          <Card className="contacts-active-filters-card" style={{ marginTop: '8px', marginBottom: '8px' }}>
+            <CardContent style={{ padding: '8px 12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                  <Filter className="w-4 h-4" style={{ color: '#3b82f6', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>
+                    <strong>Filtre en cours :</strong> ({activeFiltersText})
+                  </span>
+                </div>
+                {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || appliedStatusType !== 'all') && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleResetFilters}
+                    title="Réinitialiser les filtres"
+                  >
+                    <X className="w-4 h-4 mr-2" />
+                    Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (appliedStatusType !== 'all' ? 1 : 0)})
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Barre d'actions multiples */}
       {showBulkActions && (
         <Card className="contacts-bulk-actions">
@@ -3711,17 +3845,6 @@ export function ContactList({
                 <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                 Rafraîchir
               </Button>
-              {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || appliedStatusType !== 'all') && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={handleResetFilters}
-                  title="Réinitialiser les filtres"
-                >
-                  <X className="w-4 h-4 mr-2" />
-                  Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (appliedStatusType !== 'all' ? 1 : 0)})
-                </Button>
-              )}
               {totalPages > 1 && displayedContacts.length > 0 && (
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                   <Button
