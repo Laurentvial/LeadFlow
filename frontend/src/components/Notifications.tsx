@@ -75,21 +75,30 @@ export default function Notifications() {
   // Mark notification as read
   const markAsRead = async (notificationId: string) => {
     try {
-      await apiCall(`/api/notifications/${notificationId}/read/`, {
-        method: 'POST',
-      });
-      
+      // Optimistic update for immediate UI feedback
       setNotifications(prev =>
         prev.map(n => (n.id === notificationId ? { ...n, is_read: true } : n))
       );
       const newUnreadCount = Math.max(0, unreadCount - 1);
       setUnreadCount(newUnreadCount);
+      
+      // Call API - backend will send websocket update to confirm
+      await apiCall(`/api/notifications/${notificationId}/read/`, {
+        method: 'POST',
+      });
+      
       // Switch to read tab if no more unread notifications
+      // Note: websocket update will also handle this, but this provides immediate feedback
       if (newUnreadCount === 0 && activeTab === 'unread') {
         setActiveTab('read');
       }
     } catch (error: any) {
       console.error('Error marking notification as read:', error);
+      // Revert optimistic update on error
+      setNotifications(prev =>
+        prev.map(n => (n.id === notificationId ? { ...n, is_read: false } : n))
+      );
+      setUnreadCount(prev => prev + 1);
     }
   };
 
@@ -239,7 +248,28 @@ export default function Notifications() {
         } else {
           console.warn('[Notifications] event_notification received but notification is missing');
         }
+      } else if (message.type === 'notification_updated') {
+        // Handle notification update (e.g., when marked as read)
+        const updatedNotification = message.notification;
+        if (updatedNotification) {
+          setNotifications(prev =>
+            prev.map(n => (n.id === updatedNotification.id ? { ...n, is_read: updatedNotification.is_read } : n))
+          );
+          // Update unread count if provided
+          if (message.unread_count !== undefined) {
+            setUnreadCount(message.unread_count);
+            // Switch to read tab if no more unread notifications
+            if (message.unread_count === 0 && activeTab === 'unread') {
+              setActiveTab('read');
+            }
+          }
+        }
       } else if (message.type === 'unread_count_updated') {
+        setUnreadCount(message.unread_count || 0);
+        // Switch to read tab if no more unread notifications
+        if (message.unread_count === 0 && activeTab === 'unread') {
+          setActiveTab('read');
+        }
         setUnreadCount(message.unread_count || 0);
       } else if (message.type === 'connection_established') {
         setUnreadCount(message.unread_count || 0);

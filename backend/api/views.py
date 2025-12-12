@@ -6733,6 +6733,36 @@ def notification_mark_read(request, notification_id):
         notification.is_read = True
         notification.save()
         
+        # Send websocket update to notify frontend immediately
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            notification_data = {
+                'id': notification.id,
+                'type': notification.type,
+                'title': notification.title,
+                'message': notification.message,
+                'message_id': notification.message_id if notification.message_id else None,
+                'email_id': notification.email_id if notification.email_id else None,
+                'contact_id': notification.contact_id if notification.contact_id else None,
+                'event_id': notification.event_id if notification.event_id else None,
+                'data': notification.data if notification.data else {},
+                'is_read': notification.is_read,
+                'created_at': notification.created_at.isoformat(),
+            }
+            
+            # Get updated unread count
+            unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+            
+            # Send via WebSocket
+            async_to_sync(channel_layer.group_send)(
+                f'notifications_{request.user.id}',
+                {
+                    'type': 'notification_updated',
+                    'notification': notification_data,
+                    'unread_count': unread_count,
+                }
+            )
+        
         serializer = NotificationSerializer(notification)
         return Response(serializer.data)
     except Notification.DoesNotExist:
@@ -6743,6 +6773,22 @@ def notification_mark_read(request, notification_id):
 def notification_mark_all_read(request):
     """Mark all notifications as read for the current user"""
     Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+    
+    # Send websocket update to notify frontend immediately
+    channel_layer = get_channel_layer()
+    if channel_layer:
+        # Get updated unread count (should be 0)
+        unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+        
+        # Send via WebSocket
+        async_to_sync(channel_layer.group_send)(
+            f'notifications_{request.user.id}',
+            {
+                'type': 'unread_count_updated',
+                'unread_count': unread_count,
+            }
+        )
+    
     return Response({'success': True})
 
 # Notification Preferences endpoints
