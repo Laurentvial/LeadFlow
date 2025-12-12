@@ -94,6 +94,7 @@ export function FosseSettingsTab() {
   const [savingFosseDefaults, setSavingFosseDefaults] = useState(false);
   const [openColumnsPopover, setOpenColumnsPopover] = useState<string | null>(null);
   const [columnSearchTerm, setColumnSearchTerm] = useState<string>('');
+  const [columnSearchTerms, setColumnSearchTerms] = useState<Record<string, string>>({});
   const [previewContacts, setPreviewContacts] = useState<any[]>([]);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null);
@@ -990,9 +991,20 @@ export function FosseSettingsTab() {
                           <Popover 
                             open={openColumnsPopover === role.id}
                             onOpenChange={(open) => {
+                              // #region agent log
+                              fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FosseSettingsTab.tsx:992',message:'Popover onOpenChange',data:{open,roleId:role.id,currentOpenPopover:openColumnsPopover,currentSearchTerm:columnSearchTerm,roleSearchTerm:columnSearchTerms[role.id]},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+                              // #endregion
                               setOpenColumnsPopover(open ? role.id : null);
                               if (!open) {
+                                setColumnSearchTerms(prev => {
+                                  const newTerms = { ...prev };
+                                  delete newTerms[role.id];
+                                  return newTerms;
+                                });
                                 setColumnSearchTerm('');
+                              } else {
+                                // Initialize search term for this role when opening
+                                setColumnSearchTerm(columnSearchTerms[role.id] || '');
                               }
                             }}
                           >
@@ -1022,15 +1034,27 @@ export function FosseSettingsTab() {
                                     <Input
                                       className="pl-8 h-8 text-sm"
                                       placeholder="Rechercher..."
-                                      value={columnSearchTerm}
-                                      onChange={(e) => setColumnSearchTerm(e.target.value)}
+                                      value={columnSearchTerms[role.id] || ''}
+                                      onChange={(e) => {
+                                        // #region agent log
+                                        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FosseSettingsTab.tsx:1026',message:'Input onChange',data:{roleId:role.id,newValue:e.target.value,currentSearchTerms:columnSearchTerms},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+                                        // #endregion
+                                        setColumnSearchTerms(prev => ({
+                                          ...prev,
+                                          [role.id]: e.target.value
+                                        }));
+                                        setColumnSearchTerm(e.target.value);
+                                      }}
                                       onClick={(e) => e.stopPropagation()}
                                       onKeyDown={(e) => e.stopPropagation()}
                                       autoFocus
                                     />
                                   </div>
                                   {(() => {
-                                    const searchTerm = columnSearchTerm.toLowerCase();
+                                    const searchTerm = (columnSearchTerms[role.id] || '').toLowerCase();
+                                    // #region agent log
+                                    fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FosseSettingsTab.tsx:1054',message:'Filtering columns',data:{roleId:role.id,searchTerm,roleSearchTerm:columnSearchTerms[role.id],allSearchTerms:columnSearchTerms},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+                                    // #endregion
                                     const filteredOptions = searchTerm
                                       ? AVAILABLE_COLUMNS.filter(col =>
                                           col.label.toLowerCase().includes(searchTerm)

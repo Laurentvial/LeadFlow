@@ -1,8 +1,8 @@
 import React from 'react';
 import { Navigate } from "react-router-dom";
 import {jwtDecode} from "jwt-decode";
-import { apiCall } from "../utils/api";
-import { ACCESS_TOKEN, REFRESH_TOKEN } from "../utils/constants";
+import { refreshAccessToken } from "../utils/api";
+import { ACCESS_TOKEN } from "../utils/constants";
 import { useState, useEffect } from "react";
 
 interface ProtectedRouteProps {
@@ -17,23 +17,16 @@ function ProtectedRoute({ children }: ProtectedRouteProps) {
     }, []);
 
     const refreshToken = async () => {
-        const refreshToken = localStorage.getItem(REFRESH_TOKEN);
         try {
-            const res = await apiCall('/api/token/refresh/', {
-                method: 'POST',
-                body: JSON.stringify({ refresh: refreshToken }),
-            });
-            if (res.access) {   
-                localStorage.setItem(ACCESS_TOKEN, res.access);
+            const newToken = await refreshAccessToken();
+            if (newToken) {
                 setIsAuthenticated(true);
             } else {
                 setIsAuthenticated(false);
-                return;
             }
         } catch (error) {
             console.error(error);
             setIsAuthenticated(false);
-            return;
         }
     }
 

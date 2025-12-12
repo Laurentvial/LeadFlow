@@ -46,14 +46,38 @@ function isCacheValid(entry: CacheEntry): boolean {
   return Date.now() - entry.timestamp < CACHE_TTL;
 }
 
+// Track ongoing refresh to prevent concurrent attempts
+let refreshPromise: Promise<string | null> | null = null;
+
 // Helper function to refresh access token
-async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN);
-  if (!refreshToken) {
-    return null;
+export async function refreshAccessToken(): Promise<string | null> {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:50',message:'refreshAccessToken called',data:{hasRefreshToken:!!localStorage.getItem(REFRESH_TOKEN),hasOngoingRefresh:!!refreshPromise},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
+  
+  // If refresh is already in progress, return the existing promise
+  if (refreshPromise) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:55',message:'Reusing ongoing refresh promise',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    return refreshPromise;
   }
+  
+  // Create the refresh promise
+  refreshPromise = (async () => {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN);
+    if (!refreshToken) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:68',message:'No refresh token available',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      refreshPromise = null;
+      return null;
+    }
 
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:74',message:'Sending refresh token request',data:{refreshTokenLength:refreshToken.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const response = await fetch(`${apiUrl}/api/token/refresh/`, {
         method: 'POST',
         headers: {
@@ -64,21 +88,43 @@ async function refreshAccessToken(): Promise<string | null> {
         credentials: 'include', // Include credentials if needed
       });
 
-    if (response.ok) {
-      const data = await response.json();
-      if (data.access) {
-        localStorage.setItem(ACCESS_TOKEN, data.access);
-        return data.access;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:84',message:'Refresh token response received',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      if (response.ok) {
+        const data = await response.json();
+        if (data.access) {
+          localStorage.setItem(ACCESS_TOKEN, data.access);
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:90',message:'Token refresh successful',data:{newTokenLength:data.access.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          refreshPromise = null;
+          return data.access;
+        }
+      } else {
+        // #region agent log
+        const errorText = await response.text().catch(()=>'');
+        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:95',message:'Token refresh failed',data:{status:response.status,statusText:response.statusText,errorText:errorText.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
       }
+    } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:99',message:'Token refresh exception',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      console.error('Error refreshing token:', error);
     }
-  } catch (error) {
-    console.error('Error refreshing token:', error);
-  }
 
-  // If refresh fails, clear tokens
-  localStorage.removeItem(ACCESS_TOKEN);
-  localStorage.removeItem(REFRESH_TOKEN);
-  return null;
+    // If refresh fails, clear tokens
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:105',message:'Clearing tokens after refresh failure',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    localStorage.removeItem(ACCESS_TOKEN);
+    localStorage.removeItem(REFRESH_TOKEN);
+    refreshPromise = null; // Clear the promise so we can retry later
+    return null;
+  })();
+  
+  return refreshPromise;
 }
 
 // Helper function for API calls that returns data directly
@@ -153,7 +199,27 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     }
 
     // If 401, try to refresh token and retry once
+    // BUT: Don't retry if this IS the refresh endpoint (prevents infinite loop)
     if (response.status === 401) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:202',message:'401 Unauthorized received',data:{endpoint,hasToken:!!token,isRefreshEndpoint:endpoint.includes('/token/refresh/')},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      
+      // If this is the refresh endpoint itself returning 401, don't try to refresh again
+      if (endpoint.includes('/token/refresh/')) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:208',message:'Refresh endpoint returned 401, clearing tokens',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        localStorage.removeItem(ACCESS_TOKEN);
+        localStorage.removeItem(REFRESH_TOKEN);
+        const error = await response.json().catch(() => ({ detail: 'Refresh token expired. Please log in again.' }));
+        const errorMessage = error.detail || error.error || error.message || 'Refresh token expired. Please log in again.';
+        const errorObj = new Error(errorMessage);
+        (errorObj as any).response = error;
+        (errorObj as any).status = 401;
+        throw errorObj;
+      }
+      
       if (!token) {
         // No token available, redirect to login
         const isRedirecting = typeof window !== 'undefined' && window.location.pathname !== '/login';
@@ -169,6 +235,9 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         throw errorObj;
       }
       
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:230',message:'Attempting token refresh after 401',data:{endpoint},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const newToken = await refreshAccessToken();
       if (newToken) {
         // Retry the request with the new token
