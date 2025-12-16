@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2 } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
@@ -25,8 +25,8 @@ const CRM_FIELDS = [
   { value: 'civility', label: 'Civilité' },
   { value: 'firstName', label: 'Prénom (requis)' },
   { value: 'lastName', label: 'Nom' },
-  { value: 'phone', label: 'Téléphone' },
-  { value: 'mobile', label: 'Portable' },
+  { value: 'phone', label: 'Téléphone 1' },
+  { value: 'mobile', label: 'Telephone 2' },
   { value: 'email', label: 'Email' },
   { value: 'birthDate', label: 'Date de naissance' },
   { value: 'birthPlace', label: 'Lieu de naissance' },
@@ -50,6 +50,7 @@ export function CsvImport() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvPreview, setCsvPreview] = useState<any[]>([]);
+  const [csvData, setCsvData] = useState<any[]>([]); // Full CSV data
   const [totalRows, setTotalRows] = useState(0);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
   const [defaultStatusId, setDefaultStatusId] = useState('');
@@ -94,6 +95,7 @@ export function CsvImport() {
     }
   }, [currentUser]);
 
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -128,9 +130,70 @@ export function CsvImport() {
         throw new Error('Réponse invalide du serveur');
       }
 
-      setCsvHeaders(response.headers || []);
-      setCsvPreview(response.preview || []);
-      setTotalRows(response.totalRows || 0);
+      // Parse CSV file to get all rows
+      const text = await file.text();
+      const lines = text.split('\n').filter(line => line.trim());
+      if (lines.length === 0) {
+        throw new Error('Le fichier CSV est vide');
+      }
+      
+      // Simple CSV parser that handles quoted fields
+      const parseCSVLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = '';
+        let inQuotes = false;
+        
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          const nextChar = line[i + 1];
+          
+          if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+              current += '"';
+              i++; // Skip next quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+      
+      // Use first row values as column headers for mapping
+      const firstRowValues = parseCSVLine(lines[0]);
+      const headers = firstRowValues.map((h, idx) => {
+        const cleaned = h.replace(/^"|"$/g, '').trim();
+        // If header is empty, generate a name
+        return cleaned || `Column${idx + 1}`;
+      });
+      
+      setCsvHeaders(headers);
+      
+      // Process ALL rows including the first one (no header row to skip)
+      const allRows: any[] = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const values = parseCSVLine(lines[i]);
+        const row: any = {};
+        headers.forEach((header, idx) => {
+          row[header] = (values[idx] || '').replace(/^"|"$/g, '');
+        });
+        allRows.push(row);
+      }
+      
+      // Set total rows based on locally parsed data
+      const actualRowCount = allRows.length;
+      setTotalRows(actualRowCount);
+      
+      setCsvData(allRows);
+      // Use first 5 rows from locally parsed data for preview
+      setCsvPreview(allRows.slice(0, 5));
 
       // Initialize column mapping with empty values
       const initialMapping: ColumnMapping = {};
@@ -142,7 +205,7 @@ export function CsvImport() {
       setColumnMapping(initialMapping);
 
       setStep('mapping');
-      toast.success(`Fichier chargé: ${response.totalRows} lignes détectées`);
+      toast.success(`Fichier chargé: ${actualRowCount} lignes détectées`);
     } catch (error: any) {
       console.error('Error previewing CSV:', error);
       const errorMessage = error?.error || error?.message || 'Erreur lors de la lecture du fichier CSV';
@@ -155,35 +218,101 @@ export function CsvImport() {
     }
   };
 
+
   const handleImport = async () => {
+    console.log('[handleImport] Starting import...');
+    
+    // Set loading state immediately to prevent button spam
+    setIsLoading(true);
+    
     // Validate required mappings - only firstName is required
     if (!columnMapping.firstName) {
+      setIsLoading(false);
       toast.error('Veuillez mapper le champ requis: Prénom');
       return;
     }
 
     if (!defaultStatusId) {
+      setIsLoading(false);
       toast.error('Veuillez sélectionner un statut par défaut');
       return;
     }
 
     if (!defaultTeleoperatorId) {
+      setIsLoading(false);
       toast.error('Veuillez sélectionner un téléopérateur');
       return;
     }
 
     if (!csvFile) {
+      setIsLoading(false);
       toast.error('Aucun fichier sélectionné');
       return;
     }
 
-    setIsLoading(true);
     setError(null);
     setStep('importing');
 
     try {
+      // Check for duplicates within CSV based on email mapping
+      let fileToImport = csvFile;
+      let duplicatesRemoved = 0;
+
+      if (columnMapping.email && csvData.length > 0) {
+        const emailColumn = columnMapping.email;
+        const seenEmails = new Map<string, number>(); // email -> first occurrence index
+        const duplicateIndices = new Set<number>();
+        
+        // Find duplicates
+        csvData.forEach((row, index) => {
+          const email = (row[emailColumn] || '').trim().toLowerCase();
+          if (email) {
+            if (seenEmails.has(email)) {
+              duplicateIndices.add(index);
+              duplicatesRemoved++;
+            } else {
+              seenEmails.set(email, index);
+            }
+          }
+        });
+
+        // If duplicates found, create a filtered CSV file
+        if (duplicatesRemoved > 0) {
+          const filteredData = csvData.filter((_, index) => !duplicateIndices.has(index));
+          
+          // Reconstruct CSV from filtered data
+          const csvLines: string[] = [];
+          
+          // Add header row
+          csvLines.push(csvHeaders.map(header => {
+            const value = header.includes(',') || header.includes('"') ? `"${header.replace(/"/g, '""')}"` : header;
+            return value;
+          }).join(','));
+          
+          // Add filtered data rows
+          filteredData.forEach(row => {
+            const values = csvHeaders.map(header => {
+              const value = (row[header] || '').toString();
+              // Escape quotes and wrap in quotes if contains comma, quote, or newline
+              if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+                return `"${value.replace(/"/g, '""')}"`;
+              }
+              return value;
+            });
+            csvLines.push(values.join(','));
+          });
+          
+          // Create new Blob with filtered CSV
+          const csvContent = csvLines.join('\n');
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          fileToImport = new File([blob], csvFile.name, { type: 'text/csv' });
+          
+          toast.info(`${duplicatesRemoved} doublon(s) détecté(s) et supprimé(s) dans le fichier CSV`);
+        }
+      }
+
       const formData = new FormData();
-      formData.append('file', csvFile);
+      formData.append('file', fileToImport);
       formData.append('columnMapping', JSON.stringify(columnMapping));
       formData.append('defaultStatusId', defaultStatusId);
       if (defaultSourceId) {
@@ -193,6 +322,7 @@ export function CsvImport() {
         formData.append('defaultTeleoperatorId', defaultTeleoperatorId);
       }
 
+      console.log('[handleImport] Sending CSV to backend');
       const response = await apiCall('/api/contacts/csv-import/', {
         method: 'POST',
         body: formData,
@@ -228,6 +358,7 @@ export function CsvImport() {
     setCsvFile(null);
     setCsvHeaders([]);
     setCsvPreview([]);
+    setCsvData([]);
     setTotalRows(0);
     setColumnMapping({});
     setDefaultStatusId('');
@@ -468,6 +599,13 @@ export function CsvImport() {
                         <Select
                           value={columnMapping[field.value] || '__none__'}
                           onValueChange={(value) => {
+                            console.log('[Mapping] Column mapping changed:', {
+                              field: field.value,
+                              fieldLabel: field.label,
+                              selectedValue: value,
+                              csvHeaders: csvHeaders,
+                              csvHeadersIndex: csvHeaders.indexOf(value),
+                            });
                             setColumnMapping({
                               ...columnMapping,
                               [field.value]: value === '__none__' ? '' : value,
@@ -636,6 +774,7 @@ export function CsvImport() {
           </Card>
         </div>
       )}
+
 
       {step === 'importing' && (
         <Card>
@@ -826,4 +965,6 @@ export function CsvImport() {
     </div>
   );
 }
+
+
 
