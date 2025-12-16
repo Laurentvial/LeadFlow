@@ -106,7 +106,7 @@ export function CreateUserModal({
           password: formData.password,
           first_name: formData.firstName,
           last_name: formData.lastName,
-          phone: removePhoneSpaces(String(formData.phone)),
+          phone: formData.phone ? removePhoneSpaces(String(formData.phone)) : null,
           roleId: formData.role,
           teamId: formData.teamId || null,
           hrex: formData.hrex || '',

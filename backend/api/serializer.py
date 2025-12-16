@@ -1,24 +1,32 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
 from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
+from django.db import transaction
 import uuid
 
 class UserSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     roleId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
-    phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    role = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    phone = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
     teamId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
     hrex = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=7)
     
     class Meta:
         model = DjangoUser
-        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'roleId', 'phone', 'teamId', 'hrex']
+        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'roleId', 'role', 'phone', 'teamId', 'hrex']
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': False, 'allow_blank': True},
             'username': {'required': False, 'allow_blank': True}
         }
+    
+    def validate_phone(self, value):
+        """Convert empty strings to None for phone field."""
+        if value is None or value == '' or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
     
     def validate_username(self, value):
         """Validate username: strip whitespace and check for case-insensitive duplicates."""
@@ -26,8 +34,16 @@ class UserSerializer(serializers.ModelSerializer):
         if value:
             value = value.strip()
             # Check for case-insensitive duplicate
-            if DjangoUser.objects.filter(username__iexact=value).exists():
-                raise serializers.ValidationError("A user with that username already exists.")
+            existing_user = DjangoUser.objects.filter(username__iexact=value).first()
+            if existing_user:
+                # Check if UserDetails exists - if not, this is an orphaned user that we can clean up
+                try:
+                    existing_user.user_details
+                    # UserDetails exists, so this is a real duplicate
+                    raise serializers.ValidationError("A user with that username already exists.")
+                except UserDetails.DoesNotExist:
+                    # Orphaned user - delete it so we can create a new one
+                    existing_user.delete()
         return value
     
     def validate(self, data):
@@ -38,16 +54,32 @@ class UserSerializer(serializers.ModelSerializer):
         # If email is provided and username is not, use email as username
         if email and not username:
             data['username'] = email
-            # Validate that this email/username doesn't already exist
-            if DjangoUser.objects.filter(username__iexact=email).exists():
-                raise serializers.ValidationError({"email": "A user with this email already exists."})
+            # Check if user exists
+            existing_user = DjangoUser.objects.filter(username__iexact=email).first()
+            if existing_user:
+                # Check if UserDetails exists - if not, this is an orphaned user that we can clean up
+                try:
+                    existing_user.user_details
+                    # UserDetails exists, so this is a real duplicate
+                    raise serializers.ValidationError({"email": "A user with this email already exists."})
+                except UserDetails.DoesNotExist:
+                    # Orphaned user - delete it so we can create a new one
+                    existing_user.delete()
         
         # If both are provided but different, use email as username
         elif email and username and email != username:
             data['username'] = email
-            # Validate that this email/username doesn't already exist
-            if DjangoUser.objects.filter(username__iexact=email).exists():
-                raise serializers.ValidationError({"email": "A user with this email already exists."})
+            # Check if user exists
+            existing_user = DjangoUser.objects.filter(username__iexact=email).first()
+            if existing_user:
+                # Check if UserDetails exists - if not, this is an orphaned user that we can clean up
+                try:
+                    existing_user.user_details
+                    # UserDetails exists, so this is a real duplicate
+                    raise serializers.ValidationError({"email": "A user with this email already exists."})
+                except UserDetails.DoesNotExist:
+                    # Orphaned user - delete it so we can create a new one
+                    existing_user.delete()
         
         # Ensure username is set
         if not data.get('username'):
@@ -56,83 +88,145 @@ class UserSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        # Extract UserDetails fields
-        first_name = validated_data.pop('first_name', '')
-        last_name = validated_data.pop('last_name', '')
-        role_id = validated_data.pop('roleId', None)
-        phone = validated_data.pop('phone', '')
-        team_id = validated_data.pop('teamId', None)
-        hrex = validated_data.pop('hrex', '')
-        
-        # Get and normalize username (already validated and stripped in validate_username)
-        username = validated_data.get('username', '').strip()
-        
-        # Create Django User
-        user = DjangoUser.objects.create_user(
-            username=username,
-            email=validated_data.get('email', '').strip() if validated_data.get('email') else '',
-            password=validated_data.get('password'),
-            first_name=first_name.strip() if first_name else '',
-            last_name=last_name.strip() if last_name else ''
-        )
+        # Use atomic transaction to ensure both DjangoUser and UserDetails are created together
+        # If UserDetails creation fails, DjangoUser creation will be rolled back
+        with transaction.atomic():
+            # Extract UserDetails fields
+            first_name = validated_data.pop('first_name', '')
+            last_name = validated_data.pop('last_name', '')
+            role_id = validated_data.pop('roleId', None)
+            role_name = validated_data.pop('role', None)
+            # Extract phone and normalize empty strings to None
+            phone_raw = validated_data.pop('phone', None)
+            if phone_raw is None or phone_raw == '' or (isinstance(phone_raw, str) and not phone_raw.strip()):
+                phone = None
+            else:
+                phone = phone_raw
+            team_id = validated_data.pop('teamId', None)
+            hrex = validated_data.pop('hrex', '')
+            
+            # Get and normalize username (already validated and stripped in validate_username)
+            username = validated_data.get('username', '').strip()
+            
+            # Create Django User
+            user = DjangoUser.objects.create_user(
+                username=username,
+                email=validated_data.get('email', '').strip() if validated_data.get('email') else '',
+                password=validated_data.get('password'),
+                first_name=first_name.strip() if first_name else '',
+                last_name=last_name.strip() if last_name else ''
+            )
 
-        # Generate a numeric UserDetails ID (str) incrementing from max existing one
-        # Ensure it's always 12 characters or less
-        max_id = 0
-        for id_val in UserDetails.objects.values_list('id', flat=True):
-            try:
-                int_id = int(id_val)
-                if int_id > max_id:
-                    max_id = int_id
-            except (ValueError, TypeError):
-                continue
-        
-        # Generate new ID and ensure it doesn't exceed 12 characters
-        new_id = max_id + 1
-        user_details_id = str(new_id)
-        
-        # If the ID exceeds 12 characters, use a truncated UUID instead
-        if len(user_details_id) > 12:
-            # Generate a unique 12-character ID
-            while True:
+            # Generate a numeric UserDetails ID (str) incrementing from max existing one
+            # Ensure it's always 12 characters or less
+            max_id = 0
+            for id_val in UserDetails.objects.values_list('id', flat=True):
+                try:
+                    int_id = int(id_val)
+                    if int_id > max_id:
+                        max_id = int_id
+                except (ValueError, TypeError):
+                    continue
+            
+            # Generate new ID and ensure it doesn't exceed 12 characters
+            new_id = max_id + 1
+            user_details_id = str(new_id)
+            
+            # If the ID exceeds 12 characters, use a truncated UUID instead
+            if len(user_details_id) > 12:
+                # Generate a unique 12-character ID
+                while True:
+                    user_details_id = uuid.uuid4().hex[:12]
+                    if not UserDetails.objects.filter(id=user_details_id).exists():
+                        break
+            
+            # Ensure user_details_id is not empty
+            if not user_details_id:
                 user_details_id = uuid.uuid4().hex[:12]
-                if not UserDetails.objects.filter(id=user_details_id).exists():
-                    break
 
-        # Get role if role_id provided
-        role = None
-        if role_id:
+            # Get role if role_id or role_name provided
+            role_obj = None
+            if role_id:
+                try:
+                    role_obj = Role.objects.get(id=role_id)
+                except Role.DoesNotExist:
+                    pass  # Role will be None if not found
+            elif role_name:
+                # Try to find role by name (case-insensitive)
+                try:
+                    role_obj = Role.objects.get(name__iexact=role_name.strip())
+                except Role.DoesNotExist:
+                    pass  # Role will be None if not found
+            
+            # Convert phone to integer if provided, otherwise None
+            # Handle empty string, None, or whitespace-only strings
+            phone_value = None
+            # Normalize phone: convert empty string to None
+            if phone is None or phone == '' or (isinstance(phone, str) and not phone.strip()):
+                phone_value = None
+            else:
+                phone_str = str(phone).strip()
+                # Only process if there's actual content after stripping
+                if phone_str and phone_str not in ['', 'None', 'null']:
+                    try:
+                        # Remove all spaces and non-digit characters except + at start
+                        cleaned = ''.join(phone_str.split())
+                        # Remove + if present at start
+                        if cleaned.startswith('+'):
+                            cleaned = cleaned[1:]
+                        if cleaned and cleaned.isdigit():
+                            phone_value = int(cleaned)
+                        else:
+                            phone_value = None
+                    except (ValueError, TypeError):
+                        phone_value = None
+            
+            # Final safety check: ensure phone_value is never an empty string
+            if phone_value == '' or (isinstance(phone_value, str) and not phone_value.strip()):
+                phone_value = None
+            
+            # Create UserDetails entry for this user
+            # Use role_id directly instead of role property to avoid potential setter issues
             try:
-                role = Role.objects.get(id=role_id)
-            except Role.DoesNotExist:
-                pass  # Role will be None if not found
-        
-        # Create UserDetails entry for this user
-        user_details = UserDetails.objects.create(
-            id=user_details_id,
-            django_user=user,
-            role=role,
-            phone=phone.strip() if phone else '',
-            hrex=hrex.strip() if hrex else ''
-        )
-        
-        # Create TeamMember if teamId provided
-        if team_id:
-            try:
-                team = Team.objects.get(id=team_id)
-                # Generate TeamMember ID
-                team_member_id = uuid.uuid4().hex[:12]
-                while TeamMember.objects.filter(id=team_member_id).exists():
-                    team_member_id = uuid.uuid4().hex[:12]
-                TeamMember.objects.create(
-                    id=team_member_id,
-                    user=user_details,
-                    team=team
+                # Debug logging
+                print(f"[DEBUG] Creating UserDetails: id={user_details_id}, django_user_id={user.id}, role_id={role_obj.id if role_obj else None}, phone={phone_value} (type: {type(phone_value)}), hrex={hrex.strip() if hrex else ''}")
+                
+                user_details = UserDetails.objects.create(
+                    id=user_details_id,
+                    django_user=user,
+                    role_id=role_obj,  # Use role_id directly instead of role property
+                    phone=phone_value,  # This should always be None or an integer, never an empty string
+                    hrex=hrex.strip() if hrex else ''
                 )
-            except Team.DoesNotExist:
-                pass
-        
-        return user
+                print(f"[DEBUG] UserDetails created successfully: {user_details.id}")
+            except Exception as e:
+                # Transaction will rollback automatically, but let's provide a clear error
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"[ERROR] Failed to create UserDetails: {str(e)}")
+                print(f"[ERROR] Traceback: {error_details}")
+                raise serializers.ValidationError({
+                    'non_field_errors': [f'Failed to create user details: {str(e)}'],
+                    'error_details': error_details
+                })
+            
+            # Create TeamMember if teamId provided
+            if team_id:
+                try:
+                    team = Team.objects.get(id=team_id)
+                    # Generate TeamMember ID
+                    team_member_id = uuid.uuid4().hex[:12]
+                    while TeamMember.objects.filter(id=team_member_id).exists():
+                        team_member_id = uuid.uuid4().hex[:12]
+                    TeamMember.objects.create(
+                        id=team_member_id,
+                        user=user_details,
+                        team=team
+                    )
+                except Team.DoesNotExist:
+                    pass
+            
+            return user
 
 class NoteCategorySerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)

@@ -50,6 +50,7 @@ export function RegisterPage() {
         method: 'POST',
         body: JSON.stringify({
           username: signupData.username,
+          email: signupData.email,
           password: signupData.password,
           first_name: signupData.firstName,
           last_name: signupData.lastName,
