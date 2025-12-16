@@ -487,6 +487,8 @@ export function ContactInfoTab({
     'dateProTr': 'date_pro_tr',
     'potentiel': 'potentiel',
     'produit': 'produit',
+    'confirmateurEmail': 'confirmateur_email',
+    'confirmateurTelephone': 'confirmateur_telephone',
   };
 
   // Helper function to check if user has view permission for a specific field
@@ -1397,7 +1399,9 @@ export function ContactInfoTab({
         'nomDeScene': 'nomDeScene',
         'dateProTr': 'dateProTr',
         'potentiel': 'potentiel',
-        'produit': 'produit'
+        'produit': 'produit',
+        'confirmateurEmail': 'confirmateurEmail',
+        'confirmateurTelephone': 'confirmateurTelephone'
       };
       
       const apiFieldName = fieldMap[fieldName];
@@ -3406,6 +3410,75 @@ export function ContactInfoTab({
                     onClick={canEditField('produit') ? () => startEditing('produit', contact.produit) : undefined}
                   >
                     {contact.produit || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('confirmateurEmail') && (
+              <div>
+                <Label className="text-slate-600">Mail Confirmateur</Label>
+                {editingField === 'confirmateurEmail' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      type="email"
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('confirmateurEmail')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('confirmateurEmail') ? 'editable' : ''}`}
+                    onClick={canEditField('confirmateurEmail') ? () => startEditing('confirmateurEmail', contact.confirmateurEmail) : undefined}
+                  >
+                    {contact.confirmateurEmail || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('confirmateurTelephone') && (
+              <div>
+                <Label className="text-slate-600">Téléphone Confirmateur</Label>
+                {editingField === 'confirmateurTelephone' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => {
+                        // Remove spaces as user types - keep it without spaces for editing
+                        setFieldValue(removePhoneSpaces(e.target.value));
+                      }}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                      type="number"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('confirmateurTelephone')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('confirmateurTelephone') ? 'editable' : ''}`}
+                    onClick={canEditField('confirmateurTelephone') ? () => startEditing('confirmateurTelephone', contact.confirmateurTelephone) : undefined}
+                  >
+                    {formatPhoneNumber(contact.confirmateurTelephone) || '-'}
                   </div>
                 )}
               </div>

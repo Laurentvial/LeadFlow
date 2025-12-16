@@ -10,6 +10,7 @@ import Contacts from './components/Contacts';
 import Fosse from './components/Fosse';
 import AddContact from './components/AddContact';
 import { CsvImport } from './components/CsvImport';
+import { MigrationPage } from './components/MigrationPage';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
@@ -138,6 +139,15 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <CsvImport />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/migration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <MigrationPage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

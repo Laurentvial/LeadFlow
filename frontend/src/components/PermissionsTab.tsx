@@ -101,6 +101,8 @@ const contactFields = [
   { field: 'source', label: 'Source' },
   { field: 'teleoperator', label: 'Téléopérateur' },
   { field: 'confirmateur', label: 'Confirmateur' },
+  { field: 'confirmateur_email', label: 'Mail Confirmateur' },
+  { field: 'confirmateur_telephone', label: 'Téléphone Confirmateur' },
   { field: 'platform', label: 'Plateforme' },
   { field: 'montant_encaisse', label: 'Montant encaissé' },
   { field: 'bonus', label: 'Bonus' },
