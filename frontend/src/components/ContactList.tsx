@@ -631,6 +631,19 @@ export function ContactList({
   // Ref to track if loadData is currently running to prevent concurrent calls
   const isLoadingDataRef = React.useRef<boolean>(false);
   
+  // Add/remove body class when fullscreen mode changes
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.classList.add('contacts-fullscreen-active');
+    } else {
+      document.body.classList.remove('contacts-fullscreen-active');
+    }
+    // Cleanup on unmount
+    return () => {
+      document.body.classList.remove('contacts-fullscreen-active');
+    };
+  }, [isFullscreen]);
+  
   // Load Fosse settings for current user's role
   useEffect(() => {
     if (isFossePage && currentUser?.role) {

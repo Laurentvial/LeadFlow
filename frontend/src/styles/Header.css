@@ -185,3 +185,8 @@
   margin-right: 0.5rem;
 }
 
+/* Hide header container when contacts list is in fullscreen mode */
+body.contacts-fullscreen-active .header-container {
+  display: none;
+}
+
