@@ -43,9 +43,9 @@ interface MigratedRow {
 const CRM_FIELDS = [
   { value: '', label: 'Ignorer cette colonne' },
   { value: 'civility', label: 'Civilité' },
-  { value: 'firstName', label: 'Prénom (requis)' },
-  { value: 'lastName', label: 'Nom' },
-  { value: 'phone', label: 'Téléphone 1' },
+  { value: 'firstName', label: 'Prénom (requis)', required: true },
+  { value: 'lastName', label: 'Nom (requis)', required: true },
+  { value: 'phone', label: 'Téléphone 1 (requis)', required: true },
   { value: 'mobile', label: 'Telephone 2' },
   { value: 'email', label: 'Email' },
   { value: 'birthDate', label: 'Date de naissance' },
@@ -56,7 +56,7 @@ const CRM_FIELDS = [
   { value: 'city', label: 'Ville' },
   { value: 'nationality', label: 'Nationalité' },
   { value: 'campaign', label: 'Campagne' },
-  { value: 'statusId', label: 'Statut' },
+  { value: 'statusId', label: 'Statut (requis)', required: true },
   { value: 'sourceId', label: 'Source' },
   { value: 'teleoperatorId', label: 'Téléopérateur' },
   { value: 'confirmateurId', label: 'Confirmateur' },
@@ -71,6 +71,9 @@ const CRM_FIELDS = [
   { value: 'produit', label: 'Produit' },
   { value: 'confirmateurEmail', label: 'Mail Confirmateur' },
   { value: 'confirmateurTelephone', label: 'Téléphone Confirmateur' },
+  { value: 'createdAt', label: 'Date de création' },
+  { value: 'updatedAt', label: 'Date de modification' },
+  { value: 'assignedAt', label: 'Date d\'attribution' },
 ];
 
 export function MigrationPage() {
@@ -94,6 +97,26 @@ export function MigrationPage() {
   const [defaultStatusId, setDefaultStatusId] = useState('');
   const [defaultSourceId, setDefaultSourceId] = useState('');
   const [defaultTeleoperatorId, setDefaultTeleoperatorId] = useState('');
+  const [excludeFirstRow, setExcludeFirstRow] = useState(true); // Default to exclude first row (header)
+  const [statusMapping, setStatusMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Status ID
+  const [platformMapping, setPlatformMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Platform ID
+  const [confirmateurMapping, setConfirmateurMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Confirmateur ID
+  const [teleoperatorMapping, setTeleoperatorMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Teleoperator ID
+  const [contratMapping, setContratMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Contrat value
+  const [sourceMapping, setSourceMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Source ID
+  const [eventDateColumn, setEventDateColumn] = useState<string>(''); // CSV column for event date
+  const [eventHourColumn, setEventHourColumn] = useState<string>(''); // CSV column for event hour (optional)
+  const [eventMinuteColumn, setEventMinuteColumn] = useState<string>(''); // CSV column for event minute (optional)
+  const [defaultEventHour, setDefaultEventHour] = useState<string>('09'); // Default hour if not in CSV
+  const [defaultEventMinute, setDefaultEventMinute] = useState<string>('00'); // Default minute if not in CSV
+
+  // Contrat options from the select
+  const contratOptions = [
+    { value: 'CONTRAT SIGNÉ', label: 'CONTRAT SIGNÉ' },
+    { value: 'CONTRAT ENVOYÉ MAIS PAS SIGNÉ', label: 'CONTRAT ENVOYÉ MAIS PAS SIGNÉ' },
+    { value: 'PAS DE CONTRAT ENVOYÉ', label: 'PAS DE CONTRAT ENVOYÉ' },
+    { value: 'J\'AI SIGNÉ LE CONTRAT POUR LE CLIENT', label: 'J\'AI SIGNÉ LE CONTRAT POUR LE CLIENT' },
+  ];
 
   // Get status view permissions
   const statusViewPermissions = React.useMemo(() => {
@@ -159,6 +182,54 @@ export function MigrationPage() {
     return result;
   };
 
+  const parseCSVFile = async (file: File, excludeHeader: boolean) => {
+    const text = await file.text();
+    const lines = text.split('\n').filter(line => line.trim());
+    if (lines.length === 0) {
+      throw new Error('Le fichier CSV est vide');
+    }
+    
+    const firstRowValues = parseCSVLine(lines[0]);
+    const headers = firstRowValues.map((h, idx) => {
+      const cleaned = h.replace(/^"|"$/g, '').trim();
+      return cleaned || `Column${idx + 1}`;
+    });
+    
+    setCsvHeaders(headers);
+    
+    // Determine start index: skip first row if excludeHeader is true
+    const startIndex = excludeHeader ? 1 : 0;
+    
+    const allRows: any[] = [];
+    for (let i = startIndex; i < lines.length; i++) {
+      const values = parseCSVLine(lines[i]);
+      const row: any = {};
+      headers.forEach((header, idx) => {
+        row[header] = (values[idx] || '').replace(/^"|"$/g, '');
+      });
+      allRows.push(row);
+    }
+    
+    setCsvData(allRows);
+    
+    // Initialize column mapping
+    const initialMapping: ColumnMapping = {};
+    CRM_FIELDS.forEach(field => {
+      if (field.value) {
+        initialMapping[field.value] = '';
+      }
+    });
+    setColumnMapping(initialMapping);
+    setStatusMapping({}); // Reset status mapping
+    setPlatformMapping({}); // Reset platform mapping
+    setConfirmateurMapping({}); // Reset confirmateur mapping
+    setTeleoperatorMapping({}); // Reset teleoperator mapping
+    setContratMapping({}); // Reset contrat mapping
+    setSourceMapping({}); // Reset source mapping
+
+    return allRows;
+  };
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -179,41 +250,7 @@ export function MigrationPage() {
     setError(null);
 
     try {
-      const text = await file.text();
-      const lines = text.split('\n').filter(line => line.trim());
-      if (lines.length === 0) {
-        throw new Error('Le fichier CSV est vide');
-      }
-      
-      const firstRowValues = parseCSVLine(lines[0]);
-      const headers = firstRowValues.map((h, idx) => {
-        const cleaned = h.replace(/^"|"$/g, '').trim();
-        return cleaned || `Column${idx + 1}`;
-      });
-      
-      setCsvHeaders(headers);
-      
-      const allRows: any[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        const values = parseCSVLine(lines[i]);
-        const row: any = {};
-        headers.forEach((header, idx) => {
-          row[header] = (values[idx] || '').replace(/^"|"$/g, '');
-        });
-        allRows.push(row);
-      }
-      
-      setCsvData(allRows);
-      
-      // Initialize column mapping
-      const initialMapping: ColumnMapping = {};
-      CRM_FIELDS.forEach(field => {
-        if (field.value) {
-          initialMapping[field.value] = '';
-        }
-      });
-      setColumnMapping(initialMapping);
-
+      const allRows = await parseCSVFile(file, excludeFirstRow);
       setStep('mapping');
       toast.success(`Fichier chargé: ${allRows.length} lignes détectées`);
     } catch (error: any) {
@@ -229,8 +266,19 @@ export function MigrationPage() {
   };
 
   const handleStartMigration = () => {
-    if (!columnMapping.firstName) {
-      toast.error('Veuillez mapper le champ requis: Prénom');
+    // Validate all required fields
+    const requiredFields = [
+      { key: 'firstName', label: 'Prénom' },
+      { key: 'lastName', label: 'Nom' },
+      { key: 'phone', label: 'Téléphone 1' },
+      { key: 'statusId', label: 'Statut' },
+    ];
+    
+    const missingFields = requiredFields.filter(field => !columnMapping[field.key]);
+    
+    if (missingFields.length > 0) {
+      const fieldsList = missingFields.map(f => f.label).join(', ');
+      toast.error(`Veuillez mapper les champs requis: ${fieldsList}`);
       return;
     }
 
@@ -246,26 +294,142 @@ export function MigrationPage() {
           
           // Convert names to IDs for platformId and statusId
           if (field === 'platformId' && value) {
-            const platform = platforms.find(p => 
-              p.name?.toLowerCase().trim() === value.toString().toLowerCase().trim() ||
-              p.id === value
-            );
-            if (platform) {
-              value = platform.id;
+            const valueStr = value.toString().trim();
+            // First check platform mapping
+            if (platformMapping[valueStr]) {
+              value = platformMapping[valueStr];
             } else {
-              // If not found, keep the value as is (might be an ID already)
-              value = value;
+              // Try to find by name or ID
+              const platform = platforms.find(p => 
+                p.name?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                p.id === valueStr
+              );
+              if (platform) {
+                value = platform.id;
+              } else {
+                // If not found, keep the value as is (might be an ID already)
+                value = value;
+              }
             }
           } else if (field === 'statusId' && value) {
-            const status = availableStatuses.find(s => 
-              s.name?.toLowerCase().trim() === value.toString().toLowerCase().trim() ||
-              s.id === value
-            );
-            if (status) {
-              value = status.id;
+            const valueStr = value.toString().trim();
+            // First check status mapping
+            if (statusMapping[valueStr]) {
+              value = statusMapping[valueStr];
             } else {
-              // If not found, keep the value as is (might be an ID already)
-              value = value;
+              // Try to find by name or ID
+              const status = availableStatuses.find(s => 
+                s.name?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                s.id === valueStr
+              );
+              if (status) {
+                value = status.id;
+              } else {
+                // If not found, keep the value as is (might be an ID already)
+                value = value;
+              }
+            }
+          } else if (field === 'sourceId' && value) {
+            const valueStr = value.toString().trim();
+            // First check source mapping
+            if (sourceMapping[valueStr]) {
+              value = sourceMapping[valueStr];
+            } else {
+              // Try to find by name or ID
+              const source = sources.find(s => 
+                s.name?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                s.id === valueStr
+              );
+              if (source) {
+                value = source.id;
+              } else {
+                // If not found, keep the value as is (might be an ID already)
+                value = value;
+              }
+            }
+          } else if (field === 'confirmateurId') {
+            if (value && value.toString().trim()) {
+              const valueStr = value.toString().trim();
+              // First check confirmateur mapping
+              if (confirmateurMapping[valueStr]) {
+                value = confirmateurMapping[valueStr];
+              } else {
+                // Try to find by name or ID
+                const confirmateur = confirmateurs.find(c => {
+                  const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+                  return fullName.toLowerCase() === valueStr.toLowerCase().trim() ||
+                         c.username?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                         c.email?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                         c.id === valueStr;
+                });
+                if (confirmateur) {
+                  value = confirmateur.id;
+                } else {
+                  // If not found, keep the value as is (might be an ID already)
+                  value = valueStr;
+                }
+              }
+            } else {
+              // Empty value, set to null
+              value = null;
+            }
+          } else if (field === 'teleoperatorId') {
+            if (value && value.toString().trim()) {
+              const valueStr = value.toString().trim();
+              // First check teleoperator mapping
+              if (teleoperatorMapping[valueStr]) {
+                value = teleoperatorMapping[valueStr];
+              } else {
+                // Try to find by name or ID
+                const teleoperator = teleoperateurs.find(t => {
+                  const fullName = `${t.firstName || ''} ${t.lastName || ''}`.trim();
+                  return fullName.toLowerCase() === valueStr.toLowerCase().trim() ||
+                         t.username?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                         t.email?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                         t.id === valueStr;
+                });
+                if (teleoperator) {
+                  value = teleoperator.id;
+                } else {
+                  // If not found, keep the value as is (might be an ID already)
+                  value = valueStr;
+                }
+              }
+            } else {
+              // Empty value, set to null
+              value = null;
+            }
+          } else if (field === 'contrat' && value) {
+            const valueStr = value.toString().trim();
+            // First check contrat mapping
+            if (contratMapping[valueStr]) {
+              value = contratMapping[valueStr];
+            } else {
+              // Try to find exact match with contrat options
+              const matchedOption = contratOptions.find(opt => 
+                opt.value.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
+                opt.label.toLowerCase().trim() === valueStr.toLowerCase().trim()
+              );
+              if (matchedOption) {
+                value = matchedOption.value;
+              } else {
+                // If not found, set to empty
+                value = '';
+              }
+            }
+          } else if ((field === 'createdAt' || field === 'updatedAt' || field === 'assignedAt') && value) {
+            // Handle date fields - try to parse and format dates
+            const dateValue = value.toString().trim();
+            if (dateValue) {
+              // Try to parse various date formats
+              const parsedDate = new Date(dateValue);
+              if (!isNaN(parsedDate.getTime())) {
+                // Format as ISO string (YYYY-MM-DDTHH:mm:ss)
+                value = parsedDate.toISOString();
+              } else {
+                // If parsing fails, keep original value - backend should handle parsing
+                value = dateValue;
+              }
             }
           }
           
@@ -273,21 +437,99 @@ export function MigrationPage() {
         }
       });
 
-      // Apply defaults
-      if (!mappedData.statusId && defaultStatusId) {
-        mappedData.statusId = defaultStatusId;
-      }
-      if (!mappedData.sourceId && defaultSourceId) {
-        mappedData.sourceId = defaultSourceId;
-      }
-      if (!mappedData.teleoperatorId && defaultTeleoperatorId) {
-        mappedData.teleoperatorId = defaultTeleoperatorId;
+      // Parse event data from CSV columns if event date column is mapped
+      let eventData: MigratedRow['eventData'] | undefined = undefined;
+      if (eventDateColumn && row[eventDateColumn]) {
+        const dateValue = row[eventDateColumn].toString().trim();
+        if (dateValue) {
+          try {
+            // Parse date in dd/mm/yyyy format
+            let parsedDate: Date | null = null;
+            
+            // Try to parse dd/mm/yyyy format first
+            const ddmmyyyyMatch = dateValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (ddmmyyyyMatch) {
+              const day = parseInt(ddmmyyyyMatch[1], 10);
+              const month = parseInt(ddmmyyyyMatch[2], 10);
+              const year = parseInt(ddmmyyyyMatch[3], 10);
+              parsedDate = new Date(year, month - 1, day);
+            } else {
+              // Fallback to standard Date parsing for other formats
+              parsedDate = new Date(dateValue);
+            }
+            
+            if (parsedDate && !isNaN(parsedDate.getTime())) {
+              // Extract date components
+              const year = parsedDate.getFullYear();
+              const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+              const day = String(parsedDate.getDate()).padStart(2, '0');
+              const dateStr = `${year}-${month}-${day}`;
+              
+              // Get hour and minute from columns or use defaults
+              let hour = defaultEventHour;
+              let minute = defaultEventMinute;
+              
+              // Try to extract hour from the date value if it contains time
+              const timeMatch = dateValue.match(/(\d{1,2}):(\d{2})/);
+              if (timeMatch) {
+                hour = timeMatch[1].padStart(2, '0');
+                minute = timeMatch[2].padStart(2, '0');
+              } else {
+                // Check if parsed date has time component
+                const hourFromDate = parsedDate.getHours();
+                const minuteFromDate = parsedDate.getMinutes();
+                if (hourFromDate !== 0 || minuteFromDate !== 0) {
+                  hour = String(hourFromDate).padStart(2, '0');
+                  minute = String(minuteFromDate).padStart(2, '0');
+                }
+              }
+              
+              // Override with hour column if mapped
+              if (eventHourColumn && row[eventHourColumn]) {
+                const hourValue = row[eventHourColumn].toString().trim();
+                if (hourValue) {
+                  const hourMatch = hourValue.match(/\d{1,2}/);
+                  if (hourMatch) {
+                    const h = parseInt(hourMatch[0]);
+                    if (h >= 0 && h <= 23) {
+                      hour = String(h).padStart(2, '0');
+                    }
+                  }
+                }
+              }
+              
+              // Override with minute column if mapped
+              if (eventMinuteColumn && row[eventMinuteColumn]) {
+                const minuteValue = row[eventMinuteColumn].toString().trim();
+                if (minuteValue) {
+                  const minuteMatch = minuteValue.match(/\d{1,2}/);
+                  if (minuteMatch) {
+                    const m = parseInt(minuteMatch[0]);
+                    if (m >= 0 && m <= 59) {
+                      minute = String(m).padStart(2, '0');
+                    }
+                  }
+                }
+              }
+              
+              eventData = {
+                date: dateStr,
+                hour: hour,
+                minute: minute,
+                teleoperatorId: defaultTeleoperatorId || ''
+              };
+            }
+          } catch (error) {
+            console.error('Error parsing event date:', error);
+          }
+        }
       }
 
       return {
         id: `row-${index}`,
         csvData: row,
         mappedData,
+        eventData,
         isEditing: false,
         isSaving: false,
       };
@@ -345,8 +587,21 @@ export function MigrationPage() {
   };
 
   const handleSaveRow = async (row: MigratedRow) => {
-    if (!row.mappedData.firstName) {
+    // Validate all required fields
+    if (!row.mappedData.firstName || !row.mappedData.firstName.trim()) {
       toast.error('Le prénom est requis');
+      return;
+    }
+    if (!row.mappedData.lastName || !row.mappedData.lastName.trim()) {
+      toast.error('Le nom est requis');
+      return;
+    }
+    if (!row.mappedData.phone || !row.mappedData.phone.trim()) {
+      toast.error('Le téléphone 1 est requis');
+      return;
+    }
+    if (!row.mappedData.statusId) {
+      toast.error('Le statut est requis');
       return;
     }
 
@@ -357,11 +612,11 @@ export function MigrationPage() {
     try {
       // Prepare contact data
       const contactPayload: any = {
-        firstName: row.mappedData.firstName,
-        lastName: row.mappedData.lastName || '',
+        firstName: row.mappedData.firstName.trim(),
+        lastName: row.mappedData.lastName.trim(),
         email: row.mappedData.email || '',
-        phone: row.mappedData.phone || '',
-        mobile: row.mappedData.mobile || '',
+        phone: removePhoneSpaces(String(row.mappedData.phone)),
+        mobile: row.mappedData.mobile && row.mappedData.mobile.trim() ? removePhoneSpaces(String(row.mappedData.mobile)) : removePhoneSpaces(String(row.mappedData.phone || '')), // Use phone as fallback if mobile is empty
         civility: row.mappedData.civility || '',
         birthDate: row.mappedData.birthDate || '',
         birthPlace: row.mappedData.birthPlace || '',
@@ -371,10 +626,10 @@ export function MigrationPage() {
         city: row.mappedData.city || '',
         nationality: row.mappedData.nationality || '',
         campaign: row.mappedData.campaign || '',
-        statusId: row.mappedData.statusId || defaultStatusId,
-        sourceId: row.mappedData.sourceId || defaultSourceId || null,
-        teleoperatorId: row.mappedData.teleoperatorId || defaultTeleoperatorId || null,
-        confirmateurId: row.mappedData.confirmateurId || null,
+        statusId: row.mappedData.statusId || null,
+        sourceId: row.mappedData.sourceId || null,
+        teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? row.mappedData.teleoperatorId.toString().trim() : null,
+        confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? row.mappedData.confirmateurId.toString().trim() : null,
         platformId: row.mappedData.platformId || null,
         montantEncaisse: row.mappedData.montantEncaisse || '',
         bonus: row.mappedData.bonus || '',
@@ -387,6 +642,17 @@ export function MigrationPage() {
         confirmateurEmail: row.mappedData.confirmateurEmail || '',
         confirmateurTelephone: row.mappedData.confirmateurTelephone || '',
       };
+
+      // Add date fields if provided
+      if (row.mappedData.createdAt) {
+        contactPayload.createdAt = row.mappedData.createdAt;
+      }
+      if (row.mappedData.updatedAt) {
+        contactPayload.updatedAt = row.mappedData.updatedAt;
+      }
+      if (row.mappedData.assignedAt) {
+        contactPayload.assignedAt = row.mappedData.assignedAt;
+      }
 
       // Create contact
       const contactResponse = await apiCall('/api/contacts/create/', {
@@ -424,7 +690,6 @@ export function MigrationPage() {
         } : r
       ));
 
-      setEditingRowId(null);
       toast.success(`Contact créé avec succès`);
     } catch (error: any) {
       console.error('Error saving row:', error);
@@ -471,10 +736,21 @@ export function MigrationPage() {
     setCsvHeaders([]);
     setCsvData([]);
     setColumnMapping({});
+    setStatusMapping({});
+    setPlatformMapping({});
+    setConfirmateurMapping({});
+    setTeleoperatorMapping({});
+    setContratMapping({});
+    setSourceMapping({});
     setMigratedRows([]);
-    setEditingRowId(null);
     setError(null);
     setIsLoading(false);
+    setExcludeFirstRow(true); // Reset to default
+    setEventDateColumn('');
+    setEventHourColumn('');
+    setEventMinuteColumn('');
+    setDefaultEventHour('09');
+    setDefaultEventMinute('00');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -582,9 +858,39 @@ export function MigrationPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="bg-slate-50 p-4 rounded space-y-2">
-                <p className="text-sm text-slate-700">
-                  <strong>{csvData.length}</strong> ligne(s) détectée(s) dans le fichier
-                </p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm text-slate-700">
+                    <strong>{csvData.length}</strong> ligne(s) détectée(s) dans le fichier
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="exclude-first-row"
+                      checked={excludeFirstRow}
+                      onChange={async (e) => {
+                        const newValue = e.target.checked;
+                        setExcludeFirstRow(newValue);
+                        // Re-parse CSV with new setting
+                        if (csvFile) {
+                          setIsLoading(true);
+                          try {
+                            const allRows = await parseCSVFile(csvFile, newValue);
+                            toast.success(`Fichier rechargé: ${allRows.length} lignes détectées`);
+                          } catch (error: any) {
+                            console.error('Error re-parsing CSV:', error);
+                            toast.error('Erreur lors du rechargement du fichier');
+                          } finally {
+                            setIsLoading(false);
+                          }
+                        }
+                      }}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <Label htmlFor="exclude-first-row" className="text-sm text-slate-700 cursor-pointer">
+                      Exclure la première ligne (en-tête)
+                    </Label>
+                  </div>
+                </div>
                 {csvHeaders.length > 0 && (
                   <div>
                     <p className="text-xs text-slate-600 mb-2">Colonnes disponibles dans votre CSV:</p>
@@ -600,61 +906,651 @@ export function MigrationPage() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="font-semibold text-lg">Mapper vos colonnes CSV aux champs CRM</h3>
+                <div>
+                  <h3 className="font-semibold text-lg">Mapper vos colonnes CSV aux champs CRM</h3>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Les champs marqués d'un <span className="text-red-600 font-semibold">*</span> sont obligatoires
+                  </p>
+                </div>
                 <div className="max-h-96 overflow-y-auto border rounded p-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {CRM_FIELDS.filter(field => field.value !== '').map((field) => (
-                      <div key={field.value} className="flex items-center gap-3">
-                        <Label className="w-40 text-sm font-medium flex-shrink-0">
-                          {field.label}
-                        </Label>
-                        <Select
-                          value={columnMapping[field.value] || '__none__'}
-                          onValueChange={(value) => {
-                            setColumnMapping({
-                              ...columnMapping,
-                              [field.value]: value === '__none__' ? '' : value,
-                            });
-                          }}
-                        >
-                          <SelectTrigger className="flex-1">
-                            <SelectValue placeholder="Sélectionner une colonne CSV" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">-- Ignorer --</SelectItem>
-                            {csvHeaders.map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ))}
+                    {CRM_FIELDS.filter(field => field.value !== '').map((field) => {
+                      // Get all currently mapped columns (excluding the current field)
+                      const mappedColumns = Object.values(columnMapping).filter(
+                        (col, idx) => col && col !== '' && Object.keys(columnMapping)[idx] !== field.value
+                      );
+                      
+                      // Filter out already mapped columns from available options
+                      const availableHeaders = csvHeaders.filter(header => 
+                        !mappedColumns.includes(header) || columnMapping[field.value] === header
+                      );
+
+                      const isRequired = field.required || false;
+                      const isMapped = !!columnMapping[field.value];
+                      
+                      return (
+                        <div key={field.value} className="flex items-center gap-3">
+                          <Label className={`w-40 text-sm font-medium flex-shrink-0 ${isRequired && !isMapped ? 'text-red-600' : ''}`}>
+                            {field.label}
+                            {isRequired && <span className="text-red-600 ml-1">*</span>}
+                          </Label>
+                          <Select
+                            value={columnMapping[field.value] || '__none__'}
+                            onValueChange={(value) => {
+                              setColumnMapping({
+                                ...columnMapping,
+                                [field.value]: value === '__none__' ? '' : value,
+                              });
+                            }}
+                          >
+                            <SelectTrigger className="flex-1">
+                              <SelectValue placeholder="Sélectionner une colonne CSV" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">-- Ignorer --</SelectItem>
+                              {availableHeaders.map((header) => (
+                                <SelectItem key={header} value={header}>
+                                  {header}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
 
+              {/* Status Mapping Section */}
+              {columnMapping.statusId && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de statut</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de statut de votre CSV aux statuts de la base de données
+                    </p>
+                    {(() => {
+                      // Get unique status values from CSV
+                      const statusColumn = columnMapping.statusId;
+                      const uniqueStatusValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[statusColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniqueStatusValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de statut trouvée dans la colonne "{statusColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniqueStatusValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={statusMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setStatusMapping({
+                                      ...statusMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner un statut" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                    {availableStatuses.map((status) => (
+                                      <SelectItem key={status.id} value={status.id}>
+                                        <div className="flex items-center gap-2">
+                                          <span 
+                                            className="inline-block px-2 py-1 rounded text-sm"
+                                            style={{
+                                              backgroundColor: status.color || '#e5e7eb',
+                                              color: status.color ? '#000000' : '#374151'
+                                            }}
+                                          >
+                                            {status.name}
+                                          </span>
+                                          <span className="text-xs text-slate-500">
+                                            ({status.type === 'lead' ? 'Lead' : status.type === 'client' ? 'Client' : 'N/A'})
+                                          </span>
+                                        </div>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Platform Mapping Section */}
+              {columnMapping.platformId && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de plateforme</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de plateforme de votre CSV aux plateformes de la base de données
+                    </p>
+                    {(() => {
+                      // Get unique platform values from CSV
+                      const platformColumn = columnMapping.platformId;
+                      const uniquePlatformValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[platformColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniquePlatformValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de plateforme trouvée dans la colonne "{platformColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniquePlatformValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={platformMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setPlatformMapping({
+                                      ...platformMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner une plateforme" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                    {platforms.map((platform) => (
+                                      <SelectItem key={platform.id} value={platform.id}>
+                                        {platform.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Confirmateur Mapping Section */}
+              {columnMapping.confirmateurId && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de confirmateur</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de confirmateur de votre CSV aux confirmateurs de la base de données
+                    </p>
+                    {(() => {
+                      // Get unique confirmateur values from CSV
+                      const confirmateurColumn = columnMapping.confirmateurId;
+                      const uniqueConfirmateurValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[confirmateurColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniqueConfirmateurValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de confirmateur trouvée dans la colonne "{confirmateurColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniqueConfirmateurValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={confirmateurMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setConfirmateurMapping({
+                                      ...confirmateurMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner un confirmateur" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                    {confirmateurs.map((confirmateur) => {
+                                      const displayName = `${confirmateur.firstName || ''} ${confirmateur.lastName || ''}`.trim() || confirmateur.username || confirmateur.email || `Utilisateur ${confirmateur.id}`;
+                                      return (
+                                        <SelectItem key={confirmateur.id} value={confirmateur.id}>
+                                          {displayName}
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Teleoperator Mapping Section */}
+              {columnMapping.teleoperatorId && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de téléopérateur</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de téléopérateur de votre CSV aux téléopérateurs de la base de données
+                    </p>
+                    {(() => {
+                      // Get unique teleoperator values from CSV
+                      const teleoperatorColumn = columnMapping.teleoperatorId;
+                      const uniqueTeleoperatorValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[teleoperatorColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniqueTeleoperatorValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de téléopérateur trouvée dans la colonne "{teleoperatorColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniqueTeleoperatorValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={teleoperatorMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setTeleoperatorMapping({
+                                      ...teleoperatorMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner un téléopérateur" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                    {teleoperateurs.map((teleoperator) => {
+                                      const displayName = `${teleoperator.firstName || ''} ${teleoperator.lastName || ''}`.trim() || teleoperator.username || teleoperator.email || `Utilisateur ${teleoperator.id}`;
+                                      return (
+                                        <SelectItem key={teleoperator.id} value={teleoperator.id}>
+                                          {displayName}
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+
+              {/* Contrat Mapping Section */}
+              {columnMapping.contrat && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de contrat</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de contrat de votre CSV aux options de contrat disponibles
+                    </p>
+                    {(() => {
+                      // Get unique contrat values from CSV
+                      const contratColumn = columnMapping.contrat;
+                      const uniqueContratValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[contratColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniqueContratValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de contrat trouvée dans la colonne "{contratColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniqueContratValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={contratMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setContratMapping({
+                                      ...contratMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner une option de contrat" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé (vide) --</SelectItem>
+                                    {contratOptions.map((option) => (
+                                      <SelectItem key={option.value} value={option.value}>
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Source Mapping Section */}
+              {columnMapping.sourceId && csvData.length > 0 && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de source</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Mappez les valeurs de source de votre CSV aux sources de la base de données
+                    </p>
+                    {(() => {
+                      // Get unique source values from CSV
+                      const sourceColumn = columnMapping.sourceId;
+                      const uniqueSourceValues = Array.from(
+                        new Set(
+                          csvData
+                            .map(row => row[sourceColumn])
+                            .filter(val => val && val.toString().trim() !== '')
+                            .map(val => val.toString().trim())
+                        )
+                      ).sort();
+
+                      if (uniqueSourceValues.length === 0) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                            <p className="text-sm text-yellow-800">
+                              Aucune valeur de source trouvée dans la colonne "{sourceColumn}"
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border rounded p-4 bg-slate-50">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {uniqueSourceValues.map((csvValue) => (
+                              <div key={csvValue} className="flex items-center gap-3">
+                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                  {csvValue}
+                                </Label>
+                                <Select
+                                  value={sourceMapping[csvValue] || '__none__'}
+                                  onValueChange={(value) => {
+                                    setSourceMapping({
+                                      ...sourceMapping,
+                                      [csvValue]: value === '__none__' ? '' : value,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="flex-1">
+                                    <SelectValue placeholder="Sélectionner une source" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                    {sources.map((source) => (
+                                      <SelectItem key={source.id} value={source.id}>
+                                        {source.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Event Date Mapping Section */}
+              <div className="mt-6 pt-4 border-t">
+                <h3 className="font-semibold text-lg mb-2">Configuration des événements</h3>
+                <p className="text-sm text-slate-600 mb-4">
+                  Configurez la création automatique d'événements basée sur une colonne de date du CSV
+                  <br />
+                  <span className="text-xs text-slate-500">Format de date attendu: dd/mm/yyyy (ex: 25/12/2024)</span>
+                </p>
+                <div className="space-y-4 bg-slate-50 p-4 rounded">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Colonne de date pour l'événement</Label>
+                      <Select
+                        value={eventDateColumn || '__none__'}
+                        onValueChange={(value) => {
+                          setEventDateColumn(value === '__none__' ? '' : value);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sélectionner une colonne" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">-- Aucune --</SelectItem>
+                          {csvHeaders
+                            .filter(header => 
+                              !eventHourColumn || eventHourColumn !== header || eventDateColumn === header
+                            )
+                            .filter(header => 
+                              !eventMinuteColumn || eventMinuteColumn !== header || eventDateColumn === header
+                            )
+                            .map((header) => (
+                              <SelectItem key={header} value={header}>
+                                {header}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Colonne d'heure (optionnel)</Label>
+                      <Select
+                        value={eventHourColumn || '__none__'}
+                        onValueChange={(value) => {
+                          setEventHourColumn(value === '__none__' ? '' : value);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sélectionner une colonne" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">-- Aucune --</SelectItem>
+                          {csvHeaders
+                            .filter(header => 
+                              !eventDateColumn || eventDateColumn !== header || eventHourColumn === header
+                            )
+                            .filter(header => 
+                              !eventMinuteColumn || eventMinuteColumn !== header || eventHourColumn === header
+                            )
+                            .map((header) => (
+                              <SelectItem key={header} value={header}>
+                                {header}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Colonne de minutes (optionnel)</Label>
+                      <Select
+                        value={eventMinuteColumn || '__none__'}
+                        onValueChange={(value) => {
+                          setEventMinuteColumn(value === '__none__' ? '' : value);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sélectionner une colonne" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">-- Aucune --</SelectItem>
+                          {csvHeaders
+                            .filter(header => 
+                              !eventDateColumn || eventDateColumn !== header || eventMinuteColumn === header
+                            )
+                            .filter(header => 
+                              !eventHourColumn || eventHourColumn !== header || eventMinuteColumn === header
+                            )
+                            .map((header) => (
+                              <SelectItem key={header} value={header}>
+                                {header}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Heure par défaut</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={defaultEventHour}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 23)) {
+                            setDefaultEventHour(val || '00');
+                          }
+                        }}
+                        placeholder="09"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Utilisée si aucune colonne d'heure n'est mappée</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Minutes par défaut</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="59"
+                        value={defaultEventMinute}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 59)) {
+                            setDefaultEventMinute(val || '00');
+                          }
+                        }}
+                        placeholder="00"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Utilisées si aucune colonne de minutes n'est mappée</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CSV Preview Table - Show all contacts */}
               {csvData.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="font-medium mb-2">Aperçu des données CSV</h4>
+                <div className="mt-6 pt-4 border-t">
+                  <h4 className="font-medium mb-2">Aperçu de toutes les données CSV</h4>
                   <p className="text-sm text-slate-600 mb-3">
-                    Aperçu des premières lignes pour vous aider à mapper les colonnes correctement
+                    Tous les contacts du fichier CSV ({csvData.length} ligne(s))
                   </p>
-                  <div className="border rounded overflow-x-auto">
+                  <div className="border rounded overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-slate-50">
+                      <thead className="bg-slate-50 sticky top-0">
                         <tr>
+                          <th className="px-3 py-2 text-left border-b font-semibold bg-slate-50 sticky left-0 z-10">#</th>
                           {csvHeaders.map((header) => (
-                            <th key={header} className="px-3 py-2 text-left border-b font-semibold">
+                            <th key={header} className="px-3 py-2 text-left border-b font-semibold bg-slate-50">
                               {header}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {csvData.slice(0, 5).map((row, idx) => (
+                        {csvData.map((row, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 border-b bg-white sticky left-0 z-10 font-medium">{idx + 1}</td>
                             {csvHeaders.map((header) => (
                               <td key={header} className="px-3 py-2 border-b">
                                 <div className="max-w-xs truncate" title={row[header] || ''}>
@@ -666,79 +1562,18 @@ export function MigrationPage() {
                         ))}
                       </tbody>
                     </table>
-                    {csvData.length > 5 && (
-                      <div className="px-3 py-2 bg-slate-50 text-xs text-slate-500 text-center border-t">
-                        ... et {csvData.length - 5} autre(s) ligne(s)
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
-                <div className="space-y-2">
-                  <Label htmlFor="default-status">Statut par défaut</Label>
-                  <Select value={defaultStatusId} onValueChange={setDefaultStatusId}>
-                    <SelectTrigger id="default-status">
-                      <SelectValue placeholder="Sélectionner un statut" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableStatuses.map((status) => (
-                        <SelectItem key={status.id} value={status.id}>
-                          <span 
-                            className="inline-block px-2 py-1 rounded text-sm"
-                            style={{
-                              backgroundColor: status.color || '#e5e7eb',
-                              color: status.color ? '#000000' : '#374151'
-                            }}
-                          >
-                            {status.name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="default-teleoperator">Téléopérateur par défaut</Label>
-                  <Select value={defaultTeleoperatorId} onValueChange={setDefaultTeleoperatorId}>
-                    <SelectTrigger id="default-teleoperator">
-                      <SelectValue placeholder="Sélectionner un téléopérateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teleoperateurs.map((teleoperator) => (
-                        <SelectItem key={teleoperator.id} value={teleoperator.id}>
-                          {teleoperator.firstName} {teleoperator.lastName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="default-source">Source par défaut</Label>
-                  <Select value={defaultSourceId || '__none__'} onValueChange={(value) => setDefaultSourceId(value === '__none__' ? '' : value)}>
-                    <SelectTrigger id="default-source">
-                      <SelectValue placeholder="Sélectionner une source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Aucune source</SelectItem>
-                      {sources.map((source) => (
-                        <SelectItem key={source.id} value={source.id}>
-                          {source.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t">
                 <Button variant="outline" onClick={() => navigate('/contacts')}>
                   Annuler
                 </Button>
-                <Button onClick={handleStartMigration} disabled={!columnMapping.firstName}>
+                <Button 
+                  onClick={handleStartMigration} 
+                  disabled={!columnMapping.firstName || !columnMapping.lastName || !columnMapping.phone || !columnMapping.statusId}
+                >
                   Continuer vers la migration
                 </Button>
               </div>
