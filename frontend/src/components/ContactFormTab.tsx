@@ -316,7 +316,7 @@ export function ContactFormTab() {
     setPlatformError('');
     setPlatformLoading(true);
     try {
-      await apiCall('/api/platforms/', {
+      await apiCall('/api/platforms/create/', {
         method: 'POST',
         body: JSON.stringify({
           name: platformForm.name,
