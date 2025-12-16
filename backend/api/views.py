@@ -3920,6 +3920,8 @@ def user_update(request, user_id):
         django_user.username = request.data['username']
     if 'email' in request.data:
         django_user.email = request.data['email']
+        # When email is updated, also update username to match the email
+        django_user.username = request.data['email']
     django_user.save()
     
     # Update UserDetails fields
