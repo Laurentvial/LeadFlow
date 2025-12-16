@@ -428,7 +428,7 @@ export function ContactList({
   // Order selection state - used by select dropdown
   // For Fosse page: used when settings.defaultOrder is 'none' or not set
   // For Contacts page: always used
-  const [selectedOrder, setSelectedOrder] = useState<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc'>('created_at_desc');
+  const [selectedOrder, setSelectedOrder] = useState<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random'>('created_at_desc');
   
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -618,7 +618,7 @@ export function ContactList({
   const [fosseSettings, setFosseSettings] = useState<{
     forcedColumns: string[];
     forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
-    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random';
   } | null>(null);
   const [fosseSettingsLoading, setFosseSettingsLoading] = useState(false);
   
@@ -3670,7 +3670,7 @@ export function ContactList({
                 value={isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' ? fosseSettings.defaultOrder : selectedOrder}
                 disabled={isFossePage && fosseSettings?.defaultOrder !== undefined && fosseSettings.defaultOrder !== 'none'}
                 onValueChange={(value) => {
-                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random';
                   setSelectedOrder(orderValue);
                 }}
               >
@@ -3683,6 +3683,7 @@ export function ContactList({
                   <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
                   <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
                   <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
+                  <SelectItem value="random">Aléatoire</SelectItem>
                 </SelectContent>
               </Select>
               {isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' && (

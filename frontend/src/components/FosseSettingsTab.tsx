@@ -28,7 +28,7 @@ interface FosseSettings {
   roleName: string;
   forcedColumns: string[];
   forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
-  defaultOrder: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc';
+  defaultOrder: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random';
   defaultStatusId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -594,6 +594,10 @@ export function FosseSettingsTab() {
             if (!emailB) return -1;
             return emailA.localeCompare(emailB, 'fr', { numeric: true, sensitivity: 'base' });
           });
+          break;
+        case 'random':
+          // Shuffle array randomly using Fisher-Yates algorithm
+          contacts = [...contacts].sort(() => Math.random() - 0.5);
           break;
         default:
           // Default: sort by creation date, most recent first (same as created_at_desc)
@@ -2039,7 +2043,7 @@ export function FosseSettingsTab() {
                             <Select
                               value={setting?.defaultOrder || 'created_at_desc'}
                               disabled={isSaving || !setting}
-                              onValueChange={(value: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc') => {
+                              onValueChange={(value: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random') => {
                                 if (setting) {
                                   updateSettings(role.id, { defaultOrder: value });
                                   // Reload preview with new order (use 'created_at_desc' if 'none' is selected)
@@ -2065,6 +2069,7 @@ export function FosseSettingsTab() {
                                 <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
                                 <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
                                 <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
+                                <SelectItem value="random">Aléatoire</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>

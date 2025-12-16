@@ -133,8 +133,8 @@ export function AddContact() {
       setLoading(false);
       return;
     }
-    if (!formData.mobile.trim()) {
-      toast.error('Le portable est requis');
+    if (!formData.phone.trim()) {
+      toast.error('Le téléphone 1 est requis');
       setLoading(false);
       return;
     }
@@ -342,25 +342,25 @@ export function AddContact() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="mobile">Telephone 2 *</Label>
-                <Input
-                  id="mobile"
-                  type="number"
-                  value={formData.mobile}
-                  onChange={(e) => setFormData({ ...formData, mobile: removePhoneSpaces(e.target.value) })}
-                  required
-                  placeholder="0612345678"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="phone">Téléphone 1</Label>
+                <Label htmlFor="phone">Téléphone 1 *</Label>
                 <Input
                   id="phone"
                   type="number"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: removePhoneSpaces(e.target.value) })}
+                  required
                   placeholder="0123456789"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="mobile">Telephone 2</Label>
+                <Input
+                  id="mobile"
+                  type="number"
+                  value={formData.mobile}
+                  onChange={(e) => setFormData({ ...formData, mobile: removePhoneSpaces(e.target.value) })}
+                  placeholder="0612345678"
                 />
               </div>
               </div>

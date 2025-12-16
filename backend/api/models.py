@@ -263,6 +263,7 @@ class FosseSettings(models.Model):
         ('updated_at_asc', 'Date de modification (ancien à nouveau)'),
         ('updated_at_desc', 'Date de modification (nouveau à ancien)'),
         ('email_asc', 'Email (ordre alphabétique)'),
+        ('random', 'Aléatoire'),
     ]
     
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)

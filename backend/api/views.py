@@ -1319,6 +1319,8 @@ class ContactView(generics.ListAPIView):
                 ).order_by('-sort_date', '-updated_at')
             elif order_param == 'email_asc':
                 queryset = queryset.order_by('email')
+            elif order_param == 'random':
+                queryset = queryset.order_by('?')
             else:
                 # Fallback to default ordering (creation date, most recent first)
                 queryset = queryset.order_by('-created_at')
@@ -2243,6 +2245,8 @@ class FosseContactView(generics.ListAPIView):
                     queryset = queryset.order_by('-updated_at')
                 elif order_to_apply == 'email_asc':
                     queryset = queryset.order_by('email')
+                elif order_to_apply == 'random':
+                    queryset = queryset.order_by('?')
                 else:
                     # Fallback to default ordering (creation date, most recent first)
                     queryset = queryset.order_by('-created_at')
