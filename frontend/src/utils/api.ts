@@ -239,7 +239,13 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
       fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:230',message:'Attempting token refresh after 401',data:{endpoint},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
       // #endregion
       const newToken = await refreshAccessToken();
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:241',message:'refreshAccessToken returned',data:{endpoint,newToken:newToken?`${newToken.substring(0,20)}...`:null,newTokenLength:newToken?.length||0,isTruthy:!!newToken},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       if (newToken) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:242',message:'Retrying request with new token',data:{endpoint,newTokenLength:newToken.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         // Retry the request with the new token
         const retryHeaders: HeadersInit = {
           ...options.headers,
@@ -256,6 +262,9 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         const retryTimeoutId = setTimeout(() => retryController.abort(), retryTimeoutDuration);
         
         try {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:258',message:'Sending retry request',data:{endpoint,hasAuthHeader:!!retryHeaders['Authorization']},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
           response = await fetch(`${apiUrl}${endpoint}`, {
             ...options,
             headers: retryHeaders,
@@ -265,6 +274,9 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
             credentials: 'include', // Include credentials (cookies) if needed
           });
           clearTimeout(retryTimeoutId);
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:273',message:'Retry response received',data:{endpoint,status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
         } catch (retryError: any) {
           clearTimeout(retryTimeoutId);
           if (retryError.name === 'AbortError') {
