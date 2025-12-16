@@ -59,7 +59,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
     const labels: { [key: string]: string } = {
       'firstName': 'Prénom',
       'lastName': 'Nom',
-      'mobile': 'Portable',
+      'mobile': 'Telephone 2',
       'source': 'Source',
       'statusName': 'Statut',
       'teleoperatorName': 'Téléopérateur',
@@ -67,7 +67,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       'confirmateurName': 'Confirmateur',
       'civility': 'Civilité',
       'email': 'E-Mail',
-      'phone': 'Téléphone',
+      'phone': 'Téléphone 1',
       'birthDate': 'Date de naissance',
       'birthPlace': 'Lieu de naissance',
       'nationality': 'Nationalité',

@@ -754,8 +754,8 @@ export function ContactInfoTab({
   const [statusModalFilterType, setStatusModalFilterType] = useState<'lead' | 'client'>('lead');
   // Event fields for status with is_event=true
   const [eventDate, setEventDate] = useState('');
-  const [eventHour, setEventHour] = useState('09');
-  const [eventMinute, setEventMinute] = useState('00');
+  const [eventHour, setEventHour] = useState('');
+  const [eventMinute, setEventMinute] = useState('');
   const [eventTeleoperatorId, setEventTeleoperatorId] = useState('');
   
   // Check if selected status is client default
@@ -802,13 +802,17 @@ export function ContactInfoTab({
   // Initialize event fields when event status is selected
   React.useEffect(() => {
     if (isStatusModalOpen && selectedStatusId) {
-      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-      const isEventStatus = selectedStatus && selectedStatus.isEvent;
+      // Use String() to ensure consistent type comparison
+      const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
+      // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
+      const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
       if (isEventStatus && canCreatePlanning && canCreateInformationsTab && !eventDate) {
         const today = new Date();
         const dateStr = today.toISOString().split('T')[0];
         setEventDate(dateStr);
-        setEventHour(today.getHours().toString().padStart(2, '0'));
+        // Don't pre-fill hour and minute - leave them empty
+        setEventHour('');
+        setEventMinute('');
         // Prefill teleoperatorId with current user if they are a teleoperateur, otherwise use contact's teleoperator
         if (contact) {
           const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
@@ -819,8 +823,8 @@ export function ContactInfoTab({
       } else if (!isEventStatus) {
         // Reset event fields if status is not an event status
         setEventDate('');
-        setEventHour('09');
-        setEventMinute('00');
+        setEventHour('');
+        setEventMinute('');
         setEventTeleoperatorId('');
       }
     }
@@ -1301,6 +1305,16 @@ export function ContactInfoTab({
     }
   }, [isAppointmentModalOpen, currentUser]);
 
+  // Prefill user when edit appointment modal opens
+  useEffect(() => {
+    if (isEditAppointmentModalOpen && editingAppointment && currentUser?.id) {
+      setEditAppointmentFormData(prev => ({ 
+        ...prev, 
+        userId: editingAppointment.userId || currentUser.id 
+      }));
+    }
+  }, [isEditAppointmentModalOpen, editingAppointment, currentUser]);
+
   async function handleFieldUpdate(fieldName: string, value: any) {
     console.log('[handleFieldUpdate] Called with fieldName:', fieldName, 'value:', value, 'canEdit:', canEdit, 'contactId:', contactId);
     if (!contactId) {
@@ -1494,13 +1508,19 @@ export function ContactInfoTab({
     }
     
     // Check if selected status has isEvent=true
-    const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-    const isEventStatus = selectedStatus && selectedStatus.isEvent;
+    // Use String() to ensure consistent type comparison
+    const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
+    // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
+    const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
     
     // If status is an event status, validate event fields
     if (isEventStatus && canCreatePlanning) {
       if (!eventDate) {
         toast.error('Veuillez sélectionner une date pour l\'événement');
+        return;
+      }
+      if (!eventHour || !eventMinute) {
+        toast.error('Veuillez sélectionner une heure pour l\'événement');
         return;
       }
     }
@@ -1600,7 +1620,7 @@ export function ContactInfoTab({
       }
       
       // Create event if status has isEvent=true
-      if (isEventStatus && canCreatePlanning && canCreateInformationsTab && eventDate) {
+      if (isEventStatus && canCreatePlanning && canCreateInformationsTab && eventDate && eventHour && eventMinute) {
         const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
         await apiCall('/api/events/create/', {
           method: 'POST',
@@ -1646,8 +1666,8 @@ export function ContactInfoTab({
       setFieldErrors({});
       // Reset event fields
       setEventDate('');
-      setEventHour('09');
-      setEventMinute('00');
+      setEventHour('');
+      setEventMinute('');
       setEventTeleoperatorId('');
       // Reset client form
       setClientFormData({
@@ -1719,10 +1739,12 @@ export function ContactInfoTab({
     let selectedStatusIsEvent = false;
     let selectedStatusIsClientDefault = false;
     if (fieldName === 'statusId' && fieldValue && fieldValue !== 'none' && fieldValue !== '') {
-      const selectedStatus = statuses.find(s => s.id === fieldValue);
+      // Use String() to ensure consistent type comparison
+      const selectedStatus = statuses.find(s => String(s.id) === String(fieldValue));
       console.log('[saveField] Selected status:', selectedStatus);
       if (selectedStatus) {
-        if (selectedStatus.isEvent) {
+        // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
+        if (selectedStatus.isEvent === true || selectedStatus.is_event === true) {
         selectedStatusIsEvent = true;
       }
         console.log('[saveField] Checking clientDefault:', selectedStatus.clientDefault, 'type:', selectedStatus.type);
@@ -1808,7 +1830,7 @@ export function ContactInfoTab({
   }
   
   const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
-  const minutes = ['00', '15', '30', '45'];
+  const minutes = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
   
   async function handleCreateAppointment(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -1876,13 +1898,18 @@ export function ContactInfoTab({
     const hour = eventDate.getHours().toString().padStart(2, '0');
     const minute = eventDate.getMinutes().toString().padStart(2, '0');
     
+    // Ensure userId is set properly - use appointment.userId if it exists, otherwise currentUser
+    const userIdToSet = appointment.userId && appointment.userId.trim() !== '' 
+      ? appointment.userId 
+      : (currentUser?.id || '');
+    
     setEditingAppointment(appointment);
     setEditAppointmentFormData({
       date: dateStr,
       hour: hour,
       minute: minute,
       comment: appointment.comment || '',
-      userId: appointment.userId || currentUser?.id || ''
+      userId: userIdToSet
     });
     setIsEditAppointmentModalOpen(true);
   }
@@ -3771,36 +3798,42 @@ export function ContactInfoTab({
               
               <div className="modal-form-field">
                 <Label>Heure</Label>
-                <div className="flex gap-2 items-center">
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <Select
                     value={appointmentFormData.hour}
                     onValueChange={(value) => setAppointmentFormData({ ...appointmentFormData, hour: value })}
                   >
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
+                    <SelectTrigger style={{ flex: 1 }}>
+                      <SelectValue placeholder="Heure" />
                     </SelectTrigger>
                     <SelectContent>
-                      {hours.map((hour) => (
-                        <SelectItem key={hour} value={hour}>
-                          {hour}h
-                        </SelectItem>
-                      ))}
+                      {Array.from({ length: 24 }, (_, i) => {
+                        const hour = i.toString().padStart(2, '0');
+                        return (
+                          <SelectItem key={hour} value={hour}>
+                            {hour}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
-                  
+                  <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>:</span>
                   <Select
                     value={appointmentFormData.minute}
                     onValueChange={(value) => setAppointmentFormData({ ...appointmentFormData, minute: value })}
                   >
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
+                    <SelectTrigger style={{ flex: 1 }}>
+                      <SelectValue placeholder="Minute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {minutes.map((minute) => (
-                        <SelectItem key={minute} value={minute}>
-                          {minute}
-                        </SelectItem>
-                      ))}
+                      {Array.from({ length: 60 }, (_, i) => {
+                        const minute = i.toString().padStart(2, '0');
+                        return (
+                          <SelectItem key={minute} value={minute}>
+                            {minute}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3873,36 +3906,42 @@ export function ContactInfoTab({
               
               <div className="modal-form-field">
                 <Label>Heure</Label>
-                <div className="flex gap-2 items-center">
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <Select
                     value={editAppointmentFormData.hour}
                     onValueChange={(value) => setEditAppointmentFormData({ ...editAppointmentFormData, hour: value })}
                   >
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
+                    <SelectTrigger style={{ flex: 1 }}>
+                      <SelectValue placeholder="Heure" />
                     </SelectTrigger>
                     <SelectContent>
-                      {hours.map((hour) => (
-                        <SelectItem key={hour} value={hour}>
-                          {hour}h
-                        </SelectItem>
-                      ))}
+                      {Array.from({ length: 24 }, (_, i) => {
+                        const hour = i.toString().padStart(2, '0');
+                        return (
+                          <SelectItem key={hour} value={hour}>
+                            {hour}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
-                  
+                  <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>:</span>
                   <Select
                     value={editAppointmentFormData.minute}
                     onValueChange={(value) => setEditAppointmentFormData({ ...editAppointmentFormData, minute: value })}
                   >
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
+                    <SelectTrigger style={{ flex: 1 }}>
+                      <SelectValue placeholder="Minute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {minutes.map((minute) => (
-                        <SelectItem key={minute} value={minute}>
-                          {minute}
-                        </SelectItem>
-                      ))}
+                      {Array.from({ length: 60 }, (_, i) => {
+                        const minute = i.toString().padStart(2, '0');
+                        return (
+                          <SelectItem key={minute} value={minute}>
+                            {minute}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3911,7 +3950,7 @@ export function ContactInfoTab({
               <div className="modal-form-field">
                 <Label htmlFor="edit-appointment-user">Utilisateur</Label>
                 <Select
-                  value={editAppointmentFormData.userId || currentUser?.id || ''}
+                  value={editAppointmentFormData.userId ? String(editAppointmentFormData.userId) : (currentUser?.id ? String(currentUser.id) : '')}
                   onValueChange={(value) => setEditAppointmentFormData({ ...editAppointmentFormData, userId: value })}
                 >
                   <SelectTrigger id="edit-appointment-user">
@@ -3919,7 +3958,7 @@ export function ContactInfoTab({
                   </SelectTrigger>
                   <SelectContent>
                     {users.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
+                      <SelectItem key={user.id} value={String(user.id)}>
                         {user.firstName && user.lastName 
                           ? `${user.firstName} ${user.lastName}` 
                           : user.email || user.username || `User ${user.id}`}
@@ -4349,8 +4388,10 @@ export function ContactInfoTab({
               </div>
               {/* Event fields - show when selected status has isEvent=true */}
               {(() => {
-                const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-                const isEventStatus = selectedStatus && selectedStatus.isEvent;
+                // Use String() to ensure consistent type comparison
+                const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
+                // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
+                const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
                 if (!isEventStatus || !canCreatePlanning) return null;
                 
                 const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
@@ -4375,35 +4416,42 @@ export function ContactInfoTab({
                     </div>
                     <div className="modal-form-field">
                       <Label>Heure <span style={{ color: '#ef4444' }}>*</span></Label>
-                      <div className="flex gap-2 items-center">
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <Select
                           value={eventHour}
                           onValueChange={(value) => setEventHour(value)}
                         >
-                          <SelectTrigger className="w-24">
-                            <SelectValue />
+                          <SelectTrigger style={{ flex: 1 }}>
+                            <SelectValue placeholder="Heure" />
                           </SelectTrigger>
                           <SelectContent>
-                            {hours.map((hour) => (
-                              <SelectItem key={hour} value={hour}>
-                                {hour}h
-                              </SelectItem>
-                            ))}
+                            {Array.from({ length: 24 }, (_, i) => {
+                              const hour = i.toString().padStart(2, '0');
+                              return (
+                                <SelectItem key={hour} value={hour}>
+                                  {hour}
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
+                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>:</span>
                         <Select
                           value={eventMinute}
                           onValueChange={(value) => setEventMinute(value)}
                         >
-                          <SelectTrigger className="w-24">
-                            <SelectValue />
+                          <SelectTrigger style={{ flex: 1 }}>
+                            <SelectValue placeholder="Minute" />
                           </SelectTrigger>
                           <SelectContent>
-                            {minutes.map((minute) => (
-                              <SelectItem key={minute} value={minute}>
-                                {minute}
-                              </SelectItem>
-                            ))}
+                            {Array.from({ length: 60 }, (_, i) => {
+                              const minute = i.toString().padStart(2, '0');
+                              return (
+                                <SelectItem key={minute} value={minute}>
+                                  {minute}
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
                       </div>
@@ -4483,9 +4531,11 @@ export function ContactInfoTab({
                       isSavingClientForm ||
                       !statusChangeNote.trim() ||
                       ((() => {
-                        const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-                        const isEventStatus = selectedStatus && selectedStatus.isEvent;
-                        return isEventStatus && canCreatePlanning && canCreateInformationsTab && !eventDate;
+                        // Use String() to ensure consistent type comparison
+                        const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
+                        // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
+                        const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
+                        return isEventStatus && canCreatePlanning && canCreateInformationsTab && (!eventDate || !eventHour || !eventMinute);
                       })())
                     }
                   >

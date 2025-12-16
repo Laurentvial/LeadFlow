@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 import os
+import logging
 
 # Try loading .env file, but don't fail if it doesn't exist
 try:
@@ -347,6 +348,40 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000  # Increase field limit for large CSV files
 
 # Logging configuration
+# Custom logging filter to suppress harmless CancelledError exceptions
+# These occur when clients disconnect after responses are sent in async contexts
+class SuppressCancelledErrorFilter(logging.Filter):
+    """Filter to suppress harmless CancelledError exceptions from asyncio/base_events.
+    
+    These errors occur when clients disconnect after responses are sent in async contexts.
+    They're harmless and don't indicate actual problems with the application.
+    """
+    def filter(self, record):
+        # Suppress harmless CancelledError exceptions from asyncio/base_events
+        # These occur when clients disconnect after responses are sent
+        message = str(record.getMessage())
+        logger_name = record.name.lower()
+        
+        # Check exception info if available
+        exc_text = ''
+        if hasattr(record, 'exc_text') and record.exc_text:
+            exc_text = str(record.exc_text)
+        if hasattr(record, 'exc_info') and record.exc_info:
+            exc_type = record.exc_info[0]
+            if exc_type:
+                exc_text += str(exc_type)
+        
+        # Combine all text to check
+        all_text = f"{message} {exc_text}".lower()
+        
+        # Suppress if it's a CancelledError related to shielded futures (client disconnects)
+        # This is a common pattern in async Django/Daphne when clients disconnect
+        if ('cancellederror' in all_text and 'shielded future' in all_text) or \
+           ('cancellederror' in all_text and ('base_events' in logger_name or 'asyncio' in logger_name)):
+            return False
+        
+        return True
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -356,10 +391,16 @@ LOGGING = {
             'style': '{',
         },
     },
+    'filters': {
+        'suppress_cancelled_error': {
+            '()': SuppressCancelledErrorFilter,
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['suppress_cancelled_error'],
         },
     },
     'root': {
@@ -380,6 +421,21 @@ LOGGING = {
         'corsheaders': {
             'handlers': ['console'],
             'level': 'DEBUG',
+            'propagate': False,
+        },
+        'asyncio': {
+            'handlers': ['console'],
+            'level': 'WARNING',  # Only show warnings and errors, not cancelled errors
+            'propagate': False,
+        },
+        'asyncio.base_events': {
+            'handlers': ['console'],
+            'level': 'WARNING',  # Suppress CancelledError exceptions (handled by filter)
+            'propagate': False,
+        },
+        'base_events': {
+            'handlers': ['console'],
+            'level': 'INFO',  # Filter will suppress CancelledError exceptions
             'propagate': False,
         },
     },

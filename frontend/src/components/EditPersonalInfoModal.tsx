@@ -322,7 +322,7 @@ export function EditPersonalInfoModal({
               </div>
 
               <div className="modal-form-field">
-                <Label htmlFor="editMobile">Portable *</Label>
+                <Label htmlFor="editMobile">Telephone 2 *</Label>
                 <Input
                   id="editMobile"
                   type="number"
@@ -334,7 +334,7 @@ export function EditPersonalInfoModal({
               </div>
 
               <div className="modal-form-field">
-                <Label htmlFor="editPhone">Téléphone</Label>
+                <Label htmlFor="editPhone">Téléphone 1</Label>
                 <Input
                   id="editPhone"
                   type="number"

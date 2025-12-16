@@ -342,7 +342,7 @@ export function AddContact() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="mobile">Portable *</Label>
+                <Label htmlFor="mobile">Telephone 2 *</Label>
                 <Input
                   id="mobile"
                   type="number"
@@ -354,7 +354,7 @@ export function AddContact() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="phone">Téléphone</Label>
+                <Label htmlFor="phone">Téléphone 1</Label>
                 <Input
                   id="phone"
                   type="number"

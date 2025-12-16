@@ -12,6 +12,8 @@ interface AppointmentCardProps {
     assignedTo?: string;
     clientName?: string;
     contactName?: string;
+    contactId?: string;
+    clientId_read?: string;
   };
   showActions?: boolean;
   onEdit?: (appointment: any) => void;
@@ -38,6 +40,14 @@ export function AppointmentCard({
   const datetime = new Date(appointment.datetime);
   const isPast = datetime < new Date();
   const contactName = appointment.clientName || appointment.contactName;
+  const contactId = appointment.contactId || appointment.clientId_read;
+
+  const handleContactClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (contactId) {
+      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+    }
+  };
 
   // Use consistent styling regardless of variant
   const cardClasses = `p-4 border ${
@@ -73,7 +83,11 @@ export function AppointmentCard({
                 <span className={`text-slate-400 ${isPast ? 'opacity-40' : ''}`}>•</span>
                 <div className="flex items-center gap-1">
                   <User className={`w-4 h-4 ${isPast ? 'text-slate-400' : 'text-slate-600'}`} />
-                  <p className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
+                  <p 
+                    className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'} ${contactId ? 'cursor-pointer hover:underline' : ''}`}
+                    onClick={contactId ? handleContactClick : undefined}
+                    title={contactId ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                  >
                     {contactName}
                   </p>
                 </div>

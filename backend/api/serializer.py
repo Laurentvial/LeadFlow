@@ -475,7 +475,7 @@ class ContactSerializer(serializers.ModelSerializer):
             latest_log = Log.objects.filter(contact_id=instance).order_by('-created_at').first()
             ret['lastLogDate'] = latest_log.created_at if latest_log else None
         
-        # Add previous status and previous teleoperator from logs
+        # Add previous status and previous teleoperator from logs (keep this for backward compatibility)
         from .models import Log
         logs = Log.objects.filter(
             contact_id=instance,
@@ -490,29 +490,27 @@ class ContactSerializer(serializers.ModelSerializer):
         
         for log in logs:
             # Check for previous status - look for logs where statusName changed
-            # IMPORTANT: Only consider logs where new_status matches the current status
-            # This ensures we get the IMMEDIATE previous status (right before current)
             if previous_status is None and log.old_value and log.new_value:
                 old_status = log.old_value.get('statusName', '')
                 new_status = log.new_value.get('statusName', '')
-                # If status changed AND new_status matches current status, old_value contains the previous status
                 if old_status and old_status != new_status and new_status == current_status_name:
                     previous_status = old_status
             
-            # Check for previous teleoperator - look for logs where teleoperatorName changed
+            # Check for previous teleoperator
             if previous_teleoperator is None and log.old_value and log.new_value:
                 old_teleoperator = log.old_value.get('teleoperatorName', '')
                 new_teleoperator = log.new_value.get('teleoperatorName', '')
-                # If teleoperator changed (different values), old_value contains the previous teleoperator
                 if old_teleoperator and old_teleoperator != new_teleoperator:
                     previous_teleoperator = old_teleoperator
             
-            # Stop if we found both
             if previous_status is not None and previous_teleoperator is not None:
                 break
         
         ret['previousStatus'] = previous_status or ''
         ret['previousTeleoperator'] = previous_teleoperator or ''
+        
+        # Add assignedAt field (from database field assigned_at)
+        ret['assignedAt'] = instance.assigned_at.isoformat() if instance.assigned_at else None
         
         return ret
 

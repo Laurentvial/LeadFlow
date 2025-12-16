@@ -167,7 +167,7 @@ export function RegisterPage() {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="mobile">Portable (optionnel)</Label>
+                <Label htmlFor="mobile">Telephone 2 (optionnel)</Label>
                 <Input
                   id="mobile"
                   type="tel"

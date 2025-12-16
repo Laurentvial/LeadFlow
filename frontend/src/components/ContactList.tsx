@@ -453,8 +453,8 @@ export function ContactList({
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
   // Event fields for status with is_event=true
   const [eventDate, setEventDate] = useState('');
-  const [eventHour, setEventHour] = useState('09');
-  const [eventMinute, setEventMinute] = useState('00');
+  const [eventHour, setEventHour] = useState('');
+  const [eventMinute, setEventMinute] = useState('');
   const [eventTeleoperatorId, setEventTeleoperatorId] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   
@@ -486,6 +486,13 @@ export function ContactList({
     if (!selectedStatusId || selectedStatusId === '') return false;
     const status = statuses.find(s => s.id === selectedStatusId);
     return status?.clientDefault === true;
+  }, [selectedStatusId, statuses]);
+
+  // Check if selected status is event
+  const selectedStatusIsEvent = React.useMemo(() => {
+    if (!selectedStatusId || selectedStatusId === '') return false;
+    const status = statuses.find(s => s.id === selectedStatusId);
+    return status?.isEvent === true || status?.is_event === true;
   }, [selectedStatusId, statuses]);
   
   // Filter categories to only show those user has view permission for
@@ -538,8 +545,8 @@ export function ContactList({
     { id: 'createdAt', label: 'Créé le', defaultVisible: true },
     { id: 'fullName', label: 'Nom entier', defaultVisible: true },
     { id: 'source', label: 'Source', defaultVisible: true },
-    { id: 'phone', label: 'Téléphone', defaultVisible: true },
-    { id: 'mobile', label: 'Portable', defaultVisible: false },
+    { id: 'phone', label: 'Téléphone 1', defaultVisible: true },
+    { id: 'mobile', label: 'Telephone 2', defaultVisible: false },
     { id: 'email', label: 'E-Mail', defaultVisible: true },
     { id: 'status', label: 'Statut', defaultVisible: true },
     { id: 'updatedAt', label: 'Modifié le', defaultVisible: true },
@@ -557,6 +564,7 @@ export function ContactList({
     { id: 'nationality', label: 'Nationalité', defaultVisible: false },
     { id: 'campaign', label: 'Campagne', defaultVisible: false },
     { id: 'teleoperator', label: 'Téléopérateur', defaultVisible: true },
+    { id: 'assignedAt', label: 'Attribué le', defaultVisible: true },
     { id: 'confirmateur', label: 'Confirmateur', defaultVisible: true },
     { id: 'creator', label: 'Créateur', defaultVisible: false },
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
@@ -1165,6 +1173,7 @@ export function ContactList({
       // Contacts are already sorted and filtered by the backend
       const contactsList = contactsData.contacts || [];
       const totalFromAPI = contactsData.total || contactsData.count || contactsList.length;
+      
       setContacts(contactsList);
       // Use total from paginated response
       setTotalContacts(totalFromAPI);
@@ -1401,7 +1410,7 @@ export function ContactList({
   };
 
   const isDateColumn = (columnId: string): boolean => {
-    return ['createdAt', 'updatedAt', 'birthDate'].includes(columnId);
+    return ['createdAt', 'updatedAt', 'birthDate', 'assignedAt'].includes(columnId);
   };
   
   // Helper function to check if a filter is forced (has any value configured, regardless of type)
@@ -2042,6 +2051,18 @@ export function ContactList({
             </span>
           </td>
         );
+      case 'assignedAt':
+        return (
+          <td key={columnId}>
+            {contact.assignedAt 
+              ? new Date(contact.assignedAt).toLocaleString('fr-FR', {
+                  dateStyle: 'short',
+                  timeStyle: 'short'
+                })
+              : '-'
+            }
+          </td>
+        );
       case 'source':
         return <td key={columnId} title={contact.source || ''}>{truncateText(contact.source || '-')}</td>;
       case 'status':
@@ -2475,31 +2496,29 @@ export function ContactList({
   
   // Initialize event fields when event status is selected
   React.useEffect(() => {
-    if (isStatusModalOpen && selectedStatusId) {
-      const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-      const isEventStatus = selectedStatus && selectedStatus.isEvent;
-      if (isEventStatus && canCreatePlanning && !eventDate) {
+    if (isStatusModalOpen && selectedStatusId && statuses.length > 0) {
+      if (selectedStatusIsEvent && canCreatePlanning && !eventDate) {
         const today = new Date();
         const dateStr = today.toISOString().split('T')[0];
         setEventDate(dateStr);
-        setEventHour(today.getHours().toString().padStart(2, '0'));
-        // Prefill teleoperatorId with current user if they are a teleoperateur, otherwise use contact's teleoperator
+        // Don't pre-fill hour and minute - leave them empty
+        setEventHour('');
+        setEventMinute('');
         if (selectedContact) {
           const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
             ? currentUser.id 
             : (selectedContact.teleoperatorId || selectedContact.managerId || '');
           setEventTeleoperatorId(defaultTeleoperatorId);
         }
-      } else if (!isEventStatus) {
-        // Reset event fields if status is not an event status
+      } else if (!selectedStatusIsEvent) {
         setEventDate('');
-        setEventHour('09');
-        setEventMinute('00');
+        setEventHour('');
+        setEventMinute('');
         setEventTeleoperatorId('');
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStatusId, isStatusModalOpen]);
+  }, [selectedStatusId, isStatusModalOpen, selectedStatusIsEvent]);
   
   // Auto-set filter based on contact's current status or user permissions
   React.useEffect(() => {
@@ -2595,14 +2614,14 @@ export function ContactList({
       return;
     }
     
-    // Check if selected status has isEvent=true
-    const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-    const isEventStatus = selectedStatus && selectedStatus.isEvent;
-    
     // If status is an event status, validate event fields
-    if (isEventStatus && canCreatePlanning) {
+    if (selectedStatusIsEvent && canCreatePlanning) {
       if (!eventDate) {
         toast.error('Veuillez sélectionner une date pour l\'événement');
+        return;
+      }
+      if (!eventHour || !eventMinute) {
+        toast.error('Veuillez sélectionner une heure pour l\'événement');
         return;
       }
     }
@@ -2690,7 +2709,7 @@ export function ContactList({
           statusId: selectedStatusId || ''
         };
         
-        if (isEventStatus && eventTeleoperatorId) {
+        if (selectedStatusIsEvent && eventTeleoperatorId) {
           updatePayload.teleoperatorId = eventTeleoperatorId || null;
         }
         
@@ -2702,7 +2721,7 @@ export function ContactList({
       }
       
       // Create event if status has isEvent=true
-      if (isEventStatus && canCreatePlanning && eventDate) {
+      if (selectedStatusIsEvent && canCreatePlanning && eventDate) {
         const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
         await apiCall('/api/events/create/', {
           method: 'POST',
@@ -2739,7 +2758,7 @@ export function ContactList({
         });
       }
       
-      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
+      toast.success(selectedStatusIsEvent ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
       setIsStatusModalOpen(false);
       setSelectedContact(null);
       setSelectedStatusId('');
@@ -2748,8 +2767,8 @@ export function ContactList({
       setStatusModalFilterType('lead');
       // Reset event fields
       setEventDate('');
-      setEventHour('09');
-      setEventMinute('00');
+      setEventHour('');
+      setEventMinute('');
       setEventTeleoperatorId('');
       // Reset client form
       setClientFormData({
@@ -4071,7 +4090,8 @@ export function ContactList({
                   onValueChange={(value) => {
                     setSelectedStatusId(value);
                     // Check if selected status is client default
-                    const selectedStatus = statuses.find(s => s.id === value);
+                    // Use String() to ensure consistent type comparison
+                    const selectedStatus = statuses.find(s => String(s.id) === String(value));
                     if (selectedStatus?.clientDefault === true) {
                       // Pre-fill form with existing contact data
                       // Prefill teleoperatorId with current user if they are a teleoperateur
@@ -4123,7 +4143,8 @@ export function ContactList({
                   <SelectTrigger id="statusSelect">
                     {selectedStatusId ? (() => {
                       // Find the selected status (can be from any type for display purposes)
-                      const selectedStatus = statuses.find((s: any) => s.id === selectedStatusId);
+                      // Use String() to ensure consistent type comparison
+                      const selectedStatus = statuses.find((s: any) => String(s.id) === String(selectedStatusId));
                       if (selectedStatus) {
                         const normalizedStatusId = String(selectedStatus.id).trim();
                         // Check if contact is in fosse (teleoperator and confirmateur are null/empty)
@@ -4303,94 +4324,92 @@ export function ContactList({
                 </p>
               </div>
               {/* Event fields - show when selected status has isEvent=true */}
-              {(() => {
-                const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-                const isEventStatus = selectedStatus && selectedStatus.isEvent;
-                if (!isEventStatus || !canCreatePlanning) return null;
-                
-                const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
-                const minutes = ['00', '15', '30', '45'];
-                
-                return (
-                  <>
-                    <div className="modal-form-field">
-                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-                        <p className="font-medium">Événement requis</p>
-                        <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
-                      </div>
+              {selectedStatusIsEvent && canCreatePlanning && (
+                <>
+                  <div className="modal-form-field">
+                    <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                      <p className="font-medium">Événement requis</p>
+                      <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
                     </div>
-                    <div className="modal-form-field">
-                      <Label htmlFor="eventDate">Date de l'événement <span style={{ color: '#ef4444' }}>*</span></Label>
-                      <DateInput
-                        id="eventDate"
-                        value={eventDate}
-                        onChange={(value) => setEventDate(value)}
-                        required
-                      />
-                    </div>
-                    <div className="modal-form-field">
-                      <Label>Heure <span style={{ color: '#ef4444' }}>*</span></Label>
-                      <div className="flex gap-2 items-center">
-                        <Select
-                          value={eventHour}
-                          onValueChange={(value) => setEventHour(value)}
-                        >
-                          <SelectTrigger className="w-24">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {hours.map((hour) => (
+                  </div>
+                  <div className="modal-form-field">
+                    <Label htmlFor="eventDate">Date de l'événement <span style={{ color: '#ef4444' }}>*</span></Label>
+                    <DateInput
+                      id="eventDate"
+                      value={eventDate}
+                      onChange={(value) => setEventDate(value)}
+                      required
+                    />
+                  </div>
+                  <div className="modal-form-field">
+                    <Label>Heure <span style={{ color: '#ef4444' }}>*</span></Label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <Select
+                        value={eventHour}
+                        onValueChange={(value) => setEventHour(value)}
+                      >
+                        <SelectTrigger style={{ flex: 1 }}>
+                          <SelectValue placeholder="Heure" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 24 }, (_, i) => {
+                            const hour = i.toString().padStart(2, '0');
+                            return (
                               <SelectItem key={hour} value={hour}>
-                                {hour}h
+                                {hour}
                               </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={eventMinute}
-                          onValueChange={(value) => setEventMinute(value)}
-                        >
-                          <SelectTrigger className="w-24">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {minutes.map((minute) => (
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>:</span>
+                      <Select
+                        value={eventMinute}
+                        onValueChange={(value) => setEventMinute(value)}
+                      >
+                        <SelectTrigger style={{ flex: 1 }}>
+                          <SelectValue placeholder="Minute" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 60 }, (_, i) => {
+                            const minute = i.toString().padStart(2, '0');
+                            return (
                               <SelectItem key={minute} value={minute}>
                                 {minute}
                               </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="modal-form-field">
-                      <Label htmlFor="eventTeleoperator">Téléopérateur</Label>
-                      <Select
-                        value={eventTeleoperatorId || 'none'}
-                        onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
-                        disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
-                      >
-                        <SelectTrigger id="eventTeleoperator">
-                          <SelectValue placeholder="Sélectionner un téléopérateur" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                          {users
-                            ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
-                            .map((user) => {
-                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                              return (
-                                <SelectItem key={user.id} value={user.id}>
-                                  {displayName}
-                                </SelectItem>
-                              );
-                            })}
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
-                  </>
-                );
-              })()}
+                  </div>
+                  <div className="modal-form-field">
+                    <Label htmlFor="eventTeleoperator">Téléopérateur</Label>
+                    <Select
+                      value={eventTeleoperatorId || 'none'}
+                      onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
+                      disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
+                    >
+                      <SelectTrigger id="eventTeleoperator">
+                        <SelectValue placeholder="Sélectionner un téléopérateur" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                        {users
+                          ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
+                          .map((user) => {
+                            const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                            return (
+                              <SelectItem key={user.id} value={user.id}>
+                                {displayName}
+                              </SelectItem>
+                            );
+                          })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
               <div className="modal-form-actions">
                 <Button 
                   type="button" 
@@ -4405,8 +4424,8 @@ export function ContactList({
                     setFieldErrors({});
                     // Reset event fields
                     setEventDate('');
-                    setEventHour('09');
-                    setEventMinute('00');
+                    setEventHour('');
+                    setEventMinute('');
                     setEventTeleoperatorId('');
                     // Reset client form
                     setClientFormData({
@@ -4438,11 +4457,7 @@ export function ContactList({
                     disabled={
                       isSavingClientForm ||
                       !statusChangeNote.trim() ||
-                      ((() => {
-                        const selectedStatus = statuses.find(s => s.id === selectedStatusId);
-                        const isEventStatus = selectedStatus && selectedStatus.isEvent;
-                        return isEventStatus && canCreatePlanning && !eventDate;
-                      })())
+                      (selectedStatusIsEvent && canCreatePlanning && (!eventDate || !eventHour || !eventMinute))
                     }
                   >
                     <Send className="w-4 h-4 mr-2" />

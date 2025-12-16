@@ -79,20 +79,8 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const hasDashboardPermission = checkUserPermission('dashboard', 'view');
   const hasPlanningPermission = checkUserPermission('planning', 'view');
   const hasPlanningAdministrateurPermission = checkUserPermission('planning_administrateur', 'view');
-  // Check if user can view any contact tab (replaces old contacts view permission)
-  const hasContactsPermission = React.useMemo(() => {
-    if (!currentUser?.permissions) return true; // Default to true if no permissions loaded
-    const hasAnyTabPermission = currentUser.permissions.some((p: any) => 
-      p.component === 'contact_tabs' && 
-      p.action === 'view'
-    );
-    // If no contact_tabs permissions exist at all, default to true (backward compatibility)
-    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
-      p.component === 'contact_tabs'
-    );
-    if (!hasAnyContactTabsPermission) return true;
-    return hasAnyTabPermission;
-  }, [currentUser?.permissions]);
+  // Check if user has view permission for the Contacts page
+  const hasContactsPermission = checkUserPermission('contacts', 'view');
   const hasFossePermission = checkUserPermission('fosse', 'view');
   const hasUsersPermission = checkUserPermission('users', 'view');
   const hasPermissionsPermission = checkUserPermission('permissions', 'view');

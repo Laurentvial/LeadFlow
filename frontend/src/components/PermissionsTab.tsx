@@ -86,8 +86,8 @@ const contactFields = [
   { field: 'civility', label: 'Civilité' },
   { field: 'fname', label: 'Prénom' },
   { field: 'lname', label: 'Nom' },
-  { field: 'phone', label: 'Téléphone' },
-  { field: 'mobile', label: 'Portable' },
+  { field: 'phone', label: 'Téléphone 1' },
+  { field: 'mobile', label: 'Telephone 2' },
   { field: 'email', label: 'Email' },
   { field: 'birth_date', label: 'Date de naissance' },
   { field: 'birth_place', label: 'Lieu de naissance' },
@@ -1875,7 +1875,7 @@ export function PermissionsTab() {
                       </thead>
                       <tbody>
                         {getUniqueDbComponents()
-                          .filter((dbComponent) => dbComponent !== 'contacts' && dbComponent !== 'fiche_contact' && dbComponent !== 'contact_tabs') // Remove contacts, Details du contact, and Fiche contact from Pages table
+                          .filter((dbComponent) => dbComponent !== 'fiche_contact' && dbComponent !== 'contact_tabs') // Remove Details du contact and Fiche contact from Pages table (contacts page is now included)
                           .map((dbComponent) => {
                           const displayLabel = getDisplayComponentLabel(dbComponent);
                           const viewPermissionId = getPermissionId(dbComponent, 'view');

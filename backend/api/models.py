@@ -75,6 +75,7 @@ class Contact(models.Model):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    assigned_at = models.DateTimeField(null=True, blank=True, db_index=True)  # Date/time when teleoperator was last assigned
     
     class Meta:
         indexes = [

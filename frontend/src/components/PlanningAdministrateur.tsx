@@ -10,6 +10,7 @@ import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, S
 import { apiCall } from '../utils/api';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
+import { useRoles } from '../hooks/useRoles';
 import { useHasPermission } from '../hooks/usePermissions';
 import { AppointmentCard } from './AppointmentCard';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from './ui/chart';
@@ -22,6 +23,7 @@ import { toast } from 'sonner';
 export function PlanningAdministrateur() {
   const { currentUser } = useUser();
   const { users } = useUsers();
+  const { roles } = useRoles();
   
   // Permission checks
   const canCreate = useHasPermission('planning_administrateur', 'create');
@@ -85,6 +87,7 @@ export function PlanningAdministrateur() {
   const [filterContactSearchQuery, setFilterContactSearchQuery] = useState('');
   const [filterContactSearchFocused, setFilterContactSearchFocused] = useState(false);
   const [filterContactSearchResults, setFilterContactSearchResults] = useState<any[]>([]);
+  const [filterRole, setFilterRole] = useState<string>('');
 
   // Initialize userId with current user and today's date when modal opens
   useEffect(() => {
@@ -818,6 +821,36 @@ export function PlanningAdministrateur() {
         }
       }
       
+      // Filter by role
+      if (filterRole) {
+        const eventUserId = getEventUserId(event);
+        if (!eventUserId) {
+          // If no user assigned, only include if filter is "none" for unassigned
+          if (filterRole !== 'none') {
+            return false;
+          }
+        } else {
+          // If filtering for "none" (unassigned), exclude events with users
+          if (filterRole === 'none') {
+            return false;
+          }
+          
+          const user = users.find(u => String(u.id) === String(eventUserId));
+          if (!user) {
+            return false;
+          }
+          
+          // Get user's role ID (may be null/empty if user has no role)
+          const userRoleId = user.role;
+          
+          // Compare with filter role ID
+          // If user has no role assigned, exclude unless filtering for "none"
+          if (!userRoleId || String(userRoleId) !== String(filterRole)) {
+            return false;
+          }
+        }
+      }
+      
       return true;
     });
   }
@@ -1163,12 +1196,34 @@ export function PlanningAdministrateur() {
               </div>
 
               <div className="planning-filter-section">
+                <Label>Par rôle</Label>
+                <Select
+                  value={filterRole || 'all'}
+                  onValueChange={(value) => setFilterRole(value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous les rôles" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les rôles</SelectItem>
+                    {roles.map((role) => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="none">Non assigné</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="planning-filter-section">
                 <Button
                   variant="outline"
                   onClick={() => {
                     setFilterUserId('');
                     setFilterContactId('');
                     setFilterContactSearchQuery('');
+                    setFilterRole('');
                   }}
                   className="w-full"
                 >

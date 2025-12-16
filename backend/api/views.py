@@ -2459,6 +2459,9 @@ def contact_create(request):
             teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
             if teleoperator_user:
                 contact_data['teleoperator'] = teleoperator_user
+                # Set assigned_at when creating contact with teleoperator
+                from django.utils import timezone
+                contact_data['assigned_at'] = timezone.now()
         except Exception:
             pass
     
@@ -2759,6 +2762,9 @@ def csv_import_contacts(request):
                     contact_data['source'] = source_obj
                 # Teleoperator is required, so always set it
                 contact_data['teleoperator'] = teleoperator_obj
+                # Set assigned_at when importing contact with teleoperator
+                from django.utils import timezone
+                contact_data['assigned_at'] = timezone.now()
                 
                 # Store row data for results
                 contact_name = contact_data.get('fname', '')
@@ -3259,28 +3265,99 @@ def contact_detail(request, contact_id):
             
             # Update teleoperator if provided
             if 'teleoperatorId' in request.data:
-                teleoperator_id = request.data.get('teleoperatorId')
-                if teleoperator_id:
+                teleoperator_id_raw = request.data.get('teleoperatorId')
+                
+                # Normalize empty string to None
+                if teleoperator_id_raw == '' or teleoperator_id_raw == 'none':
+                    new_teleoperator_id = None
+                else:
+                    # Convert to int if it's a numeric string
                     try:
-                        teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
+                        new_teleoperator_id = int(teleoperator_id_raw)
+                    except (ValueError, TypeError):
+                        # If conversion fails, keep as string but log warning
+                        print(f"[DEBUG] Warning: Could not convert teleoperator_id '{teleoperator_id_raw}' to int")
+                        new_teleoperator_id = teleoperator_id_raw
+                
+                # Get old teleoperator ID before any changes (as integer for comparison)
+                old_teleoperator_id = contact.teleoperator_id
+                
+                # Debug logging
+                print(f"[DEBUG] ===== Updating teleoperator for contact {contact.id} =====")
+                print(f"[DEBUG] Raw teleoperator_id from request: {teleoperator_id_raw} (type: {type(teleoperator_id_raw)})")
+                print(f"[DEBUG] Old teleoperator_id: {old_teleoperator_id} (type: {type(old_teleoperator_id)})")
+                print(f"[DEBUG] New teleoperator_id (normalized): {new_teleoperator_id} (type: {type(new_teleoperator_id)})")
+                
+                # Teleoperator changed if:
+                # 1. Old is None and new is not None (assigning)
+                # 2. Old is not None and new is None (clearing)
+                # 3. Old and new are both not None but different (reassigning)
+                # Compare as integers for accurate comparison
+                if old_teleoperator_id is None and new_teleoperator_id is not None:
+                    teleoperator_changed = True
+                    change_type = "assigning (None -> value)"
+                elif old_teleoperator_id is not None and new_teleoperator_id is None:
+                    teleoperator_changed = True
+                    change_type = "clearing (value -> None)"
+                elif old_teleoperator_id is not None and new_teleoperator_id is not None:
+                    # Both are not None, compare as integers
+                    try:
+                        old_int = int(old_teleoperator_id)
+                        new_int = int(new_teleoperator_id)
+                        teleoperator_changed = (old_int != new_int)
+                        change_type = f"reassigning ({old_int} -> {new_int})" if teleoperator_changed else f"same value ({old_int})"
+                    except (ValueError, TypeError) as e:
+                        # Fallback to string comparison if int conversion fails
+                        teleoperator_changed = (str(old_teleoperator_id) != str(new_teleoperator_id))
+                        change_type = f"comparison fallback ({old_teleoperator_id} -> {new_teleoperator_id})"
+                        print(f"[DEBUG] Warning: Using string comparison due to conversion error: {e}")
+                else:
+                    # Both are None
+                    teleoperator_changed = False
+                    change_type = "both None"
+                
+                print(f"[DEBUG] Teleoperator changed: {teleoperator_changed} ({change_type})")
+                
+                if new_teleoperator_id is not None:
+                    try:
+                        # Use the normalized integer ID to find the user
+                        teleoperator_user = DjangoUser.objects.filter(id=new_teleoperator_id).first()
                         if teleoperator_user:
                             contact.teleoperator = teleoperator_user
+                            # Update assigned_at when teleoperator changes (assigns or reassigns)
+                            if teleoperator_changed:
+                                from django.utils import timezone
+                                contact.assigned_at = timezone.now()
+                                contact._assigned_at_was_set = True  # Mark that we set assigned_at
+                                print(f"[DEBUG] ✓✓✓ Teleoperator CHANGED from {old_teleoperator_id} to {new_teleoperator_id}")
+                                print(f"[DEBUG] ✓✓✓ Set assigned_at to {contact.assigned_at}")
+                            else:
+                                print(f"[DEBUG] ✗ Teleoperator NOT changed (same value), keeping assigned_at as {contact.assigned_at}")
                             # Clear any cached relationship
                             if hasattr(contact, '_teleoperator_cache'):
                                 delattr(contact, '_teleoperator_cache')
-                            print(f"[DEBUG] Set teleoperator to user ID: {teleoperator_id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
+                            print(f"[DEBUG] Set teleoperator to user ID: {new_teleoperator_id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
                         else:
-                            print(f"[DEBUG] Teleoperator user not found for ID: {teleoperator_id}")
+                            print(f"[DEBUG] ERROR: Teleoperator user not found for ID: {new_teleoperator_id}")
                     except Exception as e:
-                        print(f"[DEBUG] Error setting teleoperator: {e}")
+                        print(f"[DEBUG] ERROR setting teleoperator: {e}")
                         import traceback
                         traceback.print_exc()
                 else:
+                    # Clearing teleoperator
                     contact.teleoperator = None
+                    # Clear assigned_at when teleoperator is removed
+                    if teleoperator_changed:
+                        contact.assigned_at = None
+                        contact._assigned_at_was_set = True  # Mark that we modified assigned_at
+                        print(f"[DEBUG] ✓✓✓ Teleoperator CLEARED (was {old_teleoperator_id}), set assigned_at to None")
+                    else:
+                        print(f"[DEBUG] ✗ Teleoperator NOT changed (already None), keeping assigned_at as {contact.assigned_at}")
                     # Clear any cached relationship
                     if hasattr(contact, '_teleoperator_cache'):
                         delattr(contact, '_teleoperator_cache')
                     print(f"[DEBUG] Cleared teleoperator (set to None)")
+                print(f"[DEBUG] ===== End teleoperator update for contact {contact.id} =====")
             
             # Update confirmateur if provided
             if 'confirmateurId' in request.data:
@@ -3448,7 +3525,26 @@ def contact_detail(request, contact_id):
             
             # Save the contact with all modifications
             try:
+                # Debug: Check assigned_at before save
+                print(f"[DEBUG] Before save - contact.assigned_at: {contact.assigned_at}")
+                
+                # If assigned_at was modified, update it directly in the database first
+                # This ensures it's persisted regardless of Django's change tracking
+                if hasattr(contact, '_assigned_at_was_set'):
+                    assigned_at_value = contact.assigned_at
+                    # Direct database update to ensure assigned_at is saved
+                    Contact.objects.filter(id=contact.id).update(assigned_at=assigned_at_value)
+                    print(f"[DEBUG] Directly updated assigned_at in DB: {assigned_at_value}")
+                    # Refresh the contact object so Django knows about the DB change
+                    contact.refresh_from_db(fields=['assigned_at'])
+                    delattr(contact, '_assigned_at_was_set')
+                
+                # Save all other modified fields normally
                 contact.save()
+                
+                # Verify assigned_at was saved
+                contact.refresh_from_db()
+                print(f"[DEBUG] After save - contact.assigned_at: {contact.assigned_at}")
                 # Django automatically handles transaction commits - no manual commit needed
             except ValueError as e:
                 # Handle ValueError specifically (e.g., invalid phone/mobile format)

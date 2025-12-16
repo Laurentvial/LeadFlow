@@ -1231,7 +1231,20 @@ export function PlanningCalendar() {
                                 {time}
                               </div>
                               {(event.contactName || event.clientName) && (
-                                <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                                <div 
+                                  className="planning-event-client"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const contactId = event.clientId_read || event.contactId;
+                                    if (contactId) {
+                                      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                    }
+                                  }}
+                                  style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
+                                  title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                >
+                                  {event.contactName || event.clientName}
+                                </div>
                               )}
                               {eventUserId && (
                                 <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -1315,7 +1328,20 @@ export function PlanningCalendar() {
                                   {time}
                                 </div>
                                 {(event.contactName || event.clientName) && (
-                                  <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                                  <div 
+                                    className="planning-event-client"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const contactId = event.clientId_read || event.contactId;
+                                      if (contactId) {
+                                        window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                      }
+                                    }}
+                                    style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
+                                    title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                  >
+                                    {event.contactName || event.clientName}
+                                  </div>
                                 )}
                                 {eventUserId && (
                                   <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -1389,7 +1415,20 @@ export function PlanningCalendar() {
                                   return (
                                     <>
                                       {hasContactName && (
-                                        <div className="planning-day-event-client">{contactName}</div>
+                                        <div 
+                                          className="planning-day-event-client"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const contactId = event.clientId_read || event.contactId;
+                                            if (contactId) {
+                                              window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                            }
+                                          }}
+                                          style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
+                                          title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                        >
+                                          {contactName}
+                                        </div>
                                       )}
                                       {eventUserId ? (
                                         <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
