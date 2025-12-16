@@ -7,7 +7,7 @@ import { MultiSelect } from './ui/multi-select';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Input } from './ui/input';
 import { DateInput } from './ui/date-input';
-import { Search, Check, ChevronDown } from 'lucide-react';
+import { Search, Check, ChevronDown, RefreshCw } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
@@ -1993,7 +1993,22 @@ export function FosseSettingsTab() {
                                                   className="p-8 text-center text-sm text-slate-500"
                                                   style={{ backgroundColor: 'transparent' }}
                                                 >
-                                                  Aucun contact disponible pour l'aperçu
+                                                  <div className="flex flex-col items-center gap-3">
+                                                    <span>Aucun contact disponible pour l'aperçu</span>
+                                                    <Button
+                                                      variant="outline"
+                                                      size="sm"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const setting = settings.get(role.id);
+                                                        loadPreviewContacts(role.id, [], setting?.defaultOrder);
+                                                      }}
+                                                      className="flex items-center gap-2"
+                                                    >
+                                                      <RefreshCw className="w-4 h-4" />
+                                                      Actualiser
+                                                    </Button>
+                                                  </div>
                                                 </td>
                                               </tr>
                                             ) : (
