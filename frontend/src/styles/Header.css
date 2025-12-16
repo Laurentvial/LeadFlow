@@ -129,6 +129,7 @@
 
 .header-dropdown {
   width: 100%;
+  z-index: 10006 !important;
 }
 
 .header-notification-content {
