@@ -131,6 +131,7 @@ class UserDetails(models.Model):
     phone = models.BigIntegerField(null=True, blank=True)
     hrex = models.CharField(max_length=7, default="", blank=True)  # Hex color code (e.g., #FF5733)
     active = models.BooleanField(null=False, default=True)
+    require_otp = models.BooleanField(null=False, default=False)  # Force OTP login for this user
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
