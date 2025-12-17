@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { X } from "lucide-react";
+import { X, Eye, EyeOff } from "lucide-react";
 import { apiCall } from "../utils/api";
 import { toast } from "sonner";
 import { formatPhoneNumberAsYouType, removePhoneSpaces } from "../utils/phoneNumber";
@@ -35,6 +35,8 @@ export function CreateUserModal({
   const { roles = [], loading: rolesLoading } = useRoles();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -162,19 +164,7 @@ export function CreateUserModal({
         </div>
         <form onSubmit={handleSubmit} className="modal-form">
           <div className="modal-form-field">
-            <Label htmlFor="create-firstName">Prénom</Label>
-            <Input
-              id="create-firstName"
-              value={formData.firstName}
-              onChange={(e) =>
-                setFormData({ ...formData, firstName: e.target.value })
-              }
-              required
-            />
-          </div>
-
-          <div className="modal-form-field">
-            <Label htmlFor="create-lastName">Nom</Label>
+            <Label htmlFor="create-lastName">Nom <span className="text-red-500">*</span></Label>
             <Input
               id="create-lastName"
               value={formData.lastName}
@@ -186,7 +176,18 @@ export function CreateUserModal({
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="create-email">Email</Label>
+            <Label htmlFor="create-firstName">Prénom</Label>
+            <Input
+              id="create-firstName"
+              value={formData.firstName}
+              onChange={(e) =>
+                setFormData({ ...formData, firstName: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="modal-form-field">
+            <Label htmlFor="create-email">Email <span className="text-red-500">*</span></Label>
             <Input
               id="create-email"
               type="email"
@@ -213,38 +214,70 @@ export function CreateUserModal({
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="create-password">Mot de passe</Label>
-            <Input
-              id="create-password"
-              type="password"
-              placeholder="••••••••"
-              value={formData.password}
-              onChange={(e) =>
-                setFormData({ ...formData, password: e.target.value })
-              }
-              required
-            />
+            <Label htmlFor="create-password">Mot de passe <span className="text-red-500">*</span></Label>
+            <div className="relative">
+              <Input
+                id="create-password"
+                type={showPassword ? "text" : "password"}
+                placeholder="••••••••"
+                value={formData.password}
+                onChange={(e) =>
+                  setFormData({ ...formData, password: e.target.value })
+                }
+                required
+                className="pr-12"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 hover:bg-transparent"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4 text-gray-500" />
+                ) : (
+                  <Eye className="h-4 w-4 text-gray-500" />
+                )}
+              </Button>
+            </div>
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="create-confirmPassword">Confirmer le mot de passe</Label>
-            <Input
-              id="create-confirmPassword"
-              type="password"
-              placeholder="••••••••"
-              value={formData.confirmPassword}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  confirmPassword: e.target.value,
-                })
-              }
-              required
-            />
+            <Label htmlFor="create-confirmPassword">Confirmer le mot de passe <span className="text-red-500">*</span></Label>
+            <div className="relative">
+              <Input
+                id="create-confirmPassword"
+                type={showConfirmPassword ? "text" : "password"}
+                placeholder="••••••••"
+                value={formData.confirmPassword}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    confirmPassword: e.target.value,
+                  })
+                }
+                required
+                className="pr-12"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 hover:bg-transparent"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4 text-gray-500" />
+                ) : (
+                  <Eye className="h-4 w-4 text-gray-500" />
+                )}
+              </Button>
+            </div>
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="create-role">Rôle</Label>
+            <Label htmlFor="create-role">Rôle <span className="text-red-500">*</span></Label>
             <Select
               value={formData.role}
               onValueChange={(value) =>
