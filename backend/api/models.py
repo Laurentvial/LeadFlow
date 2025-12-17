@@ -562,3 +562,25 @@ class Message(models.Model):
     
     def __str__(self):
         return f"Message {self.id} from {self.sender.username}"
+
+class OTP(models.Model):
+    """One-Time Password for email verification"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    email = models.EmailField(max_length=255, db_index=True)
+    code = models.CharField(max_length=6)  # 6-digit OTP code
+    is_verified = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email', 'is_verified', 'expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"OTP {self.code} for {self.email}"
+    
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() > self.expires_at

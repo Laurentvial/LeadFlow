@@ -11,7 +11,7 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
+from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP
 from .serializer import (
     UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
@@ -7098,5 +7098,194 @@ def delete_all_contacts(request):
         return Response({
             'error': str(e),
             'details': error_details
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def send_otp(request):
+    """Send OTP code to user's email using Resend API after password verification"""
+    try:
+        email = request.data.get('email', '').strip().lower()
+        password = request.data.get('password', '')
+        
+        if not email:
+            return Response({'error': 'Email is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not password:
+            return Response({'error': 'Password is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if user exists with this email
+        try:
+            user = DjangoUser.objects.get(email=email)
+        except DjangoUser.DoesNotExist:
+            return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Verify password
+        from django.contrib.auth import authenticate
+        authenticated_user = authenticate(username=user.username, password=password)
+        if not authenticated_user:
+            return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Generate 6-digit OTP code
+        import random
+        otp_code = str(random.randint(100000, 999999))
+        
+        # Set expiration time (10 minutes from now)
+        from django.utils import timezone
+        expires_at = timezone.now() + timedelta(minutes=10)
+        
+        # Invalidate any existing unverified OTPs for this email
+        OTP.objects.filter(email=email, is_verified=False).update(is_verified=True)
+        
+        # Create new OTP record
+        otp_id = uuid.uuid4().hex[:12]
+        while OTP.objects.filter(id=otp_id).exists():
+            otp_id = uuid.uuid4().hex[:12]
+        
+        otp = OTP.objects.create(
+            id=otp_id,
+            email=email,
+            code=otp_code,
+            expires_at=expires_at
+        )
+        
+        # Send email using Resend API
+        import os
+        resend_api_key = os.getenv('RESEND_API_KEY')
+        if not resend_api_key:
+            return Response({'error': 'Resend API key not configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        try:
+            import resend
+            resend.api_key = resend_api_key
+            
+            # Get sender email from environment or use default
+            from_email = os.getenv('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+            
+            # Send email
+            params = {
+                "from": from_email,
+                "to": [email],
+                "subject": "Your OTP Code",
+                "html": f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Your OTP Code</h2>
+                    <p>Hello,</p>
+                    <p>Your one-time password (OTP) code is:</p>
+                    <div style="background-color: #f4f4f4; padding: 15px; border-radius: 5px; text-align: center; margin: 20px 0;">
+                        <h1 style="margin: 0; color: #333; letter-spacing: 5px;">{otp_code}</h1>
+                    </div>
+                    <p>This code will expire in 10 minutes.</p>
+                    <p>If you didn't request this code, please ignore this email.</p>
+                    <p>Best regards,<br>LeadFlow Team</p>
+                </body>
+                </html>
+                """,
+            }
+            
+            email_response = resend.Emails.send(params)
+            
+            return Response({
+                'success': True,
+                'message': 'OTP code sent successfully',
+                'otp_id': otp_id
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            # Delete OTP record if email sending fails
+            otp.delete()
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send OTP email: {str(e)}")
+            return Response({
+                'error': 'Failed to send OTP email',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in send_otp: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return Response({
+            'error': 'Internal server error',
+            'detail': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_otp(request):
+    """Verify OTP code and return JWT tokens if valid"""
+    try:
+        email = request.data.get('email', '').strip().lower()
+        otp_code = request.data.get('otp', '').strip()
+        
+        if not email or not otp_code:
+            return Response({'error': 'Email and OTP code are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Find the most recent unverified OTP for this email
+        try:
+            otp = OTP.objects.filter(email=email, is_verified=False).order_by('-created_at').first()
+            
+            if not otp:
+                return Response({'error': 'No OTP found for this email. Please request a new one.'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if OTP is expired
+            if otp.is_expired():
+                return Response({'error': 'OTP code has expired. Please request a new one.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify OTP code
+            if otp.code != otp_code:
+                return Response({'error': 'Invalid OTP code'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Mark OTP as verified
+            otp.is_verified = True
+            otp.save()
+            
+            # Get user by email
+            try:
+                user = DjangoUser.objects.get(email=email)
+            except DjangoUser.DoesNotExist:
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Generate JWT tokens
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'success': True,
+                'message': 'OTP verified successfully',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error verifying OTP: {str(e)}")
+            return Response({
+                'error': 'Failed to verify OTP',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in verify_otp: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return Response({
+            'error': 'Internal server error',
+            'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

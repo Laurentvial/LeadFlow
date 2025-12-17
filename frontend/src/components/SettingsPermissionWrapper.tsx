@@ -34,7 +34,7 @@ export function SettingsPermissionWrapper({ children }: SettingsPermissionWrappe
 
   // If no user, redirect to login
   if (!currentUser) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login/otp" replace />;
   }
 
   // If no access to any tab, redirect to an accessible route

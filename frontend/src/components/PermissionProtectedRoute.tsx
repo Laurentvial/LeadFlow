@@ -50,7 +50,7 @@ export function PermissionProtectedRoute({
 
   // If no user, redirect to login
   if (!currentUser) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login/otp" replace />;
   }
 
   // If no permission, redirect to an accessible route

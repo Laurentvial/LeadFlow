@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
-import Login from './components/LoginPage';
+// import Login from './components/LoginPage'; // Traditional login hidden for now
+import OTPLogin from './components/OTPLoginPage';
 import Dashboard from './components/Dashboard';
 import NotFound from './components/NotFound';
 import UsersAndTeams from './components/UsersTeams';
@@ -28,7 +29,7 @@ import { EventPopupWrapper } from './components/EventPopupWrapper';
 
 function Logout() {
     localStorage.clear();
-    return <Navigate to="/login" />;
+    return <Navigate to="/login/otp" />;
 }
 
 function ContactDetailWrapper() {
@@ -51,7 +52,8 @@ function App() {
                         <Toaster />
                         <MessagePopupWrapper />
                         <Routes>
-                    <Route path="/login" element={<Login />} />
+                    <Route path="/login" element={<Navigate to="/login/otp" replace />} />
+                    <Route path="/login/otp" element={<OTPLogin />} />
                     <Route path="/logout" element={<Logout />} />
                     <Route path="/" element={
                         <ProtectedRoute>

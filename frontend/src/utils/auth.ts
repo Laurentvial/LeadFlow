@@ -97,3 +97,62 @@ export async function getSession() {
     return null;
   }
 }
+
+export async function sendOTP(email: string, password: string) {
+  try {
+    const response = await fetch(`${apiUrl}/api/otp/send/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: email,
+        password: password,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to send OTP' }));
+      throw new Error(error.error || error.detail || 'Failed to send OTP');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    throw error;
+  }
+}
+
+export async function verifyOTP(email: string, otp: string) {
+  try {
+    const response = await fetch(`${apiUrl}/api/otp/verify/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: email,
+        otp: otp,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Invalid OTP' }));
+      throw new Error(error.error || error.detail || 'Invalid OTP');
+    }
+
+    const data = await response.json();
+    
+    if (data.access) {
+      localStorage.setItem(ACCESS_TOKEN, data.access);
+    }
+    
+    if (data.refresh) {
+      localStorage.setItem(REFRESH_TOKEN, data.refresh);
+    }
+    
+    return data;
+  } catch (error: any) {
+    throw error;
+  }
+}

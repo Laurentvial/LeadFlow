@@ -206,7 +206,7 @@ export function RegisterPage() {
           <div className="mt-4 text-center">
             <p className="text-sm text-slate-600">
               Vous avez déjà un compte ?{' '}
-              <Link to="/login" className="text-blue-600 hover:text-blue-800 underline">
+              <Link to="/login/otp" className="text-blue-600 hover:text-blue-800 underline">
                 Se connecter
               </Link>
             </p>

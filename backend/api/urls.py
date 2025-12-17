@@ -118,4 +118,7 @@ urlpatterns = [
     path('fosse-settings/', api_views.fosse_settings_list, name='fosse-settings-list'),
     path('fosse-settings/<str:role_id>/', api_views.fosse_settings_detail, name='fosse-settings-detail'),
     path('fosse-settings/<str:role_id>/update/', api_views.fosse_settings_update, name='fosse-settings-update'),
+    # OTP endpoints
+    path('otp/send/', api_views.send_otp, name='send-otp'),
+    path('otp/verify/', api_views.verify_otp, name='verify-otp'),
 ]

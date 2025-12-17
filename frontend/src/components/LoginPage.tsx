@@ -97,6 +97,12 @@ export function LoginPage() {
             <Button type="submit" className="login-button" disabled={loading}>
               {loading ? 'Connexion...' : 'Se connecter'}
             </Button>
+
+            <div style={{ marginTop: '20px', textAlign: 'center', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
+              <Link to="/login/otp" style={{ color: '#3b82f6', textDecoration: 'none', fontSize: '14px' }}>
+                Login with OTP instead
+              </Link>
+            </div>
           </form>
 
 
