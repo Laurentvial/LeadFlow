@@ -2986,11 +2986,13 @@ def contact_detail(request, contact_id):
     # Check if contact is a fosse contact (unassigned: teleoperator is null AND confirmateur is null)
     is_fosse_contact = contact.teleoperator is None and contact.confirmateur is None
     
+    # Use module-level import (UserDetails is imported at top of file)
+    # Alias it locally to avoid any scoping conflicts
+    UserDetailsModel = UserDetails
+    
     # Check data access restrictions
     try:
-        # Use the module-level import directly (imported at top of file)
-        # Avoid any local imports that might shadow this
-        user_details = UserDetails.objects.get(django_user=user)
+        user_details = UserDetailsModel.objects.get(django_user=user)
         
         # Special case: If contact is in fosse, check if user has fosse view permission
         has_fosse_permission = False
@@ -3115,7 +3117,7 @@ def contact_detail(request, contact_id):
                                 status=status.HTTP_403_FORBIDDEN
                             )
                 # If data_access is 'all', allow access (no check needed)
-    except UserDetails.DoesNotExist:
+    except UserDetailsModel.DoesNotExist:
         # If user has no UserDetails, deny access (safety default)
         return Response(
             {'error': 'Vous n\'avez pas accès à ce contact'},
@@ -3372,10 +3374,9 @@ def contact_detail(request, contact_id):
                         
                         # If not found and ID is a string, try looking up via UserDetails
                         if not teleoperator_user:
-                            from api.models import UserDetails
                             try:
-                                # Try as UserDetails ID (string)
-                                user_details = UserDetails.objects.filter(id=str(new_teleoperator_id)).first()
+                                # Try as UserDetails ID (string) - use UserDetailsModel from function-level import
+                                user_details = UserDetailsModel.objects.filter(id=str(new_teleoperator_id)).first()
                                 if user_details and user_details.django_user:
                                     teleoperator_user = user_details.django_user
                                     print(f"[DEBUG] Found teleoperator via UserDetails ID: {new_teleoperator_id} -> Django User ID: {teleoperator_user.id}")
@@ -3496,10 +3497,9 @@ def contact_detail(request, contact_id):
                         
                         # If not found and ID is a string, try looking up via UserDetails
                         if not confirmateur_user:
-                            from api.models import UserDetails
                             try:
-                                # Try as UserDetails ID (string)
-                                user_details = UserDetails.objects.filter(id=str(new_confirmateur_id)).first()
+                                # Try as UserDetails ID (string) - use UserDetailsModel from function-level import
+                                user_details = UserDetailsModel.objects.filter(id=str(new_confirmateur_id)).first()
                                 if user_details and user_details.django_user:
                                     confirmateur_user = user_details.django_user
                                     print(f"[DEBUG] Found confirmateur via UserDetails ID: {new_confirmateur_id} -> Django User ID: {confirmateur_user.id}")
@@ -3616,9 +3616,9 @@ def contact_detail(request, contact_id):
                 if teleoperator_id is None and confirmateur_id is None:
                     print(f"[DEBUG] Both teleoperator and confirmateur are None - checking for default fosse status")
                     # Both are None - check for default fosse status
-                    # Note: UserDetails, FosseSettings, and Status are already imported at the top of the file
+                    # Note: UserDetailsModel, FosseSettings, and Status are already imported at the top of the file
                     try:
-                        user_details = UserDetails.objects.filter(django_user=request.user).first()
+                        user_details = UserDetailsModel.objects.filter(django_user=request.user).first()
                         print(f"[DEBUG] User details found: {user_details is not None}, Role ID: {user_details.role_id if user_details else None}")
                         if user_details and user_details.role_id:
                             # Use select_related to avoid N+1 query
