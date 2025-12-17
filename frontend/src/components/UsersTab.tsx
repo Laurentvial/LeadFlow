@@ -12,7 +12,7 @@ import { User } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 
 export function UsersTab() {
-  const { users: usersData, loading: usersLoading, error: usersError, deleteUser, toggleUserActive, refetch } = useUsers();
+  const { users: usersData, loading: usersLoading, error: usersError, deleteUser, toggleUserActive, toggleUserOtp, refetch } = useUsers();
   const { teams, loading: teamsLoading } = useTeams();
   
   // Sort users by creation date (most recent first) - already sorted in hook, but ensure it's maintained
@@ -37,6 +37,14 @@ export function UsersTab() {
   async function handleToggleActive(userId: string) {
     try {
       await toggleUserActive(userId);
+    } catch (error) {
+      // Error already handled in the hook
+    }
+  }
+
+  async function handleToggleOtp(userId: string) {
+    try {
+      await toggleUserOtp(userId);
     } catch (error) {
       // Error already handled in the hook
     }
@@ -130,6 +138,7 @@ export function UsersTab() {
                     <th>Rôle</th>
                     <th>Équipe</th>
                     <th>Statut</th>
+                    <th>OTP</th>
                     <th className="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -169,6 +178,16 @@ export function UsersTab() {
                             className={user.active ? 'users-teams-status-active' : 'users-teams-status-inactive'}
                           >
                             {user.active ? 'Actif' : 'Inactif'}
+                          </Button>
+                        </td>
+                        <td>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleToggleOtp(user.id)}
+                            className={user.requireOtp ? 'users-teams-status-active' : 'users-teams-status-inactive'}
+                          >
+                            {user.requireOtp ? 'Activé' : 'Désactivé'}
                           </Button>
                         </td>
                         <td className="text-right">

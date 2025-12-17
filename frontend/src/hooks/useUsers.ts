@@ -121,6 +121,19 @@ export function useUsers() {
     }
   }, [loadUsers]);
 
+  const toggleUserOtp = useCallback(async (userId: string) => {
+    try {
+      await apiCall(`/api/users/${userId}/toggle-otp/`, { method: 'POST' });
+      // Clear API cache and invalidate local cache
+      clearApiCache('/api/users/');
+      usersCache = [];
+      usersCacheTime = 0;
+      await loadUsers(true);
+    } catch (err) {
+      throw err;
+    }
+  }, [loadUsers]);
+
   const refetch = useCallback(() => {
     clearApiCache('/api/users/');
     usersCache = [];
@@ -128,6 +141,6 @@ export function useUsers() {
     return loadUsers(true);
   }, [loadUsers]);
 
-  return { users, loading, error, refetch, deleteUser, toggleUserActive };
+  return { users, loading, error, refetch, deleteUser, toggleUserActive, toggleUserOtp };
 }
 

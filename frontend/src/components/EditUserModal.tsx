@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from './ui/select';
 import { X } from 'lucide-react';
+import { Checkbox } from './ui/checkbox';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { formatPhoneNumber, formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
@@ -41,6 +42,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
     role: '',
     teamId: '',
     hrex: '',
+    requireOtp: false,
   });
 
   useEffect(() => {
@@ -85,6 +87,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           roleId: formData.role || null,
           teamId: formData.teamId || null,
           hrex: formData.hrex || '',
+          requireOtp: formData.requireOtp,
         }),
       });
 
@@ -247,6 +250,21 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
                 placeholder="Ex: #3B82F6 ou blue"
                 className="flex-1"
               />
+            </div>
+          </div>
+
+          <div className="modal-form-field">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="edit-requireOtp"
+                checked={formData.requireOtp}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, requireOtp: checked === true })
+                }
+              />
+              <Label htmlFor="edit-requireOtp" className="cursor-pointer">
+                Forcer l'authentification OTP pour cet utilisateur
+              </Label>
             </div>
           </div>
 

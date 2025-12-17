@@ -27,21 +27,31 @@ export function OTPLoginPage() {
     setSendingOTP(true);
 
     try {
-      await sendOTP(email, password);
-      toast.success('OTP code sent to your email');
-      setStep('otp');
-      setCountdown(60); // 60 second countdown
+      const response = await sendOTP(email, password);
       
-      // Start countdown timer
-      const timer = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      // Check if OTP is required or if user was authenticated directly
+      if (response.otpRequired === false || (response.access && response.refresh)) {
+        // User doesn't require OTP, authenticate directly
+        await refreshUser();
+        toast.success('Connexion réussie');
+        navigate('/');
+      } else {
+        // User requires OTP, proceed with OTP flow
+        toast.success('Code OTP envoyé à votre email');
+        setStep('otp');
+        setCountdown(60); // 60 second countdown
+        
+        // Start countdown timer
+        const timer = setInterval(() => {
+          setCountdown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     } catch (err: any) {
       console.error('Send OTP error:', err);
       const errorMessage = err?.message || 'Échec de l\'envoi du code OTP';

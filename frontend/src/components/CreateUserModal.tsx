@@ -47,6 +47,7 @@ export function CreateUserModal({
     role: "",
     teamId: "",
     hrex: "",
+    requireOtp: false,
   });
 
   // Set default role when roles are loaded and modal opens
@@ -69,6 +70,7 @@ export function CreateUserModal({
         role: roles.length > 0 ? roles[0].id : "",
         teamId: "",
         hrex: "",
+        requireOtp: false,
       });
     }
   }, [isOpen, roles]);
@@ -113,6 +115,7 @@ export function CreateUserModal({
           roleId: formData.role,
           teamId: formData.teamId || null,
           hrex: formData.hrex || '',
+          requireOtp: formData.requireOtp,
         }),
       });
 
@@ -128,6 +131,7 @@ export function CreateUserModal({
         role: roles.length > 0 ? roles[0].id : "",
         teamId: "",
         hrex: "",
+        requireOtp: false,
       });
       onClose();
       onUserCreated();

@@ -117,6 +117,13 @@ export async function sendOTP(email: string, password: string) {
     }
 
     const data = await response.json();
+    
+    // If OTP is not required, tokens are returned directly
+    if (data.access && data.refresh) {
+      localStorage.setItem(ACCESS_TOKEN, data.access);
+      localStorage.setItem(REFRESH_TOKEN, data.refresh);
+    }
+    
     return data;
   } catch (error: any) {
     throw error;

@@ -11,6 +11,7 @@ export interface User {
   teamId: string | null;
   active: boolean;
   hrex?: string; // Hex color code for user (e.g., #FF5733)
+  requireOtp?: boolean; // Force OTP login for this user
   isTeleoperateur?: boolean;
   isConfirmateur?: boolean;
   dataAccess?: 'all' | 'team_only' | 'own_only'; // Data access level from role

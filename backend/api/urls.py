@@ -41,6 +41,7 @@ urlpatterns = [
     path('users/<str:user_id>/', api_views.user_delete, name='user-delete'),
     path('users/<str:user_id>/update/', api_views.user_update, name='user-update'),
     path('users/<str:user_id>/toggle-active/', api_views.user_toggle_active, name='user-toggle-active'),
+    path('users/<str:user_id>/toggle-otp/', api_views.user_toggle_otp, name='user-toggle-otp'),
     path('users/<str:user_id>/reset-password/', api_views.user_reset_password, name='user-reset-password'),
     # Events endpoints
     path('events/', api_views.event_list, name='event-list'),

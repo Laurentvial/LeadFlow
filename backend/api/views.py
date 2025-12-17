@@ -4013,6 +4013,15 @@ def user_toggle_active(request, user_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def user_toggle_otp(request, user_id):
+    user_details = get_object_or_404(UserDetails, id=user_id, deleted_at__isnull=True)
+    # Toggle the require_otp status
+    user_details.require_otp = not user_details.require_otp
+    user_details.save()
+    return Response({'requireOtp': user_details.require_otp})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def user_reset_password(request, user_id):
     """Reset password for a user"""
     try:
@@ -4115,6 +4124,8 @@ def user_update(request, user_id):
             user_details.phone = None
     if 'hrex' in request.data:
         user_details.hrex = request.data.get('hrex', '').strip() or ''
+    if 'requireOtp' in request.data:
+        user_details.require_otp = bool(request.data['requireOtp'])
     
     # Update team membership using TeamMember table
     if 'teamId' in request.data:
@@ -7305,6 +7316,31 @@ def send_otp(request):
         if not authenticated_user:
             return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
         
+        # Check if user requires OTP
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            # If user doesn't require OTP, authenticate directly
+            if not user_details.require_otp:
+                # Check if user is deleted
+                if user_details.deleted_at:
+                    return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
+                
+                # Generate JWT tokens directly without OTP
+                from rest_framework_simplejwt.tokens import RefreshToken
+                refresh = RefreshToken.for_user(user)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Login successful',
+                    'access': str(refresh.access_token),
+                    'refresh': str(refresh),
+                    'otpRequired': False
+                }, status=status.HTTP_200_OK)
+        except UserDetails.DoesNotExist:
+            # UserDetails doesn't exist, allow OTP flow (might be a new user)
+            pass
+        
+        # User requires OTP, proceed with OTP generation
         # Generate 6-digit OTP code
         import random
         otp_code = str(random.randint(100000, 999999))
@@ -7469,11 +7505,11 @@ def verify_otp(request):
             'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# Custom token serializer to check if user is deleted
+# Custom token serializer to check if user is deleted and if OTP is required
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        # Check if user is deleted
+        # Check if user is deleted or requires OTP
         try:
             user_details = UserDetails.objects.get(django_user=self.user)
             if user_details.deleted_at:
@@ -7481,6 +7517,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 raise AuthenticationFailed(
                     'This account has been deleted.',
                     code='user_deleted'
+                )
+            # Check if user requires OTP login
+            if user_details.require_otp:
+                from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                raise AuthenticationFailed(
+                    'This account requires OTP authentication. Please use OTP login.',
+                    code='otp_required'
                 )
         except UserDetails.DoesNotExist:
             # UserDetails doesn't exist, allow login (might be a new user)
