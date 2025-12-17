@@ -14,9 +14,15 @@ logger = logging.getLogger(__name__)
 def _add_cors_headers(response, request):
     """Helper function to add CORS headers to a response."""
     if request.path.startswith('/api/'):
-        origin = request.META.get('HTTP_ORIGIN', 'unknown')
-        logger.info(f"[CORS] Adding CORS headers to {request.method} {request.path} from origin {origin}")
-        response['Access-Control-Allow-Origin'] = '*'
+        origin = request.META.get('HTTP_ORIGIN')
+        logger.info(f"[CORS] Adding CORS headers to {request.method} {request.path} from origin {origin or 'unknown'}")
+        # When credentials are allowed, we must echo back the origin instead of using '*'
+        # This matches django-cors-headers behavior when CORS_ALLOW_ALL_ORIGINS=True and CORS_ALLOW_CREDENTIALS=True
+        if origin:
+            response['Access-Control-Allow-Origin'] = origin
+        else:
+            # Fallback to '*' only if no origin header (shouldn't happen in normal CORS requests)
+            response['Access-Control-Allow-Origin'] = '*'
         response['Access-Control-Allow-Credentials'] = 'true'
         response['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
         response['Access-Control-Allow-Headers'] = 'accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with'
@@ -24,9 +30,15 @@ def _add_cors_headers(response, request):
 
 def _create_preflight_response(request):
     """Helper function to create preflight OPTIONS response."""
-    logger.info(f"[CORS] Handling OPTIONS preflight for {request.path} from origin {request.META.get('HTTP_ORIGIN', 'unknown')}")
+    origin = request.META.get('HTTP_ORIGIN')
+    logger.info(f"[CORS] Handling OPTIONS preflight for {request.path} from origin {origin or 'unknown'}")
     response = HttpResponse()
-    response['Access-Control-Allow-Origin'] = '*'
+    # When credentials are allowed, we must echo back the origin instead of using '*'
+    if origin:
+        response['Access-Control-Allow-Origin'] = origin
+    else:
+        # Fallback to '*' only if no origin header (shouldn't happen in normal CORS requests)
+        response['Access-Control-Allow-Origin'] = '*'
     response['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
     response['Access-Control-Allow-Headers'] = 'accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with'
     response['Access-Control-Allow-Credentials'] = 'true'
