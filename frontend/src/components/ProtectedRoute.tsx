@@ -56,7 +56,7 @@ function ProtectedRoute({ children }: ProtectedRouteProps) {
         );
     }
 
-    return isAuthenticated ? <>{children}</> : <Navigate to="/login/otp" />
+    return isAuthenticated ? <>{children}</> : <Navigate to="/login" />
 }
 
 export default ProtectedRoute;

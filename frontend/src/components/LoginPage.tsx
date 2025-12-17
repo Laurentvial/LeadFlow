@@ -1,51 +1,128 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { signIn } from '../utils/auth';
+import { sendOTP, verifyOTP } from '../utils/auth';
 import { useUser } from '../contexts/UserContext';
-import { Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import '../styles/LoginPage.css';
 
 export function LoginPage() {
   const navigate = useNavigate();
   const { refreshUser } = useUser();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [step, setStep] = useState<'password' | 'otp'>('password');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sendingOTP, setSendingOTP] = useState(false);
+  const [countdown, setCountdown] = useState(0);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError('');
+    
+    if (step === 'password') {
+      await handleSendOTP();
+    } else {
+      await handleVerifyOTP();
+    }
+  }
+
+  async function handleSendOTP() {
+    setSendingOTP(true);
+
+    try {
+      const response = await sendOTP(email, password);
+      
+      // Check if user was authenticated directly (require_otp is false)
+      // Backend returns tokens and otpRequired: false when user doesn't need OTP
+      const isDirectAuth = response.otpRequired === false || (response.access && response.refresh);
+      
+      if (isDirectAuth) {
+        // User doesn't require OTP, skip OTP step and authenticate directly
+        await refreshUser();
+        toast.success('Connexion réussie');
+        navigate('/');
+        return; // Exit early to skip OTP flow
+      }
+      
+      // User requires OTP, proceed with OTP flow
+      toast.success('Code OTP envoyé à votre email');
+      setStep('otp');
+      setCountdown(60); // 60 second countdown
+      
+      // Start countdown timer
+      const timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (err: any) {
+      console.error('Send OTP error:', err);
+      const errorMessage = err?.message || 'Échec de l\'envoi du code OTP';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setSendingOTP(false);
+    }
+  }
+
+  async function handleVerifyOTP() {
     setLoading(true);
 
     try {
-      await signIn(username, password);
+      await verifyOTP(email, otp);
       await refreshUser();
+      toast.success('Connexion réussie');
       navigate('/');
     } catch (err: any) {
-      console.error('Login error:', err);
-      
-      // Extract error message - signIn throws Error objects, not axios errors
-      let errorMessage = 'Username ou mot de passe incorrect.';
-      
-      if (err?.message) {
-        errorMessage = err.message;
-      } else if (err?.response?.data) {
-        // Fallback for axios-style errors if signIn changes
-        const data = err.response.data;
-        errorMessage = data.detail || Object.values(data).flat().join(', ') || errorMessage;
-      }
-      
+      console.error('Verify OTP error:', err);
+      const errorMessage = err?.message || 'Code OTP invalide';
       setError(errorMessage);
       toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleResendOTP() {
+    if (countdown > 0) return;
+    
+    setError('');
+    setSendingOTP(true);
+
+    sendOTP(email, password)
+      .then(() => {
+        toast.success('Code OTP renvoyé à votre email');
+        setCountdown(60);
+        
+        // Start countdown timer
+        const timer = setInterval(() => {
+          setCountdown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      })
+      .catch((err: any) => {
+        const errorMessage = err?.message || 'Échec du renvoi du code OTP';
+        setError(errorMessage);
+        toast.error(errorMessage);
+      })
+      .finally(() => {
+        setSendingOTP(false);
+      });
   }
 
   return (
@@ -59,51 +136,111 @@ export function LoginPage() {
             </div>
           </CardTitle>
           <CardDescription>
-            Connectez-vous à votre compte
+            {step === 'password' ? 'Connectez-vous à votre compte' : 'Entrez le code OTP envoyé à votre email'}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="login-form">
-            <div className="login-form-field">
-              <Label htmlFor="username">Nom d'utilisateur</Label>
-              <Input
-                id="username"
-                type="text"
-                placeholder="nom d'utilisateur"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-              />
-            </div>
-            
-            <div className="login-form-field">
-              <Label htmlFor="password">Mot de passe</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            {error && (
-              <div className="login-error">
-                {error}
+          {step === 'password' ? (
+            <form onSubmit={handleSubmit} className="login-form">
+              <div className="login-form-field">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="votre.email@exemple.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
               </div>
-            )}
 
-            <Button type="submit" className="login-button" disabled={loading}>
-              {loading ? 'Connexion...' : 'Se connecter'}
-            </Button>
+              <div className="login-form-field">
+                <Label htmlFor="password">Mot de passe</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
 
-            <div style={{ marginTop: '20px', textAlign: 'center', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
-              <Link to="/login/otp" style={{ color: '#3b82f6', textDecoration: 'none', fontSize: '14px' }}>
-                Se connecter avec un code OTP à la place
-              </Link>
-            </div>
-          </form>
+              {error && (
+                <div className="login-error">
+                  {error}
+                </div>
+              )}
+
+              <Button type="submit" className="login-button" disabled={sendingOTP}>
+                {sendingOTP ? 'Connexion...' : 'Se connecter'}
+              </Button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="login-form">
+              <div className="login-form-field">
+                <Label htmlFor="email-display">Email</Label>
+                <Input
+                  id="email-display"
+                  type="email"
+                  value={email}
+                  disabled
+                  className="opacity-60"
+                />
+              </div>
+
+              <div className="login-form-field">
+                <Label htmlFor="otp">Code OTP</Label>
+                <Input
+                  id="otp"
+                  type="text"
+                  placeholder="000000"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
+                  required
+                  style={{ letterSpacing: '8px', textAlign: 'center', fontSize: '20px', fontWeight: 'bold' }}
+                />
+              </div>
+
+              {error && (
+                <div className="login-error">
+                  {error}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
+                <Button type="submit" className="login-button" disabled={loading}>
+                  {loading ? 'Vérification...' : 'Vérifier le code OTP'}
+                </Button>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setStep('password');
+                      setOtp('');
+                      setError('');
+                      setCountdown(0);
+                    }}
+                    disabled={loading}
+                  >
+                    Retour
+                  </Button>
+                  
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleResendOTP}
+                    disabled={sendingOTP || countdown > 0}
+                  >
+                    {countdown > 0 ? `Renvoyer dans ${countdown}s` : 'Renvoyer le code OTP'}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          )}
 
 
         </CardContent>
