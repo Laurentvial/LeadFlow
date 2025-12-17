@@ -23,6 +23,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
@@ -2376,8 +2378,8 @@ def contact_create(request):
         return Response({'error': 'Le prénom est requis'}, status=status.HTTP_400_BAD_REQUEST)
     if not request.data.get('lastName'):
         return Response({'error': 'Le nom est requis'}, status=status.HTTP_400_BAD_REQUEST)
-    if not request.data.get('mobile'):
-        return Response({'error': 'Le portable est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    if not request.data.get('phone'):
+        return Response({'error': 'Le téléphone 1 est requis'}, status=status.HTTP_400_BAD_REQUEST)
     if not request.data.get('statusId'):
         return Response({'error': 'Le statut est requis'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2460,23 +2462,53 @@ def contact_create(request):
     teleoperator_id = request.data.get('teleoperatorId')
     if teleoperator_id:
         try:
-            teleoperator_user = DjangoUser.objects.filter(id=teleoperator_id).first()
+            teleoperator_user = None
+            # Try Django User ID first (if it's an integer)
+            try:
+                int_id = int(teleoperator_id)
+                teleoperator_user = DjangoUser.objects.filter(id=int_id).first()
+            except (ValueError, TypeError):
+                pass
+            
+            # If not found, try UserDetails ID
+            if not teleoperator_user:
+                from api.models import UserDetails
+                user_details = UserDetails.objects.filter(id=str(teleoperator_id)).first()
+                if user_details and user_details.django_user:
+                    teleoperator_user = user_details.django_user
+            
             if teleoperator_user:
                 contact_data['teleoperator'] = teleoperator_user
                 # Set assigned_at when creating contact with teleoperator
                 from django.utils import timezone
                 contact_data['assigned_at'] = timezone.now()
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Error setting teleoperator during contact creation: {e}")
             pass
     
     # Handle confirmateur
     confirmateur_id = request.data.get('confirmateurId')
     if confirmateur_id:
         try:
-            confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
+            confirmateur_user = None
+            # Try Django User ID first (if it's an integer)
+            try:
+                int_id = int(confirmateur_id)
+                confirmateur_user = DjangoUser.objects.filter(id=int_id).first()
+            except (ValueError, TypeError):
+                pass
+            
+            # If not found, try UserDetails ID
+            if not confirmateur_user:
+                from api.models import UserDetails
+                user_details = UserDetails.objects.filter(id=str(confirmateur_id)).first()
+                if user_details and user_details.django_user:
+                    confirmateur_user = user_details.django_user
+            
             if confirmateur_user:
                 contact_data['confirmateur'] = confirmateur_user
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Error setting confirmateur during contact creation: {e}")
             pass
     
     try:
@@ -3267,21 +3299,30 @@ def contact_detail(request, contact_id):
             if 'produit' in request.data:
                 contact.produit = request.data.get('produit', '') or ''
             
+            # Initialize change tracking variables
+            teleoperator_changed = False
+            confirmateur_changed = False
+            
             # Update teleoperator if provided
             if 'teleoperatorId' in request.data:
                 teleoperator_id_raw = request.data.get('teleoperatorId')
                 
-                # Normalize empty string to None
-                if teleoperator_id_raw == '' or teleoperator_id_raw == 'none':
+                # Normalize empty string, 'none', or None to None
+                if teleoperator_id_raw is None or teleoperator_id_raw == '' or teleoperator_id_raw == 'none':
                     new_teleoperator_id = None
                 else:
-                    # Convert to int if it's a numeric string
+                    # Keep as string - could be UserDetails ID (string) or Django User ID (int as string)
+                    # We'll try both lookups in the assignment logic
+                    new_teleoperator_id = str(teleoperator_id_raw).strip()
+                    # Try to convert to int for comparison purposes, but keep original for lookup
                     try:
-                        new_teleoperator_id = int(teleoperator_id_raw)
+                        int_value = int(new_teleoperator_id)
+                        # If it's a valid integer string, we can use it for both lookups
+                        new_teleoperator_id = int_value
                     except (ValueError, TypeError):
-                        # If conversion fails, keep as string but log warning
-                        print(f"[DEBUG] Warning: Could not convert teleoperator_id '{teleoperator_id_raw}' to int")
-                        new_teleoperator_id = teleoperator_id_raw
+                        # Keep as string - it's likely a UserDetails ID
+                        print(f"[DEBUG] Teleoperator ID is non-numeric string (likely UserDetails ID): '{teleoperator_id_raw}'")
+                        pass
                 
                 # Get old teleoperator ID before any changes (as integer for comparison)
                 old_teleoperator_id = contact.teleoperator_id
@@ -3324,8 +3365,23 @@ def contact_detail(request, contact_id):
                 
                 if new_teleoperator_id is not None:
                     try:
-                        # Use the normalized integer ID to find the user
-                        teleoperator_user = DjangoUser.objects.filter(id=new_teleoperator_id).first()
+                        # Try to find user by Django User ID first (if it's an integer)
+                        teleoperator_user = None
+                        if isinstance(new_teleoperator_id, int):
+                            teleoperator_user = DjangoUser.objects.filter(id=new_teleoperator_id).first()
+                        
+                        # If not found and ID is a string, try looking up via UserDetails
+                        if not teleoperator_user:
+                            from api.models import UserDetails
+                            try:
+                                # Try as UserDetails ID (string)
+                                user_details = UserDetails.objects.filter(id=str(new_teleoperator_id)).first()
+                                if user_details and user_details.django_user:
+                                    teleoperator_user = user_details.django_user
+                                    print(f"[DEBUG] Found teleoperator via UserDetails ID: {new_teleoperator_id} -> Django User ID: {teleoperator_user.id}")
+                            except Exception as e:
+                                print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        
                         if teleoperator_user:
                             contact.teleoperator = teleoperator_user
                             # Update assigned_at when teleoperator changes (assigns or reassigns)
@@ -3340,9 +3396,14 @@ def contact_detail(request, contact_id):
                             # Clear any cached relationship
                             if hasattr(contact, '_teleoperator_cache'):
                                 delattr(contact, '_teleoperator_cache')
-                            print(f"[DEBUG] Set teleoperator to user ID: {new_teleoperator_id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
+                            print(f"[DEBUG] Set teleoperator to user ID: {teleoperator_user.id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
                         else:
                             print(f"[DEBUG] ERROR: Teleoperator user not found for ID: {new_teleoperator_id}")
+                            # Don't clear the teleoperator if user not found - return error instead
+                            return Response(
+                                {'error': f'Utilisateur téléopérateur avec l\'ID {new_teleoperator_id} non trouvé'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
                     except Exception as e:
                         print(f"[DEBUG] ERROR setting teleoperator: {e}")
                         import traceback
@@ -3365,30 +3426,117 @@ def contact_detail(request, contact_id):
             
             # Update confirmateur if provided
             if 'confirmateurId' in request.data:
-                confirmateur_id = request.data.get('confirmateurId')
-                if confirmateur_id:
+                print(f"[DEBUG] ===== CONFIRMATEUR UPDATE BLOCK ENTERED =====")
+                confirmateur_id_raw = request.data.get('confirmateurId')
+                print(f"[DEBUG] confirmateurId found in request.data: {confirmateur_id_raw} (type: {type(confirmateur_id_raw)})")
+                
+                # Normalize empty string, 'none', or None to None
+                if confirmateur_id_raw is None or confirmateur_id_raw == '' or confirmateur_id_raw == 'none':
+                    new_confirmateur_id = None
+                else:
+                    # Keep as string - could be UserDetails ID (string) or Django User ID (int as string)
+                    # We'll try both lookups in the assignment logic
+                    new_confirmateur_id = str(confirmateur_id_raw).strip()
+                    # Try to convert to int for comparison purposes, but keep original for lookup
                     try:
-                        confirmateur_user = DjangoUser.objects.filter(id=confirmateur_id).first()
+                        int_value = int(new_confirmateur_id)
+                        # If it's a valid integer string, we can use it for both lookups
+                        new_confirmateur_id = int_value
+                    except (ValueError, TypeError):
+                        # Keep as string - it's likely a UserDetails ID
+                        print(f"[DEBUG] Confirmateur ID is non-numeric string (likely UserDetails ID): '{confirmateur_id_raw}'")
+                        pass
+                
+                # Get old confirmateur ID before any changes (as integer for comparison)
+                old_confirmateur_id = contact.confirmateur_id
+                
+                # Debug logging
+                print(f"[DEBUG] ===== Updating confirmateur for contact {contact.id} =====")
+                print(f"[DEBUG] Raw confirmateur_id from request: {confirmateur_id_raw} (type: {type(confirmateur_id_raw)})")
+                print(f"[DEBUG] Old confirmateur_id: {old_confirmateur_id} (type: {type(old_confirmateur_id)})")
+                print(f"[DEBUG] New confirmateur_id (normalized): {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
+                
+                # Confirmateur changed if:
+                # 1. Old is None and new is not None (assigning)
+                # 2. Old is not None and new is None (clearing)
+                # 3. Old and new are both not None but different (reassigning)
+                # Compare as integers for accurate comparison
+                if old_confirmateur_id is None and new_confirmateur_id is not None:
+                    confirmateur_changed = True
+                    change_type = "assigning (None -> value)"
+                elif old_confirmateur_id is not None and new_confirmateur_id is None:
+                    confirmateur_changed = True
+                    change_type = "clearing (value -> None)"
+                elif old_confirmateur_id is not None and new_confirmateur_id is not None:
+                    # Both are not None, compare as integers
+                    try:
+                        old_int = int(old_confirmateur_id)
+                        new_int = int(new_confirmateur_id)
+                        confirmateur_changed = (old_int != new_int)
+                        change_type = f"reassigning ({old_int} -> {new_int})" if confirmateur_changed else f"same value ({old_int})"
+                    except (ValueError, TypeError) as e:
+                        # Fallback to string comparison if int conversion fails
+                        confirmateur_changed = (str(old_confirmateur_id) != str(new_confirmateur_id))
+                        change_type = f"comparison fallback ({old_confirmateur_id} -> {new_confirmateur_id})"
+                        print(f"[DEBUG] Warning: Using string comparison due to conversion error: {e}")
+                else:
+                    # Both are None
+                    confirmateur_changed = False
+                    change_type = "both None"
+                
+                print(f"[DEBUG] Confirmateur changed: {confirmateur_changed} ({change_type})")
+                
+                if new_confirmateur_id is not None:
+                    try:
+                        # Try to find user by Django User ID first (if it's an integer)
+                        print(f"[DEBUG] Looking up confirmateur user with ID: {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
+                        confirmateur_user = None
+                        if isinstance(new_confirmateur_id, int):
+                            confirmateur_user = DjangoUser.objects.filter(id=new_confirmateur_id).first()
+                        
+                        # If not found and ID is a string, try looking up via UserDetails
+                        if not confirmateur_user:
+                            from api.models import UserDetails
+                            try:
+                                # Try as UserDetails ID (string)
+                                user_details = UserDetails.objects.filter(id=str(new_confirmateur_id)).first()
+                                if user_details and user_details.django_user:
+                                    confirmateur_user = user_details.django_user
+                                    print(f"[DEBUG] Found confirmateur via UserDetails ID: {new_confirmateur_id} -> Django User ID: {confirmateur_user.id}")
+                            except Exception as e:
+                                print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        
                         if confirmateur_user:
+                            print(f"[DEBUG] Found confirmateur user: ID={confirmateur_user.id}, Name={confirmateur_user.first_name} {confirmateur_user.last_name}")
                             contact.confirmateur = confirmateur_user
                             # Clear any cached relationship
                             if hasattr(contact, '_confirmateur_cache'):
                                 delattr(contact, '_confirmateur_cache')
-                            print(f"[DEBUG] Set confirmateur to user ID: {confirmateur_id}, Name: {confirmateur_user.first_name} {confirmateur_user.last_name}")
+                            print(f"[DEBUG] Set contact.confirmateur to user ID: {confirmateur_user.id}, Name: {confirmateur_user.first_name} {confirmateur_user.last_name}")
+                            print(f"[DEBUG] contact.confirmateur_id after assignment: {contact.confirmateur_id}")
                         else:
-                            print(f"[DEBUG] Confirmateur user not found for ID: {confirmateur_id}")
+                            print(f"[DEBUG] ERROR: Confirmateur user not found for ID: {new_confirmateur_id}")
+                            # Check if any users exist with similar IDs
+                            all_user_ids = list(DjangoUser.objects.values_list('id', flat=True)[:10])
+                            print(f"[DEBUG] Sample Django User IDs in database: {all_user_ids}")
+                            # Don't clear the confirmateur if user not found - return error instead
+                            return Response(
+                                {'error': f'Utilisateur confirmateur avec l\'ID {new_confirmateur_id} non trouvé'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
                     except Exception as e:
-                        print(f"[DEBUG] Error setting confirmateur: {e}")
+                        print(f"[DEBUG] ERROR setting confirmateur: {e}")
                         import traceback
                         traceback.print_exc()
                 else:
+                    # Clearing confirmateur
                     contact.confirmateur = None
                     # Clear any cached relationship
                     if hasattr(contact, '_confirmateur_cache'):
                         delattr(contact, '_confirmateur_cache')
                     print(f"[DEBUG] Cleared confirmateur (set to None)")
                     print(f"[DEBUG] After clearing confirmateur - teleoperator: {contact.teleoperator}, confirmateur: {contact.confirmateur}")
-                    print(f"[DEBUG] Will check default status after all field updates")
+                print(f"[DEBUG] ===== End confirmateur update for contact {contact.id} =====")
             
             # Update campaign if provided
             if 'campaign' in request.data:
@@ -3442,8 +3590,7 @@ def contact_detail(request, contact_id):
             # Check if teleoperator or confirmateur was changed and if both are now null
             # If both are null, set status to default fosse status from user's role settings
             print(f"[DEBUG] ===== CHECKING DEFAULT FOSSE STATUS =====")
-            teleoperator_changed = 'teleoperatorId' in request.data
-            confirmateur_changed = 'confirmateurId' in request.data
+            # Note: teleoperator_changed and confirmateur_changed are already set above in the update blocks
             
             # Use _id fields to check actual database values (avoids Django ORM caching issues)
             teleoperator_id = getattr(contact, 'teleoperator_id', None)
@@ -3544,11 +3691,13 @@ def contact_detail(request, contact_id):
                     delattr(contact, '_assigned_at_was_set')
                 
                 # Save all other modified fields normally
+                print(f"[DEBUG] Before save - contact.confirmateur_id: {contact.confirmateur_id}, contact.teleoperator_id: {contact.teleoperator_id}")
                 contact.save()
                 
                 # Verify assigned_at was saved
                 contact.refresh_from_db()
                 print(f"[DEBUG] After save - contact.assigned_at: {contact.assigned_at}")
+                print(f"[DEBUG] After save - contact.confirmateur_id: {contact.confirmateur_id}, contact.teleoperator_id: {contact.teleoperator_id}")
                 # Django automatically handles transaction commits - no manual commit needed
             except ValueError as e:
                 # Handle ValueError specifically (e.g., invalid phone/mobile format)
@@ -3681,15 +3830,28 @@ def get_current_user(request):
     try:
         # Optimize query with prefetch_related to load permissions efficiently
         # This loads all permissions in one query instead of N+1 queries
+        # Check if user is deleted
         user_details = UserDetails.objects.select_related(
             'role_id'
         ).prefetch_related(
             'role_id__permission_roles__permission__status'
-        ).get(django_user=django_user)
+        ).get(django_user=django_user, deleted_at__isnull=True)
         # Use UserDetailsSerializer to ensure consistent format with other endpoints
         serializer = UserDetailsSerializer(user_details)
         return Response(serializer.data)
     except UserDetails.DoesNotExist:
+        # Check if user was deleted (exists but deleted_at is not null)
+        try:
+            deleted_user = UserDetails.objects.get(django_user=django_user)
+            if deleted_user.deleted_at:
+                # User is deleted, return 403 Forbidden
+                return Response(
+                    {'detail': 'This account has been deleted.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except UserDetails.DoesNotExist:
+            pass
+        
         # If custom user doesn't exist, return Django user data with default role
         # Still include first_name and last_name from Django Auth
         return Response({
@@ -3802,13 +3964,14 @@ def team_detail(request, team_id):
 @permission_classes([IsAuthenticated])
 def user_list(request):
     # Optimize queries with select_related and prefetch_related to avoid N+1 queries
+    # Filter out deleted users (only show users where deleted_at is null)
     users = UserDetails.objects.select_related(
         'django_user',  # For firstName, lastName, username, email
         'role_id'  # For role data (model field is role_id)
     ).prefetch_related(
         'team_memberships__team',  # For teamId
         'role_id__permission_roles__permission__status'  # For permissions
-    ).all()
+    ).filter(deleted_at__isnull=True)
     serializer = UserDetailsSerializer(users, many=True)
     return Response({'users': serializer.data})
 
@@ -3817,16 +3980,16 @@ def user_list(request):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def user_delete(request, user_id):
-    user_details = get_object_or_404(UserDetails, id=user_id)
+    user_details = get_object_or_404(UserDetails, id=user_id, deleted_at__isnull=True)
     
     # Get old value before deletion for logging
     old_value = {}
     if user_details.django_user:
         old_value = get_user_data_for_log(user_details.django_user, user_details)
     
-    # Delete the user
-    if user_details.django_user:
-        user_details.django_user.delete()
+    # Soft delete: set deleted_at instead of actually deleting
+    user_details.deleted_at = timezone.now()
+    user_details.save()
     
     # Create log entry
     create_log_entry(
@@ -3842,7 +4005,7 @@ def user_delete(request, user_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def user_toggle_active(request, user_id):
-    user_details = get_object_or_404(UserDetails, id=user_id)
+    user_details = get_object_or_404(UserDetails, id=user_id, deleted_at__isnull=True)
     # Toggle the active status
     user_details.active = not user_details.active
     user_details.save()
@@ -3853,7 +4016,7 @@ def user_toggle_active(request, user_id):
 def user_reset_password(request, user_id):
     """Reset password for a user"""
     try:
-        user_details = get_object_or_404(UserDetails, id=user_id)
+        user_details = get_object_or_404(UserDetails, id=user_id, deleted_at__isnull=True)
         django_user = user_details.django_user
         
         if not django_user:
@@ -3906,7 +4069,7 @@ def user_reset_password(request, user_id):
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def user_update(request, user_id):
-    user_details = get_object_or_404(UserDetails, id=user_id)
+    user_details = get_object_or_404(UserDetails, id=user_id, deleted_at__isnull=True)
     django_user = user_details.django_user
     
     if not django_user:
@@ -5359,7 +5522,7 @@ def get_stats(request):
         contacts_qs = Contact.objects.all()
         notes_qs = Note.objects.all()
         events_qs = Event.objects.all()
-        users_qs = UserDetails.objects.filter(active=True)
+        users_qs = UserDetails.objects.filter(active=True, deleted_at__isnull=True)
         
         # Apply data_access filtering based on user's role
         try:
@@ -6785,10 +6948,18 @@ def mark_messages_read(request, chat_room_id):
 @permission_classes([IsAuthenticated])
 def chat_users(request):
     """Get list of users that can be chatted with"""
+    # Filter out deleted users
     users = DjangoUser.objects.filter(is_active=True).exclude(id=request.user.id)
     user_list = []
     for user in users:
-        user_details = getattr(user, 'user_details', None)
+        # Check if user is deleted
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.deleted_at:
+                continue  # Skip deleted users
+        except UserDetails.DoesNotExist:
+            pass  # UserDetails doesn't exist, include user
+        
         first_name = user.first_name or ''
         last_name = user.last_name or ''
         name = f"{first_name} {last_name}".strip() if (first_name or last_name) else user.username
@@ -7168,7 +7339,7 @@ def send_otp(request):
             resend.api_key = resend_api_key
             
             # Get sender email from environment or use default
-            from_email = os.getenv('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+            from_email = os.getenv('RESEND_FROM_EMAIL', 'noreply@crm-prospection.online')
             
             # Send email
             params = {
@@ -7258,6 +7429,15 @@ def verify_otp(request):
             except DjangoUser.DoesNotExist:
                 return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
             
+            # Check if user is deleted
+            try:
+                user_details = UserDetails.objects.get(django_user=user)
+                if user_details.deleted_at:
+                    return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
+            except UserDetails.DoesNotExist:
+                # UserDetails doesn't exist, allow login (might be a new user)
+                pass
+            
             # Generate JWT tokens
             from rest_framework_simplejwt.tokens import RefreshToken
             refresh = RefreshToken.for_user(user)
@@ -7288,4 +7468,26 @@ def verify_otp(request):
             'error': 'Internal server error',
             'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# Custom token serializer to check if user is deleted
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        # Check if user is deleted
+        try:
+            user_details = UserDetails.objects.get(django_user=self.user)
+            if user_details.deleted_at:
+                from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                raise AuthenticationFailed(
+                    'This account has been deleted.',
+                    code='user_deleted'
+                )
+        except UserDetails.DoesNotExist:
+            # UserDetails doesn't exist, allow login (might be a new user)
+            pass
+        return data
+
+# Custom token view that uses the custom serializer
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
 
