@@ -65,11 +65,11 @@ export function LoginPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="login-form">
             <div className="login-form-field">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username">Nom d'utilisateur</Label>
               <Input
                 id="username"
                 type="text"
-                placeholder="username"
+                placeholder="nom d'utilisateur"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -100,7 +100,7 @@ export function LoginPage() {
 
             <div style={{ marginTop: '20px', textAlign: 'center', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
               <Link to="/login/otp" style={{ color: '#3b82f6', textDecoration: 'none', fontSize: '14px' }}>
-                Login with OTP instead
+                Se connecter avec un code OTP à la place
               </Link>
             </div>
           </form>

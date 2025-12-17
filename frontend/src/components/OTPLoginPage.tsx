@@ -44,7 +44,7 @@ export function OTPLoginPage() {
       }, 1000);
     } catch (err: any) {
       console.error('Send OTP error:', err);
-      const errorMessage = err?.message || 'Failed to send OTP code';
+      const errorMessage = err?.message || 'Échec de l\'envoi du code OTP';
       setError(errorMessage);
       toast.error(errorMessage);
     } finally {
@@ -80,7 +80,7 @@ export function OTPLoginPage() {
 
     sendOTP(email, password)
       .then(() => {
-        toast.success('OTP code resent to your email');
+        toast.success('Code OTP renvoyé à votre email');
         setCountdown(60);
         
         // Start countdown timer
@@ -114,7 +114,7 @@ export function OTPLoginPage() {
             </div>
           </CardTitle>
           <CardDescription>
-            {step === 'password' ? 'Enter your email and password to receive OTP' : 'Enter the OTP code sent to your email'}
+            {step === 'password' ? 'Entrez votre email et mot de passe pour recevoir le code OTP' : 'Entrez le code OTP envoyé à votre email'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -125,7 +125,7 @@ export function OTPLoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="your.email@example.com"
+                  placeholder="votre.email@exemple.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -133,7 +133,7 @@ export function OTPLoginPage() {
               </div>
 
               <div className="login-form-field">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Mot de passe</Label>
                 <Input
                   id="password"
                   type="password"
@@ -151,7 +151,7 @@ export function OTPLoginPage() {
               )}
 
               <Button type="submit" className="login-button" disabled={sendingOTP}>
-                {sendingOTP ? 'Sending OTP...' : 'Send OTP'}
+                {sendingOTP ? 'Envoi du code OTP...' : 'Envoyer le code OTP'}
               </Button>
             </form>
           ) : (
@@ -168,7 +168,7 @@ export function OTPLoginPage() {
               </div>
 
               <div className="login-form-field">
-                <Label htmlFor="otp">OTP Code</Label>
+                <Label htmlFor="otp">Code OTP</Label>
                 <Input
                   id="otp"
                   type="text"
@@ -189,7 +189,7 @@ export function OTPLoginPage() {
 
               <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
                 <Button type="submit" className="login-button" disabled={loading}>
-                  {loading ? 'Verifying...' : 'Verify OTP'}
+                  {loading ? 'Vérification...' : 'Vérifier le code OTP'}
                 </Button>
                 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -204,7 +204,7 @@ export function OTPLoginPage() {
                     }}
                     disabled={loading}
                   >
-                    Back
+                    Retour
                   </Button>
                   
                   <Button
@@ -213,7 +213,7 @@ export function OTPLoginPage() {
                     onClick={handleResendOTP}
                     disabled={sendingOTP || countdown > 0}
                   >
-                    {countdown > 0 ? `Resend in ${countdown}s` : 'Resend OTP'}
+                    {countdown > 0 ? `Renvoyer dans ${countdown}s` : 'Renvoyer le code OTP'}
                   </Button>
                 </div>
               </div>

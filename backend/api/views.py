@@ -7174,19 +7174,19 @@ def send_otp(request):
             params = {
                 "from": from_email,
                 "to": [email],
-                "subject": "Your OTP Code",
+                "subject": "Votre code OTP",
                 "html": f"""
                 <html>
                 <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2>Your OTP Code</h2>
-                    <p>Hello,</p>
-                    <p>Your one-time password (OTP) code is:</p>
+                    <h2>Votre code OTP</h2>
+                    <p>Bonjour,</p>
+                    <p>Votre code de mot de passe à usage unique (OTP) est :</p>
                     <div style="background-color: #f4f4f4; padding: 15px; border-radius: 5px; text-align: center; margin: 20px 0;">
                         <h1 style="margin: 0; color: #333; letter-spacing: 5px;">{otp_code}</h1>
                     </div>
-                    <p>This code will expire in 10 minutes.</p>
-                    <p>If you didn't request this code, please ignore this email.</p>
-                    <p>Best regards,<br>LeadFlow Team</p>
+                    <p>Ce code expirera dans 10 minutes.</p>
+                    <p>Si vous n'avez pas demandé ce code, veuillez ignorer cet email.</p>
+                    <p>Cordialement,<br>L'équipe LeadFlow</p>
                 </body>
                 </html>
                 """,
