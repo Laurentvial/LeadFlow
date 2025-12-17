@@ -7338,8 +7338,8 @@ def send_otp(request):
             import resend
             resend.api_key = resend_api_key
             
-            # Get sender email from environment or use default
-            from_email = os.getenv('RESEND_FROM_EMAIL', 'noreply@crm-prospection.online')
+            # Use noreply@crm-prospection.online for OTP emails
+            from_email = 'noreply@crm-prospection.online'
             
             # Send email
             params = {
