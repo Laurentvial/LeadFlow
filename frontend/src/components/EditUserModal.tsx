@@ -55,6 +55,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
         role: user.role ? String(user.role) : '',
         teamId: user.teamId ? String(user.teamId) : '',
         hrex: user.hrex || '',
+        requireOtp: user.requireOtp || false,
       });
     }
   }, [user, isOpen]);
@@ -83,8 +84,8 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           first_name: formData.firstName,
           last_name: formData.lastName,
           email: formData.email,
-          phone: removePhoneSpaces(String(formData.phone)),
-          roleId: formData.role || null,
+          phone: formData.phone ? removePhoneSpaces(String(formData.phone)) : null,
+          roleId: formData.role,
           teamId: formData.teamId || null,
           hrex: formData.hrex || '',
           requireOtp: formData.requireOtp,
@@ -125,19 +126,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
         </div>
         <form onSubmit={handleSubmit} className="modal-form">
           <div className="modal-form-field">
-            <Label htmlFor="edit-firstName">Prénom</Label>
-            <Input
-              id="edit-firstName"
-              value={formData.firstName}
-              onChange={(e) =>
-                setFormData({ ...formData, firstName: e.target.value })
-              }
-              required
-            />
-          </div>
-
-          <div className="modal-form-field">
-            <Label htmlFor="edit-lastName">Nom</Label>
+            <Label htmlFor="edit-lastName">Nom <span className="text-red-500">*</span></Label>
             <Input
               id="edit-lastName"
               value={formData.lastName}
@@ -149,7 +138,18 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="edit-email">Email</Label>
+            <Label htmlFor="edit-firstName">Prénom</Label>
+            <Input
+              id="edit-firstName"
+              value={formData.firstName}
+              onChange={(e) =>
+                setFormData({ ...formData, firstName: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="modal-form-field">
+            <Label htmlFor="edit-email">Email <span className="text-red-500">*</span></Label>
             <Input
               id="edit-email"
               type="email"
@@ -176,31 +176,26 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           </div>
 
           <div className="modal-form-field">
-            <Label htmlFor="edit-role">Rôle</Label>
+            <Label htmlFor="edit-role">Rôle <span className="text-red-500">*</span></Label>
             <Select
-              value={formData.role ? String(formData.role) : undefined}
+              value={formData.role}
               onValueChange={(value) =>
                 setFormData({ ...formData, role: value })
               }
-              disabled={rolesLoading}
             >
               <SelectTrigger>
                 <SelectValue placeholder={rolesLoading ? "Chargement..." : "Sélectionner un rôle"} />
               </SelectTrigger>
               <SelectContent>
-                {rolesLoading ? (
-                  <div className="px-2 py-1.5 text-sm text-slate-500">
-                    Chargement...
-                  </div>
-                ) : roles.length > 0 ? (
+                {roles.length > 0 ? (
                   roles.map((role) => (
-                    <SelectItem key={role.id} value={String(role.id)}>
+                    <SelectItem key={role.id} value={role.id}>
                       {role.name}
                     </SelectItem>
                   ))
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-slate-500">
-                    Aucun rôle disponible
+                    {rolesLoading ? "Chargement..." : "Aucun rôle disponible"}
                   </div>
                 )}
               </SelectContent>
@@ -210,7 +205,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
           <div className="modal-form-field">
             <Label htmlFor="edit-teamId">Équipe (optionnel)</Label>
             <Select
-              value={formData.teamId ? String(formData.teamId) : "none"}
+              value={formData.teamId || "none"}
               onValueChange={(value) =>
                 setFormData({
                   ...formData,
