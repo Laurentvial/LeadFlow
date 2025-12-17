@@ -15,7 +15,7 @@ def _add_cors_headers(response, request):
     """Helper function to add CORS headers to a response."""
     if request.path.startswith('/api/'):
         origin = request.META.get('HTTP_ORIGIN')
-        logger.info(f"[CORS] Adding CORS headers to {request.method} {request.path} from origin {origin or 'unknown'}")
+        logger.debug(f"[CORS] Adding CORS headers to {request.method} {request.path} from origin {origin or 'unknown'}")
         # When credentials are allowed, we must echo back the origin instead of using '*'
         # This matches django-cors-headers behavior when CORS_ALLOW_ALL_ORIGINS=True and CORS_ALLOW_CREDENTIALS=True
         if origin:
@@ -31,7 +31,7 @@ def _add_cors_headers(response, request):
 def _create_preflight_response(request):
     """Helper function to create preflight OPTIONS response."""
     origin = request.META.get('HTTP_ORIGIN')
-    logger.info(f"[CORS] Handling OPTIONS preflight for {request.path} from origin {origin or 'unknown'}")
+    logger.debug(f"[CORS] Handling OPTIONS preflight for {request.path} from origin {origin or 'unknown'}")
     response = HttpResponse()
     # When credentials are allowed, we must echo back the origin instead of using '*'
     if origin:
