@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2 } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
 import { useSources } from '../hooks/useSources';
@@ -899,10 +900,10 @@ export function CsvImport() {
 
       {/* Modal for adding new source */}
       {isSourceDialogOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsSourceDialogOpen(false);
           setNewSourceName('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Ajouter une nouvelle source</h2>

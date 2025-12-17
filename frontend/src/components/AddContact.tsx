@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from './ui/textarea';
 import { ArrowLeft, Save, Plus, X } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
@@ -564,10 +565,10 @@ export function AddContact() {
 
       {/* Modal for adding new source */}
       {isSourceDialogOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsSourceDialogOpen(false);
           setNewSourceName('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Ajouter une nouvelle source</h2>

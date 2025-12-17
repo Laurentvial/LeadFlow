@@ -13,6 +13,7 @@ import { X } from "lucide-react";
 import { apiCall } from "../utils/api";
 import { toast } from "sonner";
 import { formatPhoneNumberAsYouType, removePhoneSpaces } from "../utils/phoneNumber";
+import { handleModalOverlayClick } from "../utils/modal";
 import { useTeams } from "../hooks/useTeams";
 import { useRoles } from "../hooks/useRoles";
 import LoadingIndicator from "./LoadingIndicator";
@@ -145,7 +146,7 @@ export function CreateUserModal({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">Créer un utilisateur</h2>

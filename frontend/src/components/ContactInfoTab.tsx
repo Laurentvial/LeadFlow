@@ -14,6 +14,7 @@ import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
+import { handleModalOverlayClick } from '../utils/modal';
 import { formatPhoneNumber, removePhoneSpaces, formatPhoneNumberAsYouType } from '../utils/phoneNumber';
 import '../styles/Contacts.css';
 import '../styles/Modal.css';
@@ -3822,7 +3823,7 @@ export function ContactInfoTab({
 
       {/* Create Appointment Modal */}
       {isAppointmentModalOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           // If modal was opened from status change, cancel the status change
           if (isEventModalFromStatus && pendingStatusChange) {
             setPendingStatusChange(null);
@@ -3830,7 +3831,7 @@ export function ContactInfoTab({
           }
           setIsAppointmentModalOpen(false);
           setIsEventModalFromStatus(false);
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">{isEventModalFromStatus ? 'Créer un événement (requis)' : 'Nouveau rendez-vous'}</h2>
@@ -3944,11 +3945,11 @@ export function ContactInfoTab({
 
       {/* Edit Appointment Modal */}
       {isEditAppointmentModalOpen && editingAppointment && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditAppointmentModalOpen(false);
           setEditingAppointment(null);
           setEditAppointmentFormData({ date: '', hour: '09', minute: '00', comment: '', userId: currentUser?.id || '' });
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier le rendez-vous</h2>
@@ -4080,7 +4081,7 @@ export function ContactInfoTab({
 
       {/* Status Change Modal */}
       {isStatusModalOpen && contact && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsStatusModalOpen(false);
           setSelectedStatusId('');
           setStatusChangeNote('');
@@ -4111,7 +4112,7 @@ export function ContactInfoTab({
           setEventHour('09');
           setEventMinute('00');
           setEventTeleoperatorId('');
-        }}>
+        })}>
           <div 
             className="modal-content" 
             onClick={(e) => e.stopPropagation()}

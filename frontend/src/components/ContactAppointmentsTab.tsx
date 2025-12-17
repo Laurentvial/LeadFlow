@@ -7,6 +7,7 @@ import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Plus, X, Send } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
@@ -217,7 +218,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
 
       {/* Create Event Modal */}
       {isModalOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsModalOpen(false);
           setFormData({ 
             date: '', 
@@ -226,7 +227,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
             comment: '',
             userId: currentUser?.id || ''
           });
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Nouveau rendez-vous</h2>
@@ -328,7 +329,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
 
       {/* Edit Event Modal */}
       {isEditModalOpen && editingEvent && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditModalOpen(false);
           setEditingEvent(null);
           setEditFormData({ 
@@ -338,7 +339,7 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
             comment: '',
             userId: currentUser?.id || ''
           });
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier le rendez-vous</h2>

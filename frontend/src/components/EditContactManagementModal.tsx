@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
+import { handleModalOverlayClick } from '../utils/modal';
 import { useUsers } from '../hooks/useUsers';
 import '../styles/Modal.css';
 
@@ -83,7 +84,7 @@ export function EditContactManagementModal({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">Modifier la gestion</h2>

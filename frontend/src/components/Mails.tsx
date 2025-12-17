@@ -7,6 +7,7 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Mail, Send, Inbox, Archive, Star, Trash2, Settings, Plus, RefreshCw, Search, X, ChevronLeft, ChevronRight, FileSignature, Pencil, Check } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import '../styles/Contacts.css';
@@ -1000,7 +1001,7 @@ export function Mails() {
 
       {/* Compose Modal */}
       {isComposeOpen && (
-        <div className="modal-overlay" onClick={() => setIsComposeOpen(false)}>
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => setIsComposeOpen(false))}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
             <div className="modal-header">
               <h2 className="modal-title">Nouveau message</h2>
@@ -1171,7 +1172,7 @@ export function Mails() {
 
       {/* Signature Management Modal */}
       {isSignatureModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsSignatureModalOpen(false)}>
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => setIsSignatureModalOpen(false))}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
             <div className="modal-header">
               <h2 className="modal-title">Gestion des signatures</h2>
@@ -1571,7 +1572,7 @@ function SMTPConfigModal({ isOpen, onClose, config }: SMTPConfigModalProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', width: '90%' }}>
         <div className="modal-header">
           <h2 className="modal-title">Configuration SMTP</h2>

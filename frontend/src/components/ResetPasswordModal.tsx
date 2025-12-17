@@ -5,6 +5,7 @@ import { Label } from './ui/label';
 import { X, Key } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
+import { handleModalOverlayClick } from '../utils/modal';
 import { User } from '../types';
 import '../styles/Modal.css';
 
@@ -91,7 +92,7 @@ export function ResetPasswordModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

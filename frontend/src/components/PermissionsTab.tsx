@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Plus, Pencil, Trash2, Shield, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import { useUser } from '../contexts/UserContext';
@@ -1514,6 +1515,11 @@ export function PermissionsTab() {
         <div className="modal-overlay" onClick={(e) => {
           // Only close if clicking directly on the overlay, not on child elements
           if (e.target === e.currentTarget) {
+            // Check if there's selected text - if so, don't close the modal
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) {
+              return;
+            }
             setIsRoleModalOpen(false);
             setRoleError('');
           }
@@ -1632,10 +1638,10 @@ export function PermissionsTab() {
 
       {/* Edit Role Modal */}
       {isEditRoleModalOpen && selectedRole && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditRoleModalOpen(false);
           setRoleError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier le rôle</h2>

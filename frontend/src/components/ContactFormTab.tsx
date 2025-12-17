@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Plus, Pencil, Trash2, FileText, X, GripVertical, Server } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
@@ -398,10 +399,10 @@ export function ContactFormTab() {
 
       {/* Create Category Modal */}
       {isCategoryModalOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsCategoryModalOpen(false);
           setCategoryError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Créer une nouvelle liste de notes</h2>
@@ -464,10 +465,10 @@ export function ContactFormTab() {
 
       {/* Edit Category Modal */}
       {isEditCategoryModalOpen && selectedCategory && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditCategoryModalOpen(false);
           setCategoryError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier la liste de notes</h2>
@@ -579,10 +580,10 @@ export function ContactFormTab() {
 
       {/* Create Platform Modal */}
       {isPlatformModalOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsPlatformModalOpen(false);
           setPlatformError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Créer une nouvelle plateforme</h2>
@@ -645,10 +646,10 @@ export function ContactFormTab() {
 
       {/* Edit Platform Modal */}
       {isEditPlatformModalOpen && selectedPlatform && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditPlatformModalOpen(false);
           setPlatformError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier la plateforme</h2>

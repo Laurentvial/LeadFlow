@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { DateInput } from './ui/date-input';
 import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
 import { useHasPermission } from '../hooks/usePermissions';
@@ -934,13 +935,13 @@ export function PlanningCalendar() {
         )}
 
         {isEditModalOpen && editingEvent && (
-          <div className="modal-overlay" onClick={() => {
+          <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
             setIsEditModalOpen(false);
             setEditingEvent(null);
             setEditFormData({ date: '', hour: '09', minute: '00', clientId: '', userId: currentUser?.id || '' });
             setEditClientSearchQuery('');
             setEditClientSearchFocused(false);
-          }}>
+          })}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2 className="modal-title">Modifier le rendez-vous</h2>

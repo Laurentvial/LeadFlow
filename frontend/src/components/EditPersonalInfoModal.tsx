@@ -10,6 +10,7 @@ import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import { formatPhoneNumber, formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
+import { handleModalOverlayClick } from '../utils/modal';
 import '../styles/Modal.css';
 import '../styles/Contacts.css';
 
@@ -205,7 +206,7 @@ export function EditPersonalInfoModal({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '42rem', maxHeight: '90vh', overflowY: 'auto' }}>
         <div className="modal-header">
           <h2 className="modal-title">Modifier les informations personnelles</h2>
@@ -539,7 +540,7 @@ export function EditPersonalInfoModal({
 
         {/* Source Add Dialog */}
         {isSourceDialogOpen && (
-          <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setIsSourceDialogOpen(false)}>
+          <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={(e) => handleModalOverlayClick(e, () => setIsSourceDialogOpen(false))}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
               <div className="modal-header">
                 <h2 className="modal-title">Ajouter une source</h2>

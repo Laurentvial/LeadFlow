@@ -3964,7 +3964,7 @@ export function ContactList({
 
       {/* Status Change Modal */}
       {isStatusModalOpen && selectedContact && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsStatusModalOpen(false);
           setSelectedContact(null);
           setSelectedStatusId('');
@@ -3991,7 +3991,7 @@ export function ContactList({
             noteCategoryId: ''
           });
           setSelectedNoteCategoryId('');
-        }}>
+        })}>
           <div 
             className="modal-content" 
             onClick={(e) => e.stopPropagation()}
@@ -5098,6 +5098,11 @@ export function ContactList({
           onClick={(e) => {
             // Only close if clicking directly on the overlay, not on child elements
             if (e.target === e.currentTarget) {
+              // Check if there's selected text - if so, don't close the modal
+              const selection = window.getSelection();
+              if (selection && selection.toString().length > 0) {
+                return;
+              }
               setIsStatusChangeConfirmOpen(false);
               const actionType = pendingBulkAction?.type;
               setPendingBulkAction(null);

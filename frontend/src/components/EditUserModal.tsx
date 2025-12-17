@@ -13,6 +13,7 @@ import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { formatPhoneNumber, formatPhoneNumberAsYouType, removePhoneSpaces } from '../utils/phoneNumber';
+import { handleModalOverlayClick } from '../utils/modal';
 import { User } from '../types';
 import { useTeams } from '../hooks/useTeams';
 import { useRoles } from '../hooks/useRoles';
@@ -105,7 +106,7 @@ export function EditUserModal({ isOpen, onClose, user, onUserUpdated }: EditUser
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, onClose)}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">Modifier l'utilisateur</h2>

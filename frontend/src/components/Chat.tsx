@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useUnreadMessages, ActiveChatRoomProvider, useSetActiveChatRoom } from '../contexts/UnreadMessagesContext';
 import { Button } from './ui/button';
@@ -910,7 +911,7 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
 
       {/* New Chat Modal */}
       {isNewChatOpen && (
-        <div className="modal-overlay" onClick={() => setIsNewChatOpen(false)}>
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => setIsNewChatOpen(false))}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Nouvelle conversation</h2>

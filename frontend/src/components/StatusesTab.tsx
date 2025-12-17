@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Plus, Pencil, Trash2, Tag, X, GripVertical, Star } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
@@ -384,10 +385,10 @@ export function StatusesTab() {
 
       {/* Create Status Modal */}
       {isStatusModalOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsStatusModalOpen(false);
           setStatusError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Créer un nouveau statut</h2>
@@ -500,10 +501,10 @@ export function StatusesTab() {
 
       {/* Edit Status Modal */}
       {isEditStatusModalOpen && selectedStatus && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditStatusModalOpen(false);
           setStatusError('');
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Modifier le statut</h2>

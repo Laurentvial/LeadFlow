@@ -9,6 +9,7 @@ import { DateInput } from './ui/date-input';
 import { Textarea } from './ui/textarea';
 import { ArrowLeft, Upload, FileSpreadsheet, Edit2, Save, X, Calendar, Plus, Trash2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import { useStatuses } from '../hooks/useStatuses';
 import { useSources } from '../hooks/useSources';
@@ -1685,7 +1686,7 @@ export function MigrationPage() {
 
       {/* Edit Row Modal */}
       {showEditModal && editingRowData && (
-        <div className="modal-overlay" onClick={handleCloseEditModal}>
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, handleCloseEditModal)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
               <h2 className="modal-title">Éditer la ligne</h2>

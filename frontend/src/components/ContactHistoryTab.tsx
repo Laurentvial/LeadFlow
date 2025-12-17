@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { X } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import '../styles/Modal.css';
 import '../styles/ContactTab.css';
 
@@ -264,7 +265,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
 
       {/* Modal for log details */}
       {isModalOpen && selectedLog && (
-        <div className="modal-overlay" onClick={handleCloseModal}>
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, handleCloseModal)}>
           <div className="modal-content contact-tab-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Détails de l'événement</h2>

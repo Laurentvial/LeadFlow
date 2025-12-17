@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { TeamDetail } from '../types';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { useUsers } from '../hooks/useUsers';
 import { Crown, UserMinus, Save, X } from 'lucide-react';
 import LoadingIndicator from './LoadingIndicator';
@@ -171,7 +172,7 @@ export function TeamDetailDialog({ team, isOpen, onOpenChange, onTeamUpdated }: 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={() => onOpenChange(false)}>
+    <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => onOpenChange(false))}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
         <div className="modal-header">
           <h2 className="modal-title">Détails de l'équipe</h2>

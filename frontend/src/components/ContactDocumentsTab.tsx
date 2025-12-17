@@ -5,6 +5,7 @@ import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Upload, FileText, Download, X, Eye } from 'lucide-react';
 import { apiCall } from '../utils/api';
+import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
 import { useUser } from '../contexts/UserContext';
 import {
@@ -258,11 +259,11 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
         </div>
       </CardHeader>
       {uploadDialogOpen && (
-        <div className="modal-overlay" onClick={() => {
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setUploadDialogOpen(false);
           setSelectedDocumentType('');
           setSelectedFile(null);
-        }}>
+        })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Uploader un document</h2>
