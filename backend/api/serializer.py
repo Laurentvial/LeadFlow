@@ -934,6 +934,7 @@ class LogSerializer(serializers.ModelSerializer):
         ret['details'] = instance.details if instance.details else {}
         ret['oldValue'] = instance.old_value if instance.old_value else {}
         ret['newValue'] = instance.new_value if instance.new_value else {}
+        ret['oldLogs'] = instance.old_logs if instance.old_logs else None
         return ret
 
 class SourceSerializer(serializers.ModelSerializer):

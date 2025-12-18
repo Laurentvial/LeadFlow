@@ -379,6 +379,7 @@ class Log(models.Model):
     details = models.JSONField(default=dict, blank=True)  # IP, browser info, and other metadata
     old_value = models.JSONField(default=dict, null=True, blank=True)  # Previous state
     new_value = models.JSONField(default=dict, null=True, blank=True)  # New state
+    old_logs = models.TextField(null=True, blank=True)  # Text field for old logs that are not in JSON format
 
     def __str__(self):
         return f"Log {self.id} - {self.event_type} - {self.created_at}"

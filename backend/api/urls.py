@@ -9,6 +9,7 @@ urlpatterns = [
     path('notes/delete/<str:pk>/', api_views.NoteDeleteView.as_view(), name='note-delete'),
     path('notes/csv-import/', api_views.csv_import_notes, name='csv-import-notes'),
     # Logs endpoints
+    path('logs/event-types/', api_views.log_event_types, name='log-event-types'),
     path('logs/csv-import/', api_views.csv_import_logs, name='csv-import-logs'),
     # Contacts endpoints
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),

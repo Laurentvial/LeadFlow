@@ -20,6 +20,7 @@ interface Log {
   oldValue?: any;
   newValue?: any;
   details?: any;
+  oldLogs?: string | null;
 }
 
 export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
@@ -312,6 +313,15 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                     <Label className="text-sm font-semibold">Détails</Label>
                     <pre className="mt-1 p-3 bg-slate-50 text-xs overflow-x-auto">
                       {JSON.stringify(selectedLog.details, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                {selectedLog.oldLogs && (
+                  <div>
+                    <Label className="text-sm font-semibold">Anciens logs</Label>
+                    <pre className="mt-1 p-3 bg-slate-50 text-xs overflow-x-auto whitespace-pre-wrap">
+                      {selectedLog.oldLogs}
                     </pre>
                   </div>
                 )}

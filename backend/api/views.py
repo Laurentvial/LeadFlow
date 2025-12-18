@@ -3353,6 +3353,29 @@ def csv_import_notes(request):
         error_details = traceback.format_exc()
         return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def log_event_types(request):
+    """Get all event types used in the system (hardcoded list)"""
+    # Hardcoded list of all event types used in the codebase
+    event_types = [
+        'addContact',
+        'bulkImportContacts',
+        'bulkImportNotes',
+        'createEvent',
+        'createTeam',
+        'createUser',
+        'deleteEvent',
+        'deleteTeam',
+        'deleteUser',
+        'editContact',
+        'editEvent',
+        'editTeam',
+        'editUser',
+        'resetPassword',
+    ]
+    return Response(event_types, status=status.HTTP_200_OK)
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def csv_import_logs(request):
@@ -3381,6 +3404,57 @@ def csv_import_logs(request):
             'error': f'Missing required column mappings: {", ".join(missing_fields)}'
         }, status=status.HTTP_400_BAD_REQUEST)
     
+    # Parse event type mapping JSON string if it's a string
+    event_type_mapping_str = request.data.get('eventTypeMapping', '{}')
+    if isinstance(event_type_mapping_str, str):
+        import json
+        try:
+            event_type_mapping = json.loads(event_type_mapping_str)
+        except json.JSONDecodeError:
+            event_type_mapping = {}
+    else:
+        event_type_mapping = event_type_mapping_str or {}
+    
+    # Parse user ID mapping JSON string if it's a string
+    user_id_mapping_str = request.data.get('userIdMapping', '{}')
+    if isinstance(user_id_mapping_str, list) and len(user_id_mapping_str) > 0:
+        user_id_mapping_str = user_id_mapping_str[0]
+    if isinstance(user_id_mapping_str, str):
+        import json
+        try:
+            user_id_mapping = json.loads(user_id_mapping_str)
+        except json.JSONDecodeError as e:
+            user_id_mapping = {}
+    else:
+        user_id_mapping = user_id_mapping_str or {}
+    
+    # Get default user ID if provided
+    # FormData sends values as strings, so we need to handle that
+    default_user_id = request.data.get('defaultUserId', '')
+    if isinstance(default_user_id, list) and len(default_user_id) > 0:
+        default_user_id = default_user_id[0]
+    default_user_id = str(default_user_id).strip() if default_user_id else ''
+    
+    default_user_obj = None
+    if default_user_id:
+        try:
+            # DjangoUser is already imported at the top of the file
+            # Try both string and integer formats
+            try:
+                default_user_obj = DjangoUser.objects.get(id=default_user_id)
+            except (DjangoUser.DoesNotExist, ValueError, TypeError):
+                try:
+                    if default_user_id.isdigit():
+                        default_user_obj = DjangoUser.objects.get(id=int(default_user_id))
+                    else:
+                        # Try UUID format if applicable
+                        default_user_obj = DjangoUser.objects.get(id=default_user_id)
+                except (DjangoUser.DoesNotExist, ValueError, TypeError):
+                    default_user_obj = None
+        except Exception as e:
+            # Handle any other exception (invalid ID format, etc.)
+            default_user_obj = None
+    
     # Always use current user as default creator
     default_creator_obj = request.user
     
@@ -3404,6 +3478,7 @@ def csv_import_logs(request):
             'details': 'details',
             'oldValue': 'old_value',
             'newValue': 'new_value',
+            'oldLogs': 'old_logs',  # Text field for old logs that are not in JSON format
         }
         
         results = {
@@ -3458,17 +3533,26 @@ def csv_import_logs(request):
         contacts_by_old_id = {}
         contacts_with_old_id = Contact.objects.filter(old_contact_id__isnull=False).exclude(old_contact_id='')
         for contact in contacts_with_old_id:
-            contacts_by_old_id[contact.old_contact_id] = contact
+            # Use stripped value as key to ensure matching
+            old_id_key = str(contact.old_contact_id).strip()
+            if old_id_key:
+                contacts_by_old_id[old_id_key] = contact
         
         # Pre-load existing log IDs to check for duplicates
         # This avoids N+1 query problem when checking if log IDs already exist
         existing_log_ids = set(Log.objects.values_list('id', flat=True))
         
         # Pre-load all users for fast lookup
+        # Use both string and integer keys to handle different ID formats
         users_by_id = {}
         all_users = DjangoUser.objects.all()
         for user in all_users:
-            users_by_id[str(user.id)] = user
+            user_id_str = str(user.id)
+            user_id_int = user.id
+            # Store with both string and integer keys for flexible lookup
+            users_by_id[user_id_str] = user
+            if isinstance(user_id_int, int):
+                users_by_id[user_id_int] = user
         
         # First pass: Parse all rows and collect valid logs
         for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
@@ -3514,9 +3598,20 @@ def csv_import_logs(request):
                         # Handle JSON fields
                         elif model_field in ['details', 'old_value', 'new_value']:
                             log_data[model_field] = parse_json(value)
+                        # Handle old_logs as text field (not JSON)
+                        elif model_field == 'old_logs':
+                            log_data[model_field] = value.strip() if value else None
                         # Handle old contact ID (store separately for lookup)
                         elif model_field == 'old_contact_id':
-                            old_contact_id = value if value else None
+                            old_contact_id = value.strip() if value and value.strip() else None
+                        # Handle event_type with mapping
+                        elif model_field == 'event_type':
+                            event_type_value = value if value else ''
+                            # Apply event type mapping if provided
+                            if event_type_value in event_type_mapping and event_type_mapping[event_type_value]:
+                                log_data[model_field] = str(event_type_mapping[event_type_value]).strip()
+                            else:
+                                log_data[model_field] = event_type_value.strip()
                         else:
                             log_data[model_field] = value
                 
@@ -3529,41 +3624,76 @@ def csv_import_logs(request):
                     results['failed'] += 1
                     continue
                 
-                # Handle contact ID mapping by old_contact_id (optional for logs)
+                # Handle contact ID mapping by old_contact_id
+                # If old_contact_id is provided in CSV, contact must be found, otherwise skip this log
                 contact_obj = None
                 if old_contact_id:
-                    # Use pre-loaded dictionary for fast lookup (O(1) instead of database query)
-                    contact_obj = contacts_by_old_id.get(old_contact_id)
+                    # Strip whitespace and use pre-loaded dictionary for fast lookup (O(1) instead of database query)
+                    old_contact_id_clean = str(old_contact_id).strip()
+                    contact_obj = contacts_by_old_id.get(old_contact_id_clean)
                     if not contact_obj:
-                        # Contact not found - log can still be created without contact
-                        # Just log a warning but continue
-                        pass
-                
-                # Handle user_id - use from CSV if provided, otherwise None
-                user_obj = None
-                if 'user_id' in log_data and log_data['user_id']:
-                    user_id_str = str(log_data['user_id']).strip()
-                    user_obj = users_by_id.get(user_id_str)
-                    if not user_obj:
+                        # Contact not found - skip this log since old_contact_id was provided
                         results['errors'].append({
                             'row': row_num,
-                            'error': f'User not found with ID: {user_id_str}'
+                            'error': f'Contact not found with old_contact_id: {old_contact_id_clean}'
                         })
                         results['failed'] += 1
                         continue
                 
+                # Handle user_id - use from CSV if provided, otherwise use default or None
+                # If userId column is mapped, user_id should not be null
+                user_obj = None
+                userId_column_mapped = 'userId' in column_mapping and column_mapping.get('userId')
+                
+                if 'user_id' in log_data and log_data['user_id']:
+                    user_id_str = str(log_data['user_id']).strip()
+                    # Apply user ID mapping if provided
+                    if user_id_str in user_id_mapping and user_id_mapping[user_id_str]:
+                        mapped_user_id = str(user_id_mapping[user_id_str]).strip()
+                        # Try to find user with mapped ID (try both string and original format)
+                        user_obj = users_by_id.get(mapped_user_id) or users_by_id.get(user_id_mapping[user_id_str])
+                        # If mapped user not found, try default user
+                        if not user_obj:
+                            user_obj = default_user_obj
+                    else:
+                        # No mapping found for this CSV value, check if CSV value itself is a valid user ID
+                        user_obj = users_by_id.get(user_id_str)
+                        # Also try integer version if user_id_str is numeric
+                        if not user_obj and user_id_str.isdigit():
+                            try:
+                                user_obj = users_by_id.get(int(user_id_str))
+                            except ValueError:
+                                pass
+                        # If CSV value is not a valid user ID, use default user
+                        if not user_obj:
+                            user_obj = default_user_obj
+                elif userId_column_mapped:
+                    # Column is mapped but value is empty/null, use default user
+                    user_obj = default_user_obj
+                else:
+                    # No userId column mapped, use default user if available (optional)
+                    user_obj = default_user_obj
+                
+                # If userId column is mapped but user_obj is still None, skip this log
+                if userId_column_mapped and not user_obj:
+                    csv_val = log_data.get('user_id', 'N/A')
+                    mapping_val = user_id_mapping.get(str(csv_val), 'N/A')
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'User ID column is mapped but no valid user found. CSV value: "{csv_val}", Mapping: "{mapping_val}", Default user ID: "{default_user_id}"'
+                    })
+                    results['failed'] += 1
+                    continue
+                
                 # Handle creator_id - use from CSV if provided, otherwise use current user
+                # If creator is not found, use current user as default (not an error)
                 creator_obj = default_creator_obj
                 if 'creator_id' in log_data and log_data['creator_id']:
                     creator_id_str = str(log_data['creator_id']).strip()
                     creator_obj = users_by_id.get(creator_id_str)
+                    # If creator not found, use default creator (current user)
                     if not creator_obj:
-                        results['errors'].append({
-                            'row': row_num,
-                            'error': f'Creator not found with ID: {creator_id_str}'
-                        })
-                        results['failed'] += 1
-                        continue
+                        creator_obj = default_creator_obj
                 
                 # Handle log ID - use from CSV if provided, otherwise generate
                 log_id = None
@@ -3601,11 +3731,7 @@ def csv_import_logs(request):
                 
                 log_data['id'] = log_id
                 log_data['user_id'] = user_obj
-                log_data['contact_id'] = contact_obj
                 log_data['creator_id'] = creator_obj
-                
-                # Add ID to existing_log_ids to prevent duplicates in the same batch
-                existing_log_ids.add(log_id)
                 
                 # Remove old_contact_id from log_data (it's not a Log field)
                 log_data.pop('old_contact_id', None)
@@ -3624,6 +3750,9 @@ def csv_import_logs(request):
                 
                 # Create Log instance (not saved yet)
                 log = Log(**log_data)
+                # Explicitly set contact_id and user_id to ensure they're assigned correctly
+                log.contact_id = contact_obj
+                log.user_id = user_obj
                 # Set created_at if provided (this will override auto_now_add)
                 if custom_created_at:
                     log.created_at = custom_created_at
