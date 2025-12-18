@@ -6,6 +6,7 @@ Async-compatible for Daphne/ASGI servers.
 import logging
 import asyncio
 from django.http import HttpResponse
+from django.db import close_old_connections
 from asgiref.sync import iscoroutinefunction
 
 logger = logging.getLogger(__name__)
@@ -101,4 +102,49 @@ class ExplicitCorsMiddleware:
         except Exception as e:
             # Re-raise other exceptions
             raise
+
+
+class DatabaseConnectionCleanupMiddleware:
+    """
+    Middleware to close old database connections after each request.
+    This helps prevent connection exhaustion in ASGI/Daphne servers where
+    connections can accumulate across async requests.
+    
+    This middleware aggressively closes connections to prevent pool exhaustion.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self._is_async = iscoroutinefunction(get_response)
+
+    def __call__(self, request):
+        # Close old connections before processing request
+        close_old_connections()
+        
+        # Handle both sync and async requests
+        if self._is_async:
+            return self._async_call(request)
+        else:
+            try:
+                response = self.get_response(request)
+                return response
+            finally:
+                # Aggressively close all connections after sync request
+                close_old_connections()
+                # Also close connections for all databases
+                from django.db import connections
+                for conn in connections.all():
+                    conn.close()
+
+    async def _async_call(self, request):
+        """Handle async request processing."""
+        try:
+            response = await self.get_response(request)
+            return response
+        finally:
+            # Aggressively close all connections after async request
+            close_old_connections()
+            # Also close connections for all databases
+            from django.db import connections
+            for conn in connections.all():
+                conn.close()
 

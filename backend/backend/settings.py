@@ -60,6 +60,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # CORS middleware DOIT être le premier
+    'api.middleware.DatabaseConnectionCleanupMiddleware',  # Close old DB connections EARLY to prevent exhaustion
     'api.middleware.ExplicitCorsMiddleware',  # Explicit CORS fallback
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # For serving static files on Heroku
@@ -201,6 +202,11 @@ if DB_HOST and DB_NAME and DB_USER and DB_PASSWORD:
     if DB_PORT != '25060':
         db_options['sslmode'] = 'require'
     
+    # Connection pooling settings to prevent connection exhaustion
+    # For ASGI/Daphne servers, use shorter connection lifetime to prevent accumulation
+    # CONN_MAX_AGE: 0 disables Django's connection pooling (recommended for ASGI)
+    # This forces connections to close after each request, preventing exhaustion
+    # The database server or connection pooler (if available) should handle pooling
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -210,12 +216,17 @@ if DB_HOST and DB_NAME and DB_USER and DB_PASSWORD:
             'HOST': DB_HOST,
             'PORT': DB_PORT,
             'OPTIONS': db_options,
+            'CONN_MAX_AGE': 0,  # Disable Django connection pooling for ASGI (connections close after each request)
+            'CONN_HEALTH_CHECKS': True,  # Check connection health before reuse
         }
     }
 elif os.getenv('DATABASE_URL'):
     # Use DATABASE_URL if provided (e.g., Heroku Postgres)
+    # For ASGI/Daphne, disable connection pooling to prevent exhaustion
+    db_config = dj_database_url.parse(os.getenv('DATABASE_URL'), conn_max_age=0)
+    db_config['CONN_HEALTH_CHECKS'] = True
     DATABASES = {
-        'default': dj_database_url.parse(os.getenv('DATABASE_URL'), conn_max_age=600)
+        'default': db_config
     }
 else:
     # Local development defaults
@@ -230,6 +241,8 @@ else:
                 'PASSWORD': os.getenv('DB_PASSWORD', 'yourpassword'),
                 'HOST': os.getenv('DB_HOST', 'localhost'),
                 'PORT': os.getenv('DB_PORT', '5432'),
+                'CONN_MAX_AGE': 0,  # Disable Django connection pooling for ASGI
+                'CONN_HEALTH_CHECKS': True,  # Check connection health before reuse
             }
         }
     else:

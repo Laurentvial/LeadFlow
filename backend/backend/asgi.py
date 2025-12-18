@@ -1,5 +1,6 @@
 import os
 from django.core.asgi import get_asgi_application
+from django.db import close_old_connections
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 
@@ -14,6 +15,30 @@ from api import routing
 
 # Get ALLOWED_HOSTS from settings to validate WebSocket origins
 from django.conf import settings
+
+
+class DatabaseConnectionMiddleware:
+    """
+    ASGI middleware to close database connections after each HTTP request.
+    This is critical for ASGI/Daphne servers to prevent connection exhaustion.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        # Close old connections before processing request
+        close_old_connections()
+        
+        try:
+            # Process the request
+            await self.app(scope, receive, send)
+        finally:
+            # Always close connections after request completes
+            close_old_connections()
+
+
+# Wrap Django ASGI app with connection cleanup middleware
+django_asgi_app = DatabaseConnectionMiddleware(django_asgi_app)
 
 # Wrap WebSocket router with origin validator based on ALLOWED_HOSTS
 websocket_router = AuthMiddlewareStack(

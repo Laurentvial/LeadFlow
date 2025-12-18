@@ -7,6 +7,9 @@ urlpatterns = [
     path('notes/create/', api_views.NoteListCreateView.as_view(), name='note-create'),
     path('notes/<str:pk>/update/', api_views.NoteUpdateView.as_view(), name='note-update'),
     path('notes/delete/<str:pk>/', api_views.NoteDeleteView.as_view(), name='note-delete'),
+    path('notes/csv-import/', api_views.csv_import_notes, name='csv-import-notes'),
+    # Logs endpoints
+    path('logs/csv-import/', api_views.csv_import_logs, name='csv-import-logs'),
     # Contacts endpoints
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),
     path('contacts/fosse/', api_views.FosseContactView.as_view(), name='fosse-contact-list'),

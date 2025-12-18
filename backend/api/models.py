@@ -27,6 +27,7 @@ class Platform(models.Model):
 class Contact(models.Model):
     # Identifiant
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    old_contact_id = models.CharField(max_length=12, null=True, blank=True)  # Reference to old contact ID during migrations
     
     # Informations personnelles
     civility = models.CharField(max_length=10, default="", blank=True)  # Monsieur, Madame, etc.

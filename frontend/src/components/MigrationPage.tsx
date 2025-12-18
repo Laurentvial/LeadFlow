@@ -44,9 +44,9 @@ interface MigratedRow {
 const CRM_FIELDS = [
   { value: '', label: 'Ignorer cette colonne' },
   { value: 'civility', label: 'Civilité' },
-  { value: 'firstName', label: 'Prénom (requis)', required: true },
+  { value: 'firstName', label: 'Prénom' },
   { value: 'lastName', label: 'Nom (requis)', required: true },
-  { value: 'phone', label: 'Téléphone 1 (requis)', required: true },
+  { value: 'phone', label: 'Téléphone 1' },
   { value: 'mobile', label: 'Telephone 2' },
   { value: 'email', label: 'Email' },
   { value: 'birthDate', label: 'Date de naissance' },
@@ -72,6 +72,7 @@ const CRM_FIELDS = [
   { value: 'produit', label: 'Produit' },
   { value: 'confirmateurEmail', label: 'Mail Confirmateur' },
   { value: 'confirmateurTelephone', label: 'Téléphone Confirmateur' },
+  { value: 'oldContactId', label: 'Ancien id' },
   { value: 'createdAt', label: 'Date de création' },
   { value: 'updatedAt', label: 'Date de modification' },
   { value: 'assignedAt', label: 'Date d\'attribution' },
@@ -267,12 +268,9 @@ export function MigrationPage() {
   };
 
   const handleStartMigration = () => {
-    // Validate all required fields
+    // Validate all required fields - only lastName is required
     const requiredFields = [
-      { key: 'firstName', label: 'Prénom' },
       { key: 'lastName', label: 'Nom' },
-      { key: 'phone', label: 'Téléphone 1' },
-      { key: 'statusId', label: 'Statut' },
     ];
     
     const missingFields = requiredFields.filter(field => !columnMapping[field.key]);
@@ -588,17 +586,9 @@ export function MigrationPage() {
   };
 
   const handleSaveRow = async (row: MigratedRow) => {
-    // Validate all required fields
-    if (!row.mappedData.firstName || !row.mappedData.firstName.trim()) {
-      toast.error('Le prénom est requis');
-      return;
-    }
+    // Validate required fields - only lastName is required
     if (!row.mappedData.lastName || !row.mappedData.lastName.trim()) {
       toast.error('Le nom est requis');
-      return;
-    }
-    if (!row.mappedData.phone || !row.mappedData.phone.trim()) {
-      toast.error('Le téléphone 1 est requis');
       return;
     }
     if (!row.mappedData.statusId) {
@@ -613,10 +603,10 @@ export function MigrationPage() {
     try {
       // Prepare contact data
       const contactPayload: any = {
-        firstName: row.mappedData.firstName.trim(),
+        firstName: row.mappedData.firstName ? row.mappedData.firstName.trim() : '',
         lastName: row.mappedData.lastName.trim(),
         email: row.mappedData.email || '',
-        phone: removePhoneSpaces(String(row.mappedData.phone)),
+        phone: row.mappedData.phone ? removePhoneSpaces(String(row.mappedData.phone)) : '',
         mobile: row.mappedData.mobile && row.mappedData.mobile.trim() ? removePhoneSpaces(String(row.mappedData.mobile)) : removePhoneSpaces(String(row.mappedData.phone || '')), // Use phone as fallback if mobile is empty
         civility: row.mappedData.civility || '',
         birthDate: row.mappedData.birthDate || '',
@@ -642,6 +632,7 @@ export function MigrationPage() {
         produit: row.mappedData.produit || '',
         confirmateurEmail: row.mappedData.confirmateurEmail || '',
         confirmateurTelephone: row.mappedData.confirmateurTelephone || '',
+        oldContactId: row.mappedData.oldContactId && row.mappedData.oldContactId.trim() ? row.mappedData.oldContactId.trim() : null,
       };
 
       // Add date fields if provided
@@ -790,9 +781,23 @@ export function MigrationPage() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/contacts')} className="mr-4">
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div>
+          <div className="flex-1">
             <h1 className="page-title">Migration CRM</h1>
             <p className="page-subtitle">Migrer les données de l'ancien CRM vers le nouveau système</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => navigate('/notes/migration')}
+            >
+              Migrer les Notes
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/logs/migration')}
+            >
+              Migrer les Logs
+            </Button>
           </div>
         </div>
       </div>

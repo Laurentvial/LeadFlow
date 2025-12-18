@@ -8,6 +8,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useHasNoteCategoryPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 
 interface NoteCategory {
   id: string;
@@ -161,6 +162,7 @@ const NoteItem: React.FC<NoteItemProps> = ({ note, onDelete, onEdit }) => {
 };
 
 export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTabProps) {
+  const { currentUser } = useUser();
   const [noteText, setNoteText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [categories, setCategories] = useState<NoteCategory[]>([]);
@@ -174,6 +176,16 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
   
   // Get accessible category IDs based on view permissions
   const accessibleCategoryIds = useAccessibleNoteCategoryIds();
+  
+  // Check if user has general view permission (can see all notes regardless of category)
+  const hasGeneralViewPermission = React.useMemo(() => {
+    return currentUser?.permissions?.some((p: any) => 
+      p.component === 'note_categories' && 
+      p.action === 'view' && 
+      !p.fieldName && 
+      !p.statusId
+    ) || false;
+  }, [currentUser?.permissions]);
   
   // Filter categories to only show those user has view permission for
   const accessibleCategories = useMemo(() => {
@@ -193,13 +205,16 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
 
   useEffect(() => {
     // Update selected category if current selection is not accessible
+    // Auto-select first category by default when categories are available
     if (selectedCategoryId !== 'all' && !accessibleCategoryIds.includes(selectedCategoryId)) {
+      // Current selection is not accessible - switch to first accessible category
       if (accessibleCategories.length > 0) {
         setSelectedCategoryId(accessibleCategories[0].id);
       } else {
         setSelectedCategoryId('all');
       }
     } else if (selectedCategoryId === 'all' && accessibleCategories.length > 0) {
+      // Default to first category when categories are available
       setSelectedCategoryId(accessibleCategories[0].id);
     }
   }, [accessibleCategories, accessibleCategoryIds, selectedCategoryId]);
@@ -359,27 +374,45 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
     }
   }
 
-  // Filter notes by selected category and view permissions
+  // Filter notes by selected category only
+  // Permissions are already applied at the tab level - if a tab is visible, user has permission
   const filteredNotes = useMemo(() => {
-    let filtered = localNotes;
+    // Normalize category IDs for comparison (handle string/number/whitespace issues)
+    const normalizeCategoryId = (id: string | null | undefined): string | null => {
+      if (!id) return null;
+      return String(id).trim();
+    };
     
-    // Filter by selected category
-    if (selectedCategoryId !== 'all') {
-      filtered = filtered.filter(note => note.categId === selectedCategoryId);
-    }
+    const normalizedSelectedCategoryId = selectedCategoryId !== 'all' 
+      ? normalizeCategoryId(selectedCategoryId) 
+      : 'all';
+    const normalizedAccessibleCategoryIds = accessibleCategoryIds.map(id => normalizeCategoryId(id)).filter((id): id is string => id !== null);
     
-    // Filter to only show notes from categories user has view permission for
-    filtered = filtered.filter(note => {
-      // If note has no category, show it (null category notes are accessible)
-      if (!note.categId) {
+    return localNotes.filter(note => {
+      const noteCategoryId = normalizeCategoryId(note.categId);
+      
+      // If a specific category is selected, only show notes from that category
+      if (normalizedSelectedCategoryId !== 'all') {
+        // When a specific category is selected, only show notes from that category
+        // Notes with no category are excluded when a specific category is selected
+        return noteCategoryId === normalizedSelectedCategoryId;
+      }
+      
+      // If "all" is selected, show notes from all accessible categories
+      // If user has general view permission, show all notes
+      if (hasGeneralViewPermission) {
         return true;
       }
-      // Only show if user has view permission for this category
-      return accessibleCategoryIds.includes(note.categId);
+      
+      // Show notes with no category (null category notes are accessible)
+      if (!noteCategoryId) {
+        return true;
+      }
+      
+      // Show notes from accessible categories only
+      return normalizedAccessibleCategoryIds.includes(noteCategoryId);
     });
-    
-      return filtered;
-    }, [localNotes, selectedCategoryId, accessibleCategoryIds]);
+  }, [localNotes, selectedCategoryId, accessibleCategoryIds, hasGeneralViewPermission]);
 
   // Don't render if user has no view permissions for any category
   if (!hasAnyViewPermission) {

@@ -11,6 +11,8 @@ import Fosse from './components/Fosse';
 import AddContact from './components/AddContact';
 import { CsvImport } from './components/CsvImport';
 import { MigrationPage } from './components/MigrationPage';
+import { NotesMigrationPage } from './components/NotesMigrationPage';
+import { LogsMigrationPage } from './components/LogsMigrationPage';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
@@ -149,6 +151,24 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <MigrationPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/notes/migration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <NotesMigrationPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/logs/migration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <LogsMigrationPage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

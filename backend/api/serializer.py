@@ -476,6 +476,9 @@ class ContactSerializer(serializers.ModelSerializer):
         # Phone and mobile are handled by SerializerMethodField - use the methods
         ret['phone'] = self.get_phone(instance)
         ret['mobile'] = self.get_mobile(instance)
+        # Confirmateur email and telephone
+        ret['confirmateurEmail'] = instance.confirmateur_email if hasattr(instance, 'confirmateur_email') else ''
+        ret['confirmateurTelephone'] = instance.confirmateur_telephone if hasattr(instance, 'confirmateur_telephone') else ''
         
         # Manager is the teleoperator (the one selected in teleoperateur select during creation)
         if instance.teleoperator:
@@ -566,36 +569,12 @@ class ContactSerializer(serializers.ModelSerializer):
             notes = instance.contact_notes.all()
             notes_list = list(notes)
         
-        # Filter notes by user's category permissions
-        request = self.context.get('request') if self.context else None
-        if request and request.user:
-            try:
-                accessible_category_ids = self.get_user_accessible_category_ids(request.user)
-                
-                if accessible_category_ids is not None:
-                    # User has specific category permissions - filter notes
-                    # Include notes with null category (no category assigned) and notes with accessible categories
-                    filtered_notes = []
-                    for note in notes_list:
-                        # Note with no category is always accessible
-                        if note.categ_id is None:
-                            filtered_notes.append(note)
-                        # Check if note's category ID is in accessible list
-                        elif note.categ_id:
-                            # categ_id is a ForeignKey, access the id attribute
-                            # Ensure category_id is a string and strip whitespace for comparison (NoteCategory.id is CharField)
-                            category_id = str(note.categ_id.id).strip() if hasattr(note.categ_id, 'id') else str(note.categ_id).strip()
-                            # Normalize accessible_category_ids for comparison
-                            normalized_accessible_ids = [str(cid).strip() for cid in accessible_category_ids]
-                            if category_id in normalized_accessible_ids:
-                                filtered_notes.append(note)
-                    notes_list = filtered_notes
-                # If accessible_category_ids is None, user has general permission - show all notes (no filtering needed)
-            except Exception as e:
-                # If there's an error checking permissions, show all notes (fail open)
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Error filtering notes by permissions in ContactSerializer: {e}")
+        # No permission filtering - return all notes
+        # Permissions are enforced at the tab level in the frontend
+        
+        # Sort notes by created_at descending to ensure latest note is first
+        from datetime import datetime
+        notes_list = sorted(notes_list, key=lambda n: n.created_at if n.created_at else datetime.min, reverse=True)
         
         notes_count = len(notes_list)
         latest_note = notes_list[0] if notes_list else None

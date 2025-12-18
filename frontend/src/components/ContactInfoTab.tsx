@@ -564,34 +564,57 @@ export function ContactInfoTab({
     return canViewInformationsTab;
   }, [currentUser?.permissions]);
 
+  // Memoized cache for field edit permissions to avoid duplicate checks
+  const fieldEditCacheRef = React.useRef<Map<string, boolean>>(new Map());
+  const cacheKeyRef = React.useRef<string>('');
+
+  // Create a cache key based on dependencies
+  const cacheKey = React.useMemo(() => {
+    const contactId = contact?.id || '';
+    const statusId = contact?.statusId || '';
+    const permissionsHash = currentUser?.permissions 
+      ? JSON.stringify(currentUser.permissions.map((p: any) => `${p.component}-${p.action}-${p.fieldName}-${p.statusId}`).sort())
+      : '';
+    return `${contactId}-${statusId}-${permissionsHash}-${canEditInformationsTab}`;
+  }, [contact?.id, contact?.statusId, currentUser?.permissions, canEditInformationsTab]);
+
+  // Clear cache when dependencies change
+  React.useEffect(() => {
+    if (cacheKey !== cacheKeyRef.current) {
+      fieldEditCacheRef.current.clear();
+      cacheKeyRef.current = cacheKey;
+    }
+  }, [cacheKey]);
+
   // Helper function to check if user has edit permission for a specific field
   const canEditField = React.useCallback((fieldName: string): boolean => {
-    console.log(`[canEditField ${fieldName}] Starting check`);
+    // Check cache first
+    const cacheKeyForField = `${cacheKey}-${fieldName}`;
+    if (fieldEditCacheRef.current.has(cacheKeyForField)) {
+      return fieldEditCacheRef.current.get(cacheKeyForField)!;
+    }
     
     if (!currentUser?.permissions) {
-      console.log(`[canEditField ${fieldName}] No permissions, returning false`);
+      fieldEditCacheRef.current.set(cacheKeyForField, false);
       return false;
     }
     
     // FIRST: User MUST have permission to edit the informations tab
-    // If they don't have edit permission on the tab, they cannot edit any fields
     if (!canEditInformationsTab) {
-      console.log(`[canEditField ${fieldName}] User cannot edit informations tab, blocking all field edits`);
+      fieldEditCacheRef.current.set(cacheKeyForField, false);
       return false;
     }
     
     // SECOND: User MUST have permission to edit the contact's current status
-    // If they don't have edit permission on the status, they cannot edit any fields
     const canEditCurrentStatus = canEditContact(contact);
     if (!canEditCurrentStatus) {
-      console.log(`[canEditField ${fieldName}] User cannot edit contact's current status, blocking all field edits`);
+      fieldEditCacheRef.current.set(cacheKeyForField, false);
       return false;
     }
     
     const backendFieldName = fieldNameMap[fieldName];
-    console.log(`[canEditField ${fieldName}] Field mapping: ${fieldName} -> ${backendFieldName}`);
     if (!backendFieldName) {
-      console.log(`[canEditField ${fieldName}] Unknown field, returning false`);
+      fieldEditCacheRef.current.set(cacheKeyForField, false);
       return false; // Unknown field, default to no edit
     }
     
@@ -602,41 +625,29 @@ export function ContactInfoTab({
       !p.statusId
     );
     
-    console.log(`[canEditField ${fieldName}] Found ${ficheContactEditPermissions.length} fiche_contact edit permissions:`, 
-      ficheContactEditPermissions.map((p: any) => ({ 
-        id: p.id, 
-        component: p.component, 
-        fieldName: p.fieldName, 
-        action: p.action,
-        fieldNameType: typeof p.fieldName
-      }))
-    );
-    
     // THIRD: Check if user has field-specific edit permission for this field
     const hasFieldPermission = ficheContactEditPermissions.some((p: any) => {
       const pFieldName = p.fieldName ? String(p.fieldName).trim() : null;
       const expectedFieldName = String(backendFieldName).trim();
-      const matches = pFieldName === expectedFieldName;
-      console.log(`[canEditField ${fieldName}] Comparing: "${pFieldName}" === "${expectedFieldName}" = ${matches}`);
-      return matches;
+      return pFieldName === expectedFieldName;
     });
     
     if (hasFieldPermission) {
-      console.log(`[canEditField ${fieldName}] Has field-specific permission AND can edit informations tab and status, allowing edit`);
+      fieldEditCacheRef.current.set(cacheKeyForField, true);
       return true;
     }
     
     // FOURTH: If no field-specific permission exists, check if general fiche_contact edit permission exists
     // If no fiche_contact edit permissions exist at all, allow edit (user has tab permission and status permission)
     if (ficheContactEditPermissions.length === 0) {
-      console.log(`[canEditField ${fieldName}] No fiche_contact permissions, user can edit tab and status, allowing edit`);
+      fieldEditCacheRef.current.set(cacheKeyForField, true);
       return true;
     }
     
     // If fiche_contact permissions exist but this field doesn't have permission, block it
-    console.log(`[canEditField ${fieldName}] Field-specific permissions exist but not for this field, blocking`);
+    fieldEditCacheRef.current.set(cacheKeyForField, false);
     return false;
-  }, [currentUser?.permissions, contact, canEditContact, canEditInformationsTab]);
+  }, [currentUser?.permissions, contact, canEditContact, canEditInformationsTab, cacheKey]);
 
   // Helper function to check if user has edit permission for a specific field in modal context
   // In modal, we check if user can edit the informations tab AND (can edit current status OR has view permission on new status)
@@ -1014,6 +1025,7 @@ export function ContactInfoTab({
   
   // Sync local notes with props when they change
   useEffect(() => {
+    console.debug(`[ContactInfoTab] Notes prop changed: ${notes.length} notes`, notes.map(n => ({ id: n.id, categId: n.categId, categoryName: n.categoryName })));
     setLocalNotes(notes);
   }, [notes]);
   
@@ -1172,13 +1184,17 @@ export function ContactInfoTab({
 
   useEffect(() => {
     // Update selected category if current selection is not accessible
+    // Auto-select first category by default when categories are available
     if (selectedCategoryId !== 'all' && !accessibleCategoryIds.includes(selectedCategoryId)) {
+      // Current selection is not accessible - switch to first accessible category
       if (accessibleCategories.length > 0) {
         setSelectedCategoryId(accessibleCategories[0].id);
       } else {
+        // No accessible categories - keep 'all' to show all notes
         setSelectedCategoryId('all');
       }
     } else if (selectedCategoryId === 'all' && accessibleCategories.length > 0) {
+      // Default to first category when categories are available
       setSelectedCategoryId(accessibleCategories[0].id);
     }
   }, [accessibleCategories, accessibleCategoryIds, selectedCategoryId]);
@@ -3697,19 +3713,21 @@ export function ContactInfoTab({
               <CardTitle className="text-lg">Notes</CardTitle>
             </CardHeader>
             <CardContent className="pt-0 space-y-3">
-              {/* Show notes immediately if user has view permissions - don't wait for categories */}
-              {/* Only show loading if user is actually loading AND we don't have permissions yet */}
+              {/* Show notes - no permission check needed since permissions are enforced at tab level */}
               {loadingUser && !currentUser?.permissions ? (
                 <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
-              ) : !hasAnyViewPermission ? (
-                <p className="text-sm text-slate-500 text-center py-4">Aucune permission pour voir les notes</p>
               ) : (
                 <>
                   {/* Show category tabs only if categories are loaded and user has access */}
                   {loadingCategories ? (
                     <p className="text-xs text-slate-400 text-center py-2">Chargement des catégories...</p>
                   ) : accessibleCategories.length > 0 ? (
-                    <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-2 w-full">
+                    <Tabs value={selectedCategoryId} onValueChange={(value) => {
+                      console.debug(`[ContactInfoTab] Category tab changed from "${selectedCategoryId}" to "${value}"`);
+                      console.debug(`[ContactInfoTab] Available categories:`, accessibleCategories.map(c => ({ id: c.id, name: c.name })));
+                      console.debug(`[ContactInfoTab] Current notes:`, localNotes.map(n => ({ id: n.id, categId: n.categId, categoryName: n.categoryName })));
+                      setSelectedCategoryId(value);
+                    }} className="mb-2 w-full">
                       <TabsList className="h-8 w-full">
                         {accessibleCategories.map((category) => (
                           <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1 flex-1">
@@ -3718,7 +3736,11 @@ export function ContactInfoTab({
                         ))}
                       </TabsList>
                     </Tabs>
-                  ) : null}
+                  ) : (
+                    <p className="text-xs text-slate-400 text-center py-2">
+                      Aucune catégorie accessible ({accessibleCategoryIds.length} permissions, {categories.length} catégories totales)
+                    </p>
+                  )}
               
                   {/* Show form only if user has create permission for informations tab AND category permission */}
                   {canCreateInSelectedCategory && canCreateInformationsTab && (
@@ -3745,27 +3767,49 @@ export function ContactInfoTab({
                   
                   {/* Show notes list */}
                   {(() => {
-                    // Filter notes by selected category and view permissions
-                    let filteredNotes = localNotes;
+                    // Filter notes by selected category only
+                    // Permissions are enforced at the tab level - if a category tab is visible, 
+                    // the user has permission to view ALL notes from that category
+                    // The backend already filters notes by permissions, so we only need to filter by selected tab
                     
-                    // Filter by selected category
-                    if (selectedCategoryId !== 'all') {
-                      filteredNotes = filteredNotes.filter(note => note.categId === selectedCategoryId);
-                    }
+                    // Normalize category IDs for comparison (handle string/number/whitespace issues)
+                    const normalizeCategoryId = (id: string | null | undefined): string | null => {
+                      if (!id) return null;
+                      return String(id).trim();
+                    };
                     
-                    // Filter to only show notes from categories user has view permission for
-                    filteredNotes = filteredNotes.filter(note => {
-                      // If user has general view permission, show all notes
-                      if (hasGeneralViewPermission) {
-                        return true;
+                    const normalizedSelectedCategoryId = selectedCategoryId !== 'all' 
+                      ? normalizeCategoryId(selectedCategoryId) 
+                      : 'all';
+                    
+                    // Filter notes by selected category only
+                    // If a specific category tab is selected, show ALL notes from that category
+                    // If "all" is selected, show ALL notes
+                    const filteredNotes = localNotes.filter(note => {
+                      const noteCategoryId = normalizeCategoryId(note.categId);
+                      
+                      // Debug logging to help identify filtering issues
+                      if (normalizedSelectedCategoryId !== 'all') {
+                        const matches = noteCategoryId === normalizedSelectedCategoryId;
+                        if (!matches && noteCategoryId) {
+                          console.debug(`[Notes Filter] Note ${note.id} with category "${noteCategoryId}" (type: ${typeof note.categId}) doesn't match selected "${normalizedSelectedCategoryId}" (type: ${typeof selectedCategoryId})`);
+                        }
+                        // When a specific category tab is selected, show all notes from that category
+                        // Notes with no category are excluded when a specific category is selected
+                        return matches;
                       }
-                      // If note has no category, show it (null category notes are accessible)
-                      if (!note.categId) {
-                        return true;
-                      }
-                      // Only show if user has view permission for this category
-                      return accessibleCategoryIds.includes(note.categId);
+                      
+                      // If "all" is selected, show all notes (no filtering)
+                      return true;
                     });
+                    
+                    // Debug logging
+                    console.debug(`[Notes Filter] Total notes: ${localNotes.length}, Selected category: ${normalizedSelectedCategoryId}, Filtered notes: ${filteredNotes.length}`);
+                    if (localNotes.length > 0 && normalizedSelectedCategoryId !== 'all') {
+                      const noteCategories = localNotes.map(n => normalizeCategoryId(n.categId));
+                      console.debug(`[Notes Filter] All note categories:`, noteCategories);
+                      console.debug(`[Notes Filter] Filtered note categories:`, filteredNotes.map(n => normalizeCategoryId(n.categId)));
+                    }
                     
                     return filteredNotes.length > 0 ? (
                       <div className="space-y-2 pt-2">

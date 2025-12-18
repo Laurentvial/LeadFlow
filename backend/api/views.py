@@ -563,16 +563,6 @@ class NoteListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         
         try:
-            # Get accessible category IDs for the user
-            accessible_category_ids = self.get_user_accessible_category_ids(user)
-        except Exception as e:
-            # If there's an error (e.g., NoteCategory table doesn't exist yet), allow all notes
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Error getting accessible category IDs: {e}")
-            accessible_category_ids = None  # Allow all notes if there's an error
-        
-        try:
             # Optimize query with select_related to avoid N+1 queries
             queryset = Note.objects.select_related('userId', 'categ_id', 'contactId').order_by('-created_at')
         except Exception as e:
@@ -591,27 +581,8 @@ class NoteListCreateView(generics.ListCreateAPIView):
             # If no contactId, return current user's notes (for backward compatibility)
             queryset = queryset.filter(userId=user)
         
-        # Filter by category permissions if user doesn't have access to all categories
-        if accessible_category_ids is not None:
-            try:
-                # User has specific category permissions - filter notes
-                # Include notes with null category (no category assigned) and notes with accessible categories
-                # Ensure accessible_category_ids is a list of strings (already normalized with strip() in get_user_accessible_category_ids)
-                accessible_ids = [str(cat_id).strip() for cat_id in accessible_category_ids if cat_id] if accessible_category_ids else []
-                if accessible_ids:
-                    queryset = queryset.filter(
-                        models.Q(categ_id__isnull=True) | models.Q(categ_id__id__in=accessible_ids)
-                    )
-                else:
-                    # No accessible category IDs - only show notes with no category
-                    queryset = queryset.filter(categ_id__isnull=True)
-            except Exception as e:
-                # If filtering fails (e.g., categ_id field doesn't exist), just return all notes
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Error filtering notes by category: {e}")
-                pass
-        # If accessible_category_ids is None, user has general permission - show all notes
+        # No permission filtering - return all notes
+        # Permissions are enforced at the tab level in the frontend
         
         return queryset
     
@@ -619,62 +590,22 @@ class NoteListCreateView(generics.ListCreateAPIView):
         """
         Override list to return all notes without pagination when contactId is provided.
         This ensures the popover shows all notes for a contact.
-        Notes are filtered by user's category permissions.
         """
         contact_id = request.query_params.get('contactId', None)
         
         # If contactId is provided, return all notes without pagination
         if contact_id:
-            # get_queryset() already applies permission filtering
             queryset = self.get_queryset()
             # filter_queryset() applies any additional filter backends (if any)
             queryset = self.filter_queryset(queryset)
             
-            # Double-check permissions at the serializer level for extra security
-            # Get accessible category IDs
-            try:
-                accessible_category_ids = self.get_user_accessible_category_ids(request.user)
-                if accessible_category_ids is not None:
-                    # User has specific permissions - ensure we only return notes from allowed categories
-                    notes_list = list(queryset)
-                    filtered_notes = []
-                    normalized_accessible_ids = [str(cid).strip() for cid in accessible_category_ids]
-                    
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.debug(f"Filtering notes: user has access to {len(normalized_accessible_ids)} categories: {normalized_accessible_ids}, total notes before filter: {len(notes_list)}")
-                    
-                    for note in notes_list:
-                        # Include notes with no category
-                        if note.categ_id is None:
-                            filtered_notes.append(note)
-                            logger.debug(f"Including note {note.id} (no category)")
-                        # Include notes with accessible categories - strict comparison
-                        elif note.categ_id:
-                            note_category_id = str(note.categ_id.id).strip()
-                            if note_category_id in normalized_accessible_ids:
-                                filtered_notes.append(note)
-                                logger.debug(f"Including note {note.id} with category {note_category_id}")
-                            else:
-                                logger.debug(f"Filtered out note {note.id} with category {note_category_id} (not in accessible list: {normalized_accessible_ids})")
-                    
-                    logger.debug(f"After filtering: {len(filtered_notes)} notes remain")
-                    
-                    # Create a new queryset with filtered notes
-                    if filtered_notes:
-                        note_ids = [note.id for note in filtered_notes]
-                        queryset = queryset.filter(id__in=note_ids)
-                    else:
-                        # No notes match permissions - return empty queryset
-                        queryset = queryset.none()
-            except Exception as e:
-                # If permission check fails, log error but still return queryset (which should be filtered by get_queryset)
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error in double-checking note permissions: {e}", exc_info=True)
-                # Continue with queryset - it should already be filtered by get_queryset()
+            # With CONN_MAX_AGE: 0, we need to evaluate the queryset before serialization
+            # to ensure all related fields (select_related) are loaded before connection closes
+            # Convert to list to evaluate queryset immediately while connection is still open
+            notes_list = list(queryset)
             
-            serializer = self.get_serializer(queryset, many=True)
+            # Now serialize the evaluated list (no database access needed)
+            serializer = self.get_serializer(notes_list, many=True)
             return Response(serializer.data)
         
         # Otherwise, use default pagination behavior
@@ -2373,13 +2304,9 @@ class FosseContactView(generics.ListAPIView):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def contact_create(request):
-    # Validate required fields
-    if not request.data.get('firstName'):
-        return Response({'error': 'Le prénom est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    # Validate required fields - only lastName is required
     if not request.data.get('lastName'):
         return Response({'error': 'Le nom est requis'}, status=status.HTTP_400_BAD_REQUEST)
-    if not request.data.get('phone'):
-        return Response({'error': 'Le téléphone 1 est requis'}, status=status.HTTP_400_BAD_REQUEST)
     if not request.data.get('statusId'):
         return Response({'error': 'Le statut est requis'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2434,6 +2361,10 @@ def contact_create(request):
         'nationality': request.data.get('nationality', '') or '',
         'campaign': request.data.get('campaign', '') or '',
     }
+    
+    # Handle old_contact_id - convert empty strings to None
+    old_contact_id_value = request.data.get('oldContactId', '') or ''
+    contact_data['old_contact_id'] = old_contact_id_value.strip() if old_contact_id_value.strip() else None
     
     # Set creator to the current user
     contact_data['creator'] = request.user
@@ -2628,8 +2559,8 @@ def csv_import_contacts(request):
         if not default_teleoperator_id:
             default_teleoperator_id = None
     
-    # Validate required mappings - only firstName is required
-    required_fields = ['firstName']
+    # Validate required mappings - only lastName is required
+    required_fields = ['lastName']
     missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
     if missing_fields:
         return Response({
@@ -2693,6 +2624,10 @@ def csv_import_contacts(request):
             'city': 'city',
             'nationality': 'nationality',
             'campaign': 'campaign',
+            'oldContactId': 'old_contact_id',
+            'createdAt': 'created_at',
+            'updatedAt': 'updated_at',
+            'assignedAt': 'assigned_at',
         }
         
         results = {
@@ -2713,6 +2648,35 @@ def csv_import_contacts(request):
             for fmt in formats:
                 try:
                     return datetime.strptime(date_str, fmt).date()
+                except ValueError:
+                    continue
+            return None
+        
+        # Helper function to parse datetime
+        def parse_datetime(datetime_str):
+            if not datetime_str or datetime_str.strip() == '':
+                return None
+            datetime_str = datetime_str.strip()
+            # Try common datetime formats
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M',
+                '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y %H:%M',
+                '%d/%m/%Y',
+                '%m/%d/%Y %H:%M:%S',
+                '%m/%d/%Y %H:%M',
+                '%m/%d/%Y',
+            ]
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(datetime_str, fmt)
+                    from django.utils import timezone
+                    return timezone.make_aware(parsed)
                 except ValueError:
                     continue
             return None
@@ -2757,6 +2721,11 @@ def csv_import_contacts(request):
                         # Handle date field
                         if model_field == 'birth_date':
                             contact_data[model_field] = parse_date(value)
+                        # Handle datetime fields - store separately for later update
+                        elif model_field in ['created_at', 'updated_at', 'assigned_at']:
+                            parsed_dt = parse_datetime(value)
+                            if parsed_dt:
+                                contact_data[model_field] = parsed_dt
                         # Handle phone number fields - convert to integer
                         elif model_field in ['phone', 'mobile']:
                             if value:
@@ -2768,14 +2737,17 @@ def csv_import_contacts(request):
                                     contact_data[model_field] = None
                             else:
                                 contact_data[model_field] = None
+                        # Handle old_contact_id - convert empty strings to None
+                        elif model_field == 'old_contact_id':
+                            contact_data[model_field] = value if value else None
                         else:
                             contact_data[model_field] = value
                 
-                # Validate required fields - only firstName is required
-                if not contact_data.get('fname'):
+                # Validate required fields - only lastName is required
+                if not contact_data.get('lname'):
                     results['errors'].append({
                         'row': row_num,
-                        'error': 'First name is required'
+                        'error': 'Last name is required'
                     })
                     results['failed'] += 1
                     continue
@@ -2798,9 +2770,15 @@ def csv_import_contacts(request):
                     contact_data['source'] = source_obj
                 # Teleoperator is required, so always set it
                 contact_data['teleoperator'] = teleoperator_obj
-                # Set assigned_at when importing contact with teleoperator
-                from django.utils import timezone
-                contact_data['assigned_at'] = timezone.now()
+                # Set assigned_at only if not provided in CSV (when importing contact with teleoperator)
+                if 'assigned_at' not in contact_data:
+                    from django.utils import timezone
+                    contact_data['assigned_at'] = timezone.now()
+                
+                # Store custom timestamps separately for later update (since auto_now_add/auto_now may override)
+                custom_created_at = contact_data.pop('created_at', None)
+                custom_updated_at = contact_data.pop('updated_at', None)
+                custom_assigned_at = contact_data.pop('assigned_at', None)
                 
                 # Store row data for results
                 contact_name = contact_data.get('fname', '')
@@ -2810,7 +2788,10 @@ def csv_import_contacts(request):
                 row_data_map[contact_id] = {
                     'row': row_num,
                     'name': contact_name,
-                    'email': email
+                    'email': email,
+                    'created_at': custom_created_at,
+                    'updated_at': custom_updated_at,
+                    'assigned_at': custom_assigned_at,
                 }
                 
                 # Create Contact instance (not saved yet)
@@ -2860,6 +2841,25 @@ def csv_import_contacts(request):
                 try:
                     Contact.objects.bulk_create(batch, batch_size=BATCH_SIZE)
                     
+                    # Update custom timestamps directly in database for contacts that have them from CSV
+                    for contact in batch:
+                        row_data = row_data_map[contact.id]
+                        custom_created_at = row_data.get('created_at')
+                        custom_updated_at = row_data.get('updated_at')
+                        custom_assigned_at = row_data.get('assigned_at')
+                        
+                        # Update timestamps directly in database if provided in CSV
+                        update_fields = {}
+                        if custom_created_at:
+                            update_fields['created_at'] = custom_created_at
+                        if custom_updated_at:
+                            update_fields['updated_at'] = custom_updated_at
+                        if custom_assigned_at:
+                            update_fields['assigned_at'] = custom_assigned_at
+                        
+                        if update_fields:
+                            Contact.objects.filter(id=contact.id).update(**update_fields)
+                    
                     # Add to success results
                     for contact in batch:
                         row_data = row_data_map[contact.id]
@@ -2874,8 +2874,26 @@ def csv_import_contacts(request):
                     # This is extremely rare but can happen
                     for contact in batch:
                         try:
-                            contact.save()
                             row_data = row_data_map[contact.id]
+                            custom_created_at = row_data.get('created_at')
+                            custom_updated_at = row_data.get('updated_at')
+                            custom_assigned_at = row_data.get('assigned_at')
+                            
+                            # Save contact first (without custom timestamps)
+                            contact.save()
+                            
+                            # Update custom timestamps directly in database if provided
+                            update_fields = {}
+                            if custom_created_at:
+                                update_fields['created_at'] = custom_created_at
+                            if custom_updated_at:
+                                update_fields['updated_at'] = custom_updated_at
+                            if custom_assigned_at:
+                                update_fields['assigned_at'] = custom_assigned_at
+                            
+                            if update_fields:
+                                Contact.objects.filter(id=contact.id).update(**update_fields)
+                            
                             results['success'].append({
                                 'row': row_data['row'],
                                 'contactId': contact.id,
@@ -2884,10 +2902,33 @@ def csv_import_contacts(request):
                             results['imported'] += 1
                         except IntegrityError:
                             # ID collision - regenerate and try once more
+                            old_id = contact.id
                             contact.id = uuid.uuid4().hex[:12]
+                            # Update row_data_map with new ID
+                            if old_id in row_data_map:
+                                row_data_map[contact.id] = row_data_map.pop(old_id)
+                            
                             try:
-                                contact.save()
                                 row_data = row_data_map[contact.id]
+                                custom_created_at = row_data.get('created_at')
+                                custom_updated_at = row_data.get('updated_at')
+                                custom_assigned_at = row_data.get('assigned_at')
+                                
+                                # Save contact first (without custom timestamps)
+                                contact.save()
+                                
+                                # Update custom timestamps directly in database if provided
+                                update_fields = {}
+                                if custom_created_at:
+                                    update_fields['created_at'] = custom_created_at
+                                if custom_updated_at:
+                                    update_fields['updated_at'] = custom_updated_at
+                                if custom_assigned_at:
+                                    update_fields['assigned_at'] = custom_assigned_at
+                                
+                                if update_fields:
+                                    Contact.objects.filter(id=contact.id).update(**update_fields)
+                                
                                 results['success'].append({
                                     'row': row_data['row'],
                                     'contactId': contact.id,
@@ -2931,6 +2972,743 @@ def csv_import_contacts(request):
             except Exception as e:
                 # Don't fail the import if logging fails
                 pass
+        
+        return Response(results, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def csv_import_notes(request):
+    """Import notes from CSV with column mapping - optimized for large imports"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    
+    # Parse column mapping JSON string if it's a string
+    column_mapping_str = request.data.get('columnMapping', '{}')
+    if isinstance(column_mapping_str, str):
+        import json
+        try:
+            column_mapping = json.loads(column_mapping_str)
+        except json.JSONDecodeError:
+            column_mapping = {}
+    else:
+        column_mapping = column_mapping_str or {}
+    
+    # Validate required mappings - text is required
+    required_fields = ['text']
+    missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
+    if missing_fields:
+        return Response({
+            'error': f'Missing required column mappings: {", ".join(missing_fields)}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Always use current user for notes
+    default_user_obj = request.user
+    
+    # Get default category if specified
+    default_category_id = request.data.get('defaultCategoryId')
+    default_category_obj = None
+    if default_category_id:
+        default_category_id = str(default_category_id).strip()
+        if default_category_id:
+            try:
+                default_category_obj = NoteCategory.objects.get(id=default_category_id)
+            except NoteCategory.DoesNotExist:
+                return Response({'error': 'Default category not found'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        import csv
+        import io
+        from datetime import datetime
+        
+        # Read CSV file
+        csv_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(csv_content))
+        
+        # Field mapping from frontend names to model field names
+        field_mapping = {
+            'id': 'id',
+            'text': 'text',
+            'oldContactId': 'old_contact_id',  # For mapping by old contact ID
+            'createdAt': 'created_at',
+        }
+        
+        results = {
+            'success': [],
+            'errors': [],
+            'total': 0,
+            'imported': 0,
+            'failed': 0
+        }
+        
+        # Helper function to parse date
+        def parse_datetime(datetime_str):
+            if not datetime_str or datetime_str.strip() == '':
+                return None
+            datetime_str = datetime_str.strip()
+            # Try common datetime formats
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y %H:%M',
+                '%d/%m/%Y',
+                '%m/%d/%Y %H:%M:%S',
+                '%m/%d/%Y %H:%M',
+                '%m/%d/%Y',
+            ]
+            for fmt in formats:
+                try:
+                    return datetime.strptime(datetime_str, fmt)
+                except ValueError:
+                    continue
+            return None
+        
+        # Batch processing configuration
+        BATCH_SIZE = 1000  # Process notes in batches of 1000
+        notes_to_create = []
+        row_data_map = {}  # Map note_id to row number and details for results
+        
+        # Pre-load all contacts with old_contact_id into a dictionary for fast lookup
+        # This avoids N+1 query problem when processing CSV rows
+        contacts_by_old_id = {}
+        contacts_with_old_id = Contact.objects.filter(old_contact_id__isnull=False).exclude(old_contact_id='')
+        for contact in contacts_with_old_id:
+            contacts_by_old_id[contact.old_contact_id] = contact
+        
+        # Pre-load existing note IDs to check for duplicates
+        # This avoids N+1 query problem when checking if note IDs already exist
+        existing_note_ids = set(Note.objects.values_list('id', flat=True))
+        
+        # First pass: Parse all rows and collect valid notes
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
+            results['total'] += 1
+            try:
+                # Build note data from CSV row
+                note_data = {}
+                old_contact_id = None
+                
+                # Map CSV columns to note fields
+                for frontend_field, csv_column in column_mapping.items():
+                    if not csv_column:
+                        continue
+                    
+                    # Try exact match first, then case-insensitive match
+                    csv_value = None
+                    if csv_column in row:
+                        csv_value = row[csv_column]
+                    else:
+                        # Try case-insensitive match
+                        for key in row.keys():
+                            if key and key.strip().lower() == csv_column.strip().lower():
+                                csv_value = row[key]
+                                break
+                    
+                    if csv_value is None:
+                        continue
+                    
+                    value = csv_value.strip() if csv_value else ''
+                    
+                    # Map to model field name
+                    if frontend_field in field_mapping:
+                        model_field = field_mapping[frontend_field]
+                        
+                        # Handle datetime field
+                        if model_field == 'created_at':
+                            parsed_dt = parse_datetime(value)
+                            if parsed_dt:
+                                from django.utils import timezone
+                                note_data[model_field] = timezone.make_aware(parsed_dt)
+                            else:
+                                note_data[model_field] = None
+                        # Handle old contact ID (store separately for lookup)
+                        elif model_field == 'old_contact_id':
+                            old_contact_id = value if value else None
+                        else:
+                            note_data[model_field] = value
+                
+                # Validate required fields - text is required
+                if not note_data.get('text'):
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'Text is required'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Handle contact ID mapping by old_contact_id only
+                # Only import notes where the old contact ID was found in the contact table
+                contact_obj = None
+                if old_contact_id:
+                    # Use pre-loaded dictionary for fast lookup (O(1) instead of database query)
+                    contact_obj = contacts_by_old_id.get(old_contact_id)
+                    if not contact_obj:
+                        # Contact not found - skip this note
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Contact not found with old_contact_id: {old_contact_id}'
+                        })
+                        results['failed'] += 1
+                        continue
+                else:
+                    # No old_contact_id provided - skip this note
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'old_contact_id is required for note import'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Always use current user
+                user_obj = default_user_obj
+                
+                # Use default category if provided
+                category_obj = default_category_obj
+                
+                # Handle note ID - use from CSV if provided, otherwise generate
+                note_id = None
+                if 'id' in note_data and note_data['id']:
+                    # Use ID from CSV
+                    note_id = str(note_data['id']).strip()
+                    if len(note_id) > 12:
+                        note_id = note_id[:12]  # Truncate to 12 characters if longer
+                    
+                    # Check if ID already exists in database
+                    if note_id in existing_note_ids:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Note with ID {note_id} already exists in database'
+                        })
+                        results['failed'] += 1
+                        continue
+                    
+                    # Check uniqueness against pending notes in this batch
+                    existing_ids = {n.id for n in notes_to_create}
+                    if note_id in existing_ids:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Duplicate ID {note_id} found in CSV'
+                        })
+                        results['failed'] += 1
+                        continue
+                else:
+                    # Generate new note ID
+                    note_id = uuid.uuid4().hex[:12]
+                    # Check uniqueness against pending notes in this batch
+                    existing_ids = {n.id for n in notes_to_create}
+                    while note_id in existing_ids or note_id in existing_note_ids:
+                        note_id = uuid.uuid4().hex[:12]
+                
+                note_data['id'] = note_id
+                note_data['userId'] = user_obj
+                note_data['contactId'] = contact_obj
+                note_data['categ_id'] = category_obj
+                
+                # Add ID to existing_note_ids to prevent duplicates in the same batch
+                existing_note_ids.add(note_id)
+                
+                # Remove old_contact_id from note_data (it's not a Note field)
+                note_data.pop('old_contact_id', None)
+                
+                # Store created_at separately if provided (needs special handling)
+                custom_created_at = note_data.pop('created_at', None)
+                
+                # Store row data for results
+                note_text_preview = note_data.get('text', '')[:50] + ('...' if len(note_data.get('text', '')) > 50 else '')
+                
+                row_data_map[note_id] = {
+                    'row': row_num,
+                    'text': note_text_preview,
+                    'created_at': custom_created_at,  # Store for later update
+                }
+                
+                # Create Note instance (not saved yet)
+                note = Note(**note_data)
+                # Set created_at if provided (this will override auto_now_add)
+                if custom_created_at:
+                    note.created_at = custom_created_at
+                notes_to_create.append(note)
+                
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                results['errors'].append({
+                    'row': row_num,
+                    'error': str(e),
+                    'details': error_details
+                })
+                results['failed'] += 1
+        
+        # Bulk create notes in batches
+        from django.db import transaction, IntegrityError
+        
+        with transaction.atomic():
+            for i in range(0, len(notes_to_create), BATCH_SIZE):
+                batch = notes_to_create[i:i + BATCH_SIZE]
+                try:
+                    Note.objects.bulk_create(batch, batch_size=BATCH_SIZE)
+                    
+                    # Update created_at for notes that have custom timestamps from CSV
+                    # bulk_create may override created_at due to auto_now_add, so we update it afterward
+                    notes_to_update = []
+                    for note in batch:
+                        row_data = row_data_map[note.id]
+                        custom_created_at = row_data.get('created_at')
+                        if custom_created_at:
+                            note.created_at = custom_created_at
+                            notes_to_update.append(note)
+                    
+                    # Bulk update created_at for notes with custom timestamps
+                    if notes_to_update:
+                        Note.objects.bulk_update(notes_to_update, ['created_at'], batch_size=BATCH_SIZE)
+                    
+                    # Add to success results
+                    for note in batch:
+                        row_data = row_data_map[note.id]
+                        results['success'].append({
+                            'row': row_data['row'],
+                            'noteId': note.id,
+                            'text': row_data['text']
+                        })
+                        results['imported'] += 1
+                except IntegrityError as e:
+                    # Handle potential ID collisions by falling back to individual creates for this batch
+                    for note in batch:
+                        try:
+                            note.save()
+                            row_data = row_data_map[note.id]
+                            results['success'].append({
+                                'row': row_data['row'],
+                                'noteId': note.id,
+                                'text': row_data['text']
+                            })
+                            results['imported'] += 1
+                        except IntegrityError:
+                            # ID collision - regenerate and try once more
+                            note.id = uuid.uuid4().hex[:12]
+                            try:
+                                note.save()
+                                row_data = row_data_map[note.id]
+                                results['success'].append({
+                                    'row': row_data['row'],
+                                    'noteId': note.id,
+                                    'text': row_data['text']
+                                })
+                                results['imported'] += 1
+                            except Exception as e:
+                                row_data = row_data_map.get(note.id, {})
+                                results['errors'].append({
+                                    'row': row_data.get('row', 'unknown'),
+                                    'error': f'Failed to create note: {str(e)}'
+                                })
+                                results['failed'] += 1
+                        except Exception as e:
+                            row_data = row_data_map.get(note.id, {})
+                            results['errors'].append({
+                                'row': row_data.get('row', 'unknown'),
+                                'error': f'Failed to create note: {str(e)}'
+                            })
+                            results['failed'] += 1
+        
+        # Create a single bulk log entry for the import
+        if results['imported'] > 0:
+            try:
+                bulk_log_details = {
+                    'ip_address': get_client_ip(request),
+                    'browser': get_browser_info(request),
+                    'imported_count': results['imported'],
+                    'total_rows': results['total'],
+                    'failed_count': results['failed'],
+                }
+                
+                log_id = uuid.uuid4().hex[:12]
+                while Log.objects.filter(id=log_id).exists():
+                    log_id = uuid.uuid4().hex[:12]
+                
+                Log.objects.create(
+                    id=log_id,
+                    event_type='bulkImportNotes',
+                    user_id=request.user if request.user.is_authenticated else None,
+                    contact_id=None,  # Bulk import doesn't have a single contact
+                    creator_id=request.user if request.user.is_authenticated else None,
+                    details=bulk_log_details,
+                    old_value={},
+                    new_value={'imported': results['imported'], 'total': results['total']}
+                )
+            except Exception as e:
+                # Don't fail the import if logging fails
+                pass
+        
+        return Response(results, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def csv_import_logs(request):
+    """Import logs from CSV with column mapping - optimized for large imports"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    
+    # Parse column mapping JSON string if it's a string
+    column_mapping_str = request.data.get('columnMapping', '{}')
+    if isinstance(column_mapping_str, str):
+        import json
+        try:
+            column_mapping = json.loads(column_mapping_str)
+        except json.JSONDecodeError:
+            column_mapping = {}
+    else:
+        column_mapping = column_mapping_str or {}
+    
+    # Validate required mappings - event_type is required
+    required_fields = ['eventType']
+    missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
+    if missing_fields:
+        return Response({
+            'error': f'Missing required column mappings: {", ".join(missing_fields)}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Always use current user as default creator
+    default_creator_obj = request.user
+    
+    try:
+        import csv
+        import io
+        from datetime import datetime
+        
+        # Read CSV file
+        csv_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(csv_content))
+        
+        # Field mapping from frontend names to model field names
+        field_mapping = {
+            'id': 'id',
+            'eventType': 'event_type',
+            'oldContactId': 'old_contact_id',  # For mapping by old contact ID
+            'userId': 'user_id',
+            'creatorId': 'creator_id',
+            'createdAt': 'created_at',
+            'details': 'details',
+            'oldValue': 'old_value',
+            'newValue': 'new_value',
+        }
+        
+        results = {
+            'success': [],
+            'errors': [],
+            'total': 0,
+            'imported': 0,
+            'failed': 0
+        }
+        
+        # Helper function to parse date
+        def parse_datetime(datetime_str):
+            if not datetime_str or datetime_str.strip() == '':
+                return None
+            datetime_str = datetime_str.strip()
+            # Try common datetime formats
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y %H:%M',
+                '%d/%m/%Y',
+                '%m/%d/%Y %H:%M:%S',
+                '%m/%d/%Y %H:%M',
+                '%m/%d/%Y',
+            ]
+            for fmt in formats:
+                try:
+                    return datetime.strptime(datetime_str, fmt)
+                except ValueError:
+                    continue
+            return None
+        
+        # Helper function to parse JSON
+        def parse_json(json_str):
+            if not json_str or json_str.strip() == '':
+                return {}
+            try:
+                import json
+                return json.loads(json_str)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        
+        # Batch processing configuration
+        BATCH_SIZE = 1000  # Process logs in batches of 1000
+        logs_to_create = []
+        row_data_map = {}  # Map log_id to row number and details for results
+        
+        # Pre-load all contacts with old_contact_id into a dictionary for fast lookup
+        # This avoids N+1 query problem when processing CSV rows
+        contacts_by_old_id = {}
+        contacts_with_old_id = Contact.objects.filter(old_contact_id__isnull=False).exclude(old_contact_id='')
+        for contact in contacts_with_old_id:
+            contacts_by_old_id[contact.old_contact_id] = contact
+        
+        # Pre-load existing log IDs to check for duplicates
+        # This avoids N+1 query problem when checking if log IDs already exist
+        existing_log_ids = set(Log.objects.values_list('id', flat=True))
+        
+        # Pre-load all users for fast lookup
+        users_by_id = {}
+        all_users = DjangoUser.objects.all()
+        for user in all_users:
+            users_by_id[str(user.id)] = user
+        
+        # First pass: Parse all rows and collect valid logs
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
+            results['total'] += 1
+            try:
+                # Build log data from CSV row
+                log_data = {}
+                old_contact_id = None
+                
+                # Map CSV columns to log fields
+                for frontend_field, csv_column in column_mapping.items():
+                    if not csv_column:
+                        continue
+                    
+                    # Try exact match first, then case-insensitive match
+                    csv_value = None
+                    if csv_column in row:
+                        csv_value = row[csv_column]
+                    else:
+                        # Try case-insensitive match
+                        for key in row.keys():
+                            if key and key.strip().lower() == csv_column.strip().lower():
+                                csv_value = row[key]
+                                break
+                    
+                    if csv_value is None:
+                        continue
+                    
+                    value = csv_value.strip() if csv_value else ''
+                    
+                    # Map to model field name
+                    if frontend_field in field_mapping:
+                        model_field = field_mapping[frontend_field]
+                        
+                        # Handle datetime field
+                        if model_field == 'created_at':
+                            parsed_dt = parse_datetime(value)
+                            if parsed_dt:
+                                from django.utils import timezone
+                                log_data[model_field] = timezone.make_aware(parsed_dt)
+                            else:
+                                log_data[model_field] = None
+                        # Handle JSON fields
+                        elif model_field in ['details', 'old_value', 'new_value']:
+                            log_data[model_field] = parse_json(value)
+                        # Handle old contact ID (store separately for lookup)
+                        elif model_field == 'old_contact_id':
+                            old_contact_id = value if value else None
+                        else:
+                            log_data[model_field] = value
+                
+                # Validate required fields - event_type is required
+                if not log_data.get('event_type'):
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'event_type is required'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Handle contact ID mapping by old_contact_id (optional for logs)
+                contact_obj = None
+                if old_contact_id:
+                    # Use pre-loaded dictionary for fast lookup (O(1) instead of database query)
+                    contact_obj = contacts_by_old_id.get(old_contact_id)
+                    if not contact_obj:
+                        # Contact not found - log can still be created without contact
+                        # Just log a warning but continue
+                        pass
+                
+                # Handle user_id - use from CSV if provided, otherwise None
+                user_obj = None
+                if 'user_id' in log_data and log_data['user_id']:
+                    user_id_str = str(log_data['user_id']).strip()
+                    user_obj = users_by_id.get(user_id_str)
+                    if not user_obj:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'User not found with ID: {user_id_str}'
+                        })
+                        results['failed'] += 1
+                        continue
+                
+                # Handle creator_id - use from CSV if provided, otherwise use current user
+                creator_obj = default_creator_obj
+                if 'creator_id' in log_data and log_data['creator_id']:
+                    creator_id_str = str(log_data['creator_id']).strip()
+                    creator_obj = users_by_id.get(creator_id_str)
+                    if not creator_obj:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Creator not found with ID: {creator_id_str}'
+                        })
+                        results['failed'] += 1
+                        continue
+                
+                # Handle log ID - use from CSV if provided, otherwise generate
+                log_id = None
+                if 'id' in log_data and log_data['id']:
+                    # Use ID from CSV
+                    log_id = str(log_data['id']).strip()
+                    if len(log_id) > 12:
+                        log_id = log_id[:12]  # Truncate to 12 characters if longer
+                    
+                    # Check if ID already exists in database
+                    if log_id in existing_log_ids:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Log with ID {log_id} already exists in database'
+                        })
+                        results['failed'] += 1
+                        continue
+                    
+                    # Check uniqueness against pending logs in this batch
+                    existing_ids = {l.id for l in logs_to_create}
+                    if log_id in existing_ids:
+                        results['errors'].append({
+                            'row': row_num,
+                            'error': f'Duplicate ID {log_id} found in CSV'
+                        })
+                        results['failed'] += 1
+                        continue
+                else:
+                    # Generate new log ID
+                    log_id = uuid.uuid4().hex[:12]
+                    # Check uniqueness against pending logs in this batch
+                    existing_ids = {l.id for l in logs_to_create}
+                    while log_id in existing_ids or log_id in existing_log_ids:
+                        log_id = uuid.uuid4().hex[:12]
+                
+                log_data['id'] = log_id
+                log_data['user_id'] = user_obj
+                log_data['contact_id'] = contact_obj
+                log_data['creator_id'] = creator_obj
+                
+                # Add ID to existing_log_ids to prevent duplicates in the same batch
+                existing_log_ids.add(log_id)
+                
+                # Remove old_contact_id from log_data (it's not a Log field)
+                log_data.pop('old_contact_id', None)
+                
+                # Store created_at separately if provided (needs special handling)
+                custom_created_at = log_data.pop('created_at', None)
+                
+                # Store row data for results
+                event_type_preview = log_data.get('event_type', '')[:50] + ('...' if len(log_data.get('event_type', '')) > 50 else '')
+                
+                row_data_map[log_id] = {
+                    'row': row_num,
+                    'event_type': event_type_preview,
+                    'created_at': custom_created_at,  # Store for later update
+                }
+                
+                # Create Log instance (not saved yet)
+                log = Log(**log_data)
+                # Set created_at if provided (this will override auto_now_add)
+                if custom_created_at:
+                    log.created_at = custom_created_at
+                logs_to_create.append(log)
+                
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                results['errors'].append({
+                    'row': row_num,
+                    'error': str(e),
+                    'details': error_details
+                })
+                results['failed'] += 1
+        
+        # Bulk create logs in batches
+        from django.db import transaction, IntegrityError
+        
+        with transaction.atomic():
+            for i in range(0, len(logs_to_create), BATCH_SIZE):
+                batch = logs_to_create[i:i + BATCH_SIZE]
+                try:
+                    Log.objects.bulk_create(batch, batch_size=BATCH_SIZE)
+                    
+                    # Update created_at for logs that have custom timestamps from CSV
+                    # bulk_create may override created_at due to auto_now_add, so we update it afterward
+                    logs_to_update = []
+                    for log in batch:
+                        row_data = row_data_map[log.id]
+                        custom_created_at = row_data.get('created_at')
+                        if custom_created_at:
+                            log.created_at = custom_created_at
+                            logs_to_update.append(log)
+                    
+                    # Bulk update created_at for logs with custom timestamps
+                    if logs_to_update:
+                        Log.objects.bulk_update(logs_to_update, ['created_at'], batch_size=BATCH_SIZE)
+                    
+                    # Add to success results
+                    for log in batch:
+                        row_data = row_data_map[log.id]
+                        results['success'].append({
+                            'row': row_data['row'],
+                            'logId': log.id,
+                            'event_type': row_data['event_type']
+                        })
+                        results['imported'] += 1
+                except IntegrityError as e:
+                    # Handle potential ID collisions by falling back to individual creates for this batch
+                    for log in batch:
+                        try:
+                            log.save()
+                            row_data = row_data_map[log.id]
+                            results['success'].append({
+                                'row': row_data['row'],
+                                'logId': log.id,
+                                'event_type': row_data['event_type']
+                            })
+                            results['imported'] += 1
+                        except IntegrityError:
+                            # ID collision - regenerate and try once more
+                            log.id = uuid.uuid4().hex[:12]
+                            try:
+                                log.save()
+                                row_data = row_data_map[log.id]
+                                results['success'].append({
+                                    'row': row_data['row'],
+                                    'logId': log.id,
+                                    'event_type': row_data['event_type']
+                                })
+                                results['imported'] += 1
+                            except Exception as e:
+                                row_data = row_data_map.get(log.id, {})
+                                results['errors'].append({
+                                    'row': row_data.get('row', 'unknown'),
+                                    'error': f'Failed to create log: {str(e)}'
+                                })
+                                results['failed'] += 1
+                        except Exception as e:
+                            row_data = row_data_map.get(log.id, {})
+                            results['errors'].append({
+                                'row': row_data.get('row', 'unknown'),
+                                'error': f'Failed to create log: {str(e)}'
+                            })
+                            results['failed'] += 1
         
         return Response(results, status=status.HTTP_200_OK)
         
@@ -4018,7 +4796,7 @@ def user_toggle_otp(request, user_id):
     # Toggle the require_otp status
     user_details.require_otp = not user_details.require_otp
     user_details.save()
-    return Response({'requireOtp': user_details.require_otp})
+    return Response({'require_otp': user_details.require_otp})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -4124,8 +4902,6 @@ def user_update(request, user_id):
             user_details.phone = None
     if 'hrex' in request.data:
         user_details.hrex = request.data.get('hrex', '').strip() or ''
-    if 'requireOtp' in request.data:
-        user_details.require_otp = bool(request.data['requireOtp'])
     
     # Update team membership using TeamMember table
     if 'teamId' in request.data:
@@ -7317,30 +8093,31 @@ def send_otp(request):
             return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
         
         # Check if user requires OTP
+        user_details = None
         try:
             user_details = UserDetails.objects.get(django_user=user)
-            # If user doesn't require OTP, authenticate directly
-            if not user_details.require_otp:
-                # Check if user is deleted
-                if user_details.deleted_at:
-                    return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
-                
-                # Generate JWT tokens directly without OTP
-                from rest_framework_simplejwt.tokens import RefreshToken
-                refresh = RefreshToken.for_user(user)
-                
-                return Response({
-                    'success': True,
-                    'message': 'Login successful',
-                    'access': str(refresh.access_token),
-                    'refresh': str(refresh),
-                    'otpRequired': False
-                }, status=status.HTTP_200_OK)
+            require_otp = user_details.require_otp
+            # Check if user is deleted
+            if user_details.deleted_at:
+                return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
         except UserDetails.DoesNotExist:
-            # UserDetails doesn't exist, allow OTP flow (might be a new user)
-            pass
+            # If UserDetails doesn't exist, default to require_otp = False
+            require_otp = False
         
-        # User requires OTP, proceed with OTP generation
+        # If user doesn't require OTP, return tokens directly
+        if not require_otp:
+            # Generate JWT tokens
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'success': True,
+                'message': 'Login successful',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh)
+            }, status=status.HTTP_200_OK)
+        
+        # User requires OTP - proceed with OTP generation and sending
         # Generate 6-digit OTP code
         import random
         otp_code = str(random.randint(100000, 999999))
@@ -7371,7 +8148,17 @@ def send_otp(request):
             return Response({'error': 'Resend API key not configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         try:
-            import resend
+            try:
+                import resend
+            except ImportError as import_err:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to import resend module: {str(import_err)}")
+                return Response({
+                    'error': 'Resend module not installed',
+                    'detail': f'Please install resend: pip install resend==2.19.0. Error: {str(import_err)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
             resend.api_key = resend_api_key
             
             # Use noreply@crm-prospection.online for OTP emails
@@ -7505,11 +8292,11 @@ def verify_otp(request):
             'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# Custom token serializer to check if user is deleted and if OTP is required
+# Custom token serializer to check if user is deleted
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        # Check if user is deleted or requires OTP
+        # Check if user is deleted
         try:
             user_details = UserDetails.objects.get(django_user=self.user)
             if user_details.deleted_at:
@@ -7517,13 +8304,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 raise AuthenticationFailed(
                     'This account has been deleted.',
                     code='user_deleted'
-                )
-            # Check if user requires OTP login
-            if user_details.require_otp:
-                from rest_framework_simplejwt.exceptions import AuthenticationFailed
-                raise AuthenticationFailed(
-                    'This account requires OTP authentication. Please use OTP login.',
-                    code='otp_required'
                 )
         except UserDetails.DoesNotExist:
             # UserDetails doesn't exist, allow login (might be a new user)
