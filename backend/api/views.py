@@ -904,6 +904,8 @@ class ContactView(generics.ListAPIView):
                                 queryset = queryset.filter(birth_place__icontains=value)
                             elif column_id == 'campaign':
                                 queryset = queryset.filter(campaign__icontains=value)
+                            elif column_id == 'oldContactId':
+                                queryset = queryset.filter(old_contact_id__icontains=value)
                             else:
                                 # Unknown filter column, skip it
                                 continue
@@ -2304,9 +2306,7 @@ class FosseContactView(generics.ListAPIView):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def contact_create(request):
-    # Validate required fields - only lastName is required
-    if not request.data.get('lastName'):
-        return Response({'error': 'Le nom est requis'}, status=status.HTTP_400_BAD_REQUEST)
+    # Validate required fields - only statusId is required
     if not request.data.get('statusId'):
         return Response({'error': 'Le statut est requis'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2369,27 +2369,27 @@ def contact_create(request):
     # Set creator to the current user
     contact_data['creator'] = request.user
     
-    # Handle status
+    # Handle status - use get() for better performance
     status_id = request.data.get('statusId')
     if status_id:
         try:
-            status_obj = Status.objects.filter(id=status_id).first()
+            status_obj = Status.objects.filter(id=status_id).only('id').first()
             if status_obj:
                 contact_data['status'] = status_obj
         except Exception:
             pass
     
-    # Handle source
+    # Handle source - use get() for better performance
     source_id = request.data.get('sourceId')
     if source_id:
         try:
-            source_obj = Source.objects.filter(id=source_id).first()
+            source_obj = Source.objects.filter(id=source_id).only('id').first()
             if source_obj:
                 contact_data['source'] = source_obj
         except Exception:
             pass
     
-    # Handle teleoperator
+    # Handle teleoperator - optimized lookup
     teleoperator_id = request.data.get('teleoperatorId')
     if teleoperator_id:
         try:
@@ -2397,14 +2397,14 @@ def contact_create(request):
             # Try Django User ID first (if it's an integer)
             try:
                 int_id = int(teleoperator_id)
-                teleoperator_user = DjangoUser.objects.filter(id=int_id).first()
+                teleoperator_user = DjangoUser.objects.filter(id=int_id).only('id').first()
             except (ValueError, TypeError):
                 pass
             
-            # If not found, try UserDetails ID
+            # If not found, try UserDetails ID with select_related
             if not teleoperator_user:
                 from api.models import UserDetails
-                user_details = UserDetails.objects.filter(id=str(teleoperator_id)).first()
+                user_details = UserDetails.objects.filter(id=str(teleoperator_id)).select_related('django_user').only('id', 'django_user').first()
                 if user_details and user_details.django_user:
                     teleoperator_user = user_details.django_user
             
@@ -2417,7 +2417,7 @@ def contact_create(request):
             print(f"[DEBUG] Error setting teleoperator during contact creation: {e}")
             pass
     
-    # Handle confirmateur
+    # Handle confirmateur - optimized lookup
     confirmateur_id = request.data.get('confirmateurId')
     if confirmateur_id:
         try:
@@ -2425,14 +2425,14 @@ def contact_create(request):
             # Try Django User ID first (if it's an integer)
             try:
                 int_id = int(confirmateur_id)
-                confirmateur_user = DjangoUser.objects.filter(id=int_id).first()
+                confirmateur_user = DjangoUser.objects.filter(id=int_id).only('id').first()
             except (ValueError, TypeError):
                 pass
             
-            # If not found, try UserDetails ID
+            # If not found, try UserDetails ID with select_related
             if not confirmateur_user:
                 from api.models import UserDetails
-                user_details = UserDetails.objects.filter(id=str(confirmateur_id)).first()
+                user_details = UserDetails.objects.filter(id=str(confirmateur_id)).select_related('django_user').only('id', 'django_user').first()
                 if user_details and user_details.django_user:
                     confirmateur_user = user_details.django_user
             
@@ -2440,6 +2440,16 @@ def contact_create(request):
                 contact_data['confirmateur'] = confirmateur_user
         except Exception as e:
             print(f"[DEBUG] Error setting confirmateur during contact creation: {e}")
+            pass
+    
+    # Handle platform - use get() for better performance
+    platform_id = request.data.get('platformId')
+    if platform_id:
+        try:
+            platform_obj = Platform.objects.filter(id=platform_id).only('id').first()
+            if platform_obj:
+                contact_data['platform'] = platform_obj
+        except Exception:
             pass
     
     try:
@@ -2466,6 +2476,319 @@ def contact_create(request):
         error_details = traceback.format_exc()
         print(f"Error creating contact: {error_details}")
         return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def contacts_bulk_create(request):
+    """Bulk create contacts - optimized for migration/import"""
+    try:
+        # Ensure request.data is a list
+        contacts_data = request.data
+        if isinstance(contacts_data, dict):
+            # If it's a dict, try to get the 'contacts' key or convert to list
+            if 'contacts' in contacts_data:
+                contacts_data = contacts_data['contacts']
+            elif isinstance(contacts_data.get('data'), list):
+                contacts_data = contacts_data['data']
+            else:
+                return Response({'error': 'Expected a list of contacts'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not isinstance(contacts_data, list):
+            return Response({'error': 'Expected a list of contacts'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Convert to list if it's a tuple (can happen with some parsers)
+        if isinstance(contacts_data, tuple):
+            contacts_data = list(contacts_data)
+        if not contacts_data:
+            return Response({'error': 'No contacts provided'}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        # Handle database connection errors during request processing
+        from django.db import OperationalError
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in contacts_bulk_create (request processing): {error_details}")
+        
+        if isinstance(e, OperationalError) or 'timeout' in str(e).lower() or 'connection' in str(e).lower():
+            return Response({
+                'error': 'Database connection timeout. Please try again in a moment.',
+                'results': [],
+                'total': 0,
+                'success': 0,
+                'failed': 0
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        
+        return Response({
+            'error': 'An error occurred while processing the request',
+            'results': [],
+            'total': 0,
+            'success': 0,
+            'failed': 0
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # Limit the number of contacts per request to avoid timeouts
+    MAX_CONTACTS_PER_REQUEST = 500
+    if len(contacts_data) > MAX_CONTACTS_PER_REQUEST:
+        return Response({
+            'error': f'Too many contacts. Maximum {MAX_CONTACTS_PER_REQUEST} contacts per request. Please split into smaller batches.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Helper functions
+    def get_date(value):
+        if not value or value == '':
+            return None
+        return value
+    
+    def phone_to_int(value):
+        if not value:
+            return None
+        cleaned = ''.join(str(value).split())
+        if not cleaned:
+            return None
+        try:
+            return int(cleaned)
+        except (ValueError, TypeError):
+            return None
+    
+    # Pre-fetch all related objects in bulk to avoid N+1 queries
+    status_ids = set()
+    source_ids = set()
+    teleoperator_ids = set()
+    confirmateur_ids = set()
+    platform_ids = set()
+    emails_to_check = set()
+    
+    for contact_data in contacts_data:
+        if contact_data.get('statusId'):
+            status_ids.add(contact_data['statusId'])
+        if contact_data.get('sourceId'):
+            source_ids.add(contact_data['sourceId'])
+        if contact_data.get('teleoperatorId'):
+            teleoperator_ids.add(str(contact_data['teleoperatorId']))
+        if contact_data.get('confirmateurId'):
+            confirmateur_ids.add(str(contact_data['confirmateurId']))
+        if contact_data.get('platformId'):
+            platform_ids.add(contact_data['platformId'])
+        email = contact_data.get('email', '').strip()
+        if email:
+            emails_to_check.add(email)
+    
+    # Bulk fetch all related objects
+    statuses_dict = {s.id: s for s in Status.objects.filter(id__in=status_ids)} if status_ids else {}
+    sources_dict = {s.id: s for s in Source.objects.filter(id__in=source_ids)} if source_ids else {}
+    platforms_dict = {p.id: p for p in Platform.objects.filter(id__in=platform_ids)} if platform_ids else {}
+    
+    # Fetch users (both Django User and UserDetails)
+    teleoperator_users_dict = {}
+    confirmateur_users_dict = {}
+    if teleoperator_ids or confirmateur_ids:
+        from api.models import UserDetails
+        # Try Django User IDs first
+        django_user_ids = []
+        for uid in list(teleoperator_ids) + list(confirmateur_ids):
+            try:
+                django_user_ids.append(int(uid))
+            except (ValueError, TypeError):
+                pass
+        
+        django_users = {u.id: u for u in DjangoUser.objects.filter(id__in=django_user_ids)} if django_user_ids else {}
+        
+        # Try UserDetails IDs
+        user_details_list = UserDetails.objects.filter(id__in=list(teleoperator_ids) + list(confirmateur_ids)).select_related('django_user')
+        for ud in user_details_list:
+            if ud.django_user:
+                if ud.id in teleoperator_ids:
+                    teleoperator_users_dict[ud.id] = ud.django_user
+                if ud.id in confirmateur_ids:
+                    confirmateur_users_dict[ud.id] = ud.django_user
+        
+        # Add Django users directly
+        for uid in teleoperator_ids:
+            try:
+                int_uid = int(uid)
+                if int_uid in django_users:
+                    teleoperator_users_dict[uid] = django_users[int_uid]
+            except (ValueError, TypeError):
+                pass
+        
+        for uid in confirmateur_ids:
+            try:
+                int_uid = int(uid)
+                if int_uid in django_users:
+                    confirmateur_users_dict[uid] = django_users[int_uid]
+            except (ValueError, TypeError):
+                pass
+    
+    # Check existing emails in bulk
+    existing_emails = set(Contact.objects.filter(email__in=emails_to_check).values_list('email', flat=True)) if emails_to_check else set()
+    
+    # Track emails seen in this batch to detect CSV duplicates
+    emails_seen_in_batch = {}
+    
+    # Prepare contacts for bulk creation
+    contacts_to_create = []
+    results = []
+    from django.utils import timezone
+    
+    for idx, contact_data in enumerate(contacts_data):
+        try:
+            # Validate required fields - only statusId is required
+            if not contact_data.get('statusId'):
+                results.append({'index': idx, 'success': False, 'error': 'Le statut est requis'})
+                continue
+            
+            # Check email uniqueness
+            email = contact_data.get('email', '').strip()
+            if email:
+                # First check if this email appears multiple times in the CSV batch
+                if email in emails_seen_in_batch:
+                    results.append({'index': idx, 'success': False, 'error': f'Email dupliqué dans le CSV: {email}'})
+                    continue
+                
+                # Then check if email exists in database
+                if email in existing_emails:
+                    results.append({'index': idx, 'success': False, 'error': f'Un contact avec cet email existe déjà dans la base de données: {email}'})
+                    continue
+                
+                # Mark this email as seen in this batch
+                emails_seen_in_batch[email] = idx
+            
+            # Generate contact ID
+            contact_id = uuid.uuid4().hex[:12]
+            while Contact.objects.filter(id=contact_id).exists() or any(c[0].id == contact_id for c in contacts_to_create):
+                contact_id = uuid.uuid4().hex[:12]
+            
+            # Build contact data
+            contact_obj_data = {
+                'id': contact_id,
+                'civility': contact_data.get('civility', '') or '',
+                'fname': contact_data.get('firstName', '') or '',
+                'lname': contact_data.get('lastName', '') or '',
+                'phone': phone_to_int(contact_data.get('phone', '')),
+                'mobile': phone_to_int(contact_data.get('mobile', '')),
+                'email': email,
+                'birth_date': get_date(contact_data.get('birthDate')),
+                'birth_place': contact_data.get('birthPlace', '') or '',
+                'address': contact_data.get('address', '') or '',
+                'address_complement': contact_data.get('addressComplement', '') or '',
+                'postal_code': contact_data.get('postalCode', '') or '',
+                'city': contact_data.get('city', '') or '',
+                'nationality': contact_data.get('nationality', '') or '',
+                'campaign': contact_data.get('campaign', '') or '',
+                'creator': request.user,
+            }
+            
+            # Handle old_contact_id
+            old_contact_id_value = contact_data.get('oldContactId', '') or ''
+            contact_obj_data['old_contact_id'] = old_contact_id_value.strip() if old_contact_id_value.strip() else None
+            
+            # Set status
+            status_id = contact_data.get('statusId')
+            if status_id and status_id in statuses_dict:
+                contact_obj_data['status'] = statuses_dict[status_id]
+            
+            # Set source
+            source_id = contact_data.get('sourceId')
+            if source_id and source_id in sources_dict:
+                contact_obj_data['source'] = sources_dict[source_id]
+            
+            # Set teleoperator
+            teleoperator_id = str(contact_data.get('teleoperatorId', '')) if contact_data.get('teleoperatorId') else None
+            if teleoperator_id and teleoperator_id in teleoperator_users_dict:
+                contact_obj_data['teleoperator'] = teleoperator_users_dict[teleoperator_id]
+                contact_obj_data['assigned_at'] = timezone.now()
+            
+            # Set confirmateur
+            confirmateur_id = str(contact_data.get('confirmateurId', '')) if contact_data.get('confirmateurId') else None
+            if confirmateur_id and confirmateur_id in confirmateur_users_dict:
+                contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id]
+            
+            # Set platform
+            platform_id = contact_data.get('platformId')
+            if platform_id and platform_id in platforms_dict:
+                contact_obj_data['platform'] = platforms_dict[platform_id]
+            
+            # Handle custom fields
+            if contact_data.get('montantEncaisse'):
+                contact_obj_data['montant_encaisse'] = contact_data.get('montantEncaisse')
+            if contact_data.get('bonus'):
+                contact_obj_data['bonus'] = contact_data.get('bonus')
+            if contact_data.get('paiement'):
+                contact_obj_data['paiement'] = contact_data.get('paiement')
+            if contact_data.get('contrat'):
+                contact_obj_data['contrat'] = contact_data.get('contrat')
+            if contact_data.get('nomDeScene'):
+                contact_obj_data['nom_de_scene'] = contact_data.get('nomDeScene')
+            if contact_data.get('dateProTr'):
+                contact_obj_data['date_pro_tr'] = get_date(contact_data.get('dateProTr'))
+            if contact_data.get('potentiel'):
+                contact_obj_data['potentiel'] = contact_data.get('potentiel')
+            if contact_data.get('produit'):
+                contact_obj_data['produit'] = contact_data.get('produit')
+            # Note: confirmateurEmail and confirmateurTelephone fields were removed in migration 0085
+            # These fields are no longer part of the Contact model
+            
+            # Handle date fields
+            if contact_data.get('createdAt'):
+                contact_obj_data['created_at'] = get_date(contact_data.get('createdAt'))
+            if contact_data.get('updatedAt'):
+                contact_obj_data['updated_at'] = get_date(contact_data.get('updatedAt'))
+            if contact_data.get('assignedAt'):
+                contact_obj_data['assigned_at'] = get_date(contact_data.get('assignedAt'))
+            
+            contacts_to_create.append((Contact(**contact_obj_data), contact_data))
+            results.append({'index': idx, 'success': True, 'contactId': contact_id})
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error preparing contact {idx}: {error_details}")
+            results.append({'index': idx, 'success': False, 'error': str(e)})
+    
+    # Bulk create contacts in smaller batches to avoid timeouts
+    if contacts_to_create:
+        try:
+            from django.db import transaction
+            BATCH_SIZE = 50  # Smaller batch size to avoid timeouts
+            
+            contacts_objects = [c[0] for c in contacts_to_create]
+            
+            # Process in batches within a transaction
+            with transaction.atomic():
+                for i in range(0, len(contacts_objects), BATCH_SIZE):
+                    batch = contacts_objects[i:i + BATCH_SIZE]
+                    Contact.objects.bulk_create(batch, batch_size=BATCH_SIZE)
+            
+            # Note: Log entries are skipped for bulk operations to improve performance
+            # If logging is needed, it can be added as a background task
+            
+        except Exception as e:
+            import traceback
+            from django.db import OperationalError
+            error_details = traceback.format_exc()
+            print(f"Error bulk creating contacts: {error_details}")
+            
+            # Handle database connection errors
+            if isinstance(e, OperationalError) or 'timeout' in str(e).lower() or 'connection' in str(e).lower():
+                return Response({
+                    'error': 'Database connection timeout. Please try again in a moment.',
+                    'results': results,
+                    'total': len(contacts_data),
+                    'success': sum(1 for r in results if r.get('success')),
+                    'failed': len(contacts_data)
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # Mark all as failed
+            for result in results:
+                if result.get('success'):
+                    result['success'] = False
+                    result['error'] = f'Bulk creation failed: {str(e)}'
+    
+    return Response({
+        'results': results,
+        'total': len(contacts_data),
+        'success': sum(1 for r in results if r.get('success')),
+        'failed': sum(1 for r in results if not r.get('success'))
+    }, status=status.HTTP_201_CREATED)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -2559,13 +2882,8 @@ def csv_import_contacts(request):
         if not default_teleoperator_id:
             default_teleoperator_id = None
     
-    # Validate required mappings - only lastName is required
-    required_fields = ['lastName']
-    missing_fields = [field for field in required_fields if field not in column_mapping or not column_mapping[field]]
-    if missing_fields:
-        return Response({
-            'error': f'Missing required column mappings: {", ".join(missing_fields)}'
-        }, status=status.HTTP_400_BAD_REQUEST)
+    # Validate required mappings - only statusId is required (via default_status_id)
+    # lastName is no longer required
     
     if not default_status_id:
         return Response({'error': 'Default status is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2743,14 +3061,8 @@ def csv_import_contacts(request):
                         else:
                             contact_data[model_field] = value
                 
-                # Validate required fields - only lastName is required
-                if not contact_data.get('lname'):
-                    results['errors'].append({
-                        'row': row_num,
-                        'error': 'Last name is required'
-                    })
-                    results['failed'] += 1
-                    continue
+                # Validate required fields - lastName is no longer required
+                # Only statusId is required (handled via default_status_id)
                 
                 # Store email for bulk duplicate check
                 email = contact_data.get('email', '').strip()
@@ -7611,26 +7923,76 @@ def email_signature_logo_proxy(request, file_path):
 def chat_rooms(request):
     """List all chat rooms for the current user or create a new one"""
     if request.method == 'GET':
-        # Get pagination parameters
-        limit = int(request.query_params.get('limit', 15))  # Default to 15 conversations
-        offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+        # Get pagination parameters - define outside try block to avoid NameError in except
+        try:
+            limit = int(request.query_params.get('limit', 15))  # Default to 15 conversations
+        except (ValueError, TypeError):
+            limit = 15
         
-        # Get total count for pagination info
-        total_count = ChatRoom.objects.filter(participants=request.user).distinct().count()
+        try:
+            offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+        except (ValueError, TypeError):
+            offset = 0
         
-        # Get chat rooms ordered by updated_at descending (most recent first)
-        chat_rooms = ChatRoom.objects.filter(participants=request.user).distinct().order_by('-updated_at')[offset:offset + limit]
-        
-        serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
-        
-        # Return chat rooms with pagination metadata
-        return Response({
-            'chatRooms': serializer.data,
-            'hasMore': offset + limit < total_count,
-            'total': total_count,
-            'offset': offset,
-            'limit': limit
-        })
+        try:
+            # Get total count for pagination info (optimized query)
+            total_count = ChatRoom.objects.filter(participants=request.user).distinct().count()
+            
+            # Get chat rooms ordered by updated_at descending (most recent first)
+            # Use prefetch_related to avoid N+1 queries for participants and messages
+            from django.db.models import Prefetch
+            
+            # Prefetch messages with sender to avoid N+1 queries
+            # Order by created_at descending for efficient lastMessage retrieval
+            messages_prefetch = Prefetch(
+                'messages',
+                queryset=Message.objects.select_related('sender').order_by('-created_at')
+            )
+            
+            chat_rooms = ChatRoom.objects.filter(
+                participants=request.user
+            ).distinct().prefetch_related(
+                'participants',
+                messages_prefetch
+            ).order_by('-updated_at')[offset:offset + limit]
+            
+            serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
+            
+            # Return chat rooms with pagination metadata
+            return Response({
+                'chatRooms': serializer.data,
+                'hasMore': offset + limit < total_count,
+                'total': total_count,
+                'offset': offset,
+                'limit': limit
+            })
+        except Exception as e:
+            # Handle database connection errors gracefully
+            from django.db import OperationalError
+            import traceback
+            
+            error_details = traceback.format_exc()
+            print(f"Error in chat_rooms: {error_details}")
+            
+            if isinstance(e, OperationalError) or 'timeout' in str(e).lower() or 'connection' in str(e).lower():
+                return Response({
+                    'error': 'Database connection timeout. Please try again in a moment.',
+                    'chatRooms': [],
+                    'hasMore': False,
+                    'total': 0,
+                    'offset': offset,
+                    'limit': limit
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # For other errors, return generic error
+            return Response({
+                'error': 'An error occurred while loading chat rooms',
+                'chatRooms': [],
+                'hasMore': False,
+                'total': 0,
+                'offset': offset,
+                'limit': limit
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     elif request.method == 'POST':
         # Create a new chat room

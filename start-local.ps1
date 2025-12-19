@@ -132,3 +132,5 @@ Write-Host ""
 
 # Serve frontend
 serve -s dist -l $frontendPort
+
+

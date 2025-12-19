@@ -191,10 +191,10 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 
 if DB_HOST and DB_NAME and DB_USER and DB_PASSWORD:
     # Use custom remote database from environment variables (highest priority)
-    # Aiven databases require SSL and specific connection parameters
+    # Aiven/Scalingo databases require SSL and specific connection parameters
     db_options = {
-        'connect_timeout': 10,
-        'sslmode': 'require',  # Aiven requires SSL
+        'connect_timeout': 30,  # Increased timeout for remote databases (was 10)
+        'sslmode': 'require',  # Aiven/Scalingo require SSL
     }
     
     # Aiven-specific: Check if using connection pooler port (25060) or direct port (5432)
@@ -221,10 +221,15 @@ if DB_HOST and DB_NAME and DB_USER and DB_PASSWORD:
         }
     }
 elif os.getenv('DATABASE_URL'):
-    # Use DATABASE_URL if provided (e.g., Heroku Postgres)
+    # Use DATABASE_URL if provided (e.g., Heroku Postgres, Scalingo)
     # For ASGI/Daphne, disable connection pooling to prevent exhaustion
     db_config = dj_database_url.parse(os.getenv('DATABASE_URL'), conn_max_age=0)
     db_config['CONN_HEALTH_CHECKS'] = True
+    # Add connection timeout if not already set
+    if 'OPTIONS' not in db_config:
+        db_config['OPTIONS'] = {}
+    if 'connect_timeout' not in db_config['OPTIONS']:
+        db_config['OPTIONS']['connect_timeout'] = 30  # 30 seconds for remote databases
     DATABASES = {
         'default': db_config
     }

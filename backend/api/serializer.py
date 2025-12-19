@@ -1586,38 +1586,67 @@ class ChatRoomSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'createdAt', 'updatedAt']
     
     def get_participants(self, obj):
-        """Get list of participant IDs"""
+        """Get list of participant IDs - use prefetched data if available"""
+        # Check if participants are prefetched
+        if hasattr(obj, '_prefetched_objects_cache') and 'participants' in obj._prefetched_objects_cache:
+            return [user.id for user in obj._prefetched_objects_cache['participants']]
+        # Fallback to query if not prefetched
         return [user.id for user in obj.participants.all()]
     
     def get_otherParticipant(self, obj):
-        """Get the other participant (not the current user)"""
+        """Get the other participant (not the current user) - use prefetched data if available"""
         request = self.context.get('request')
         if request and request.user:
-            other_participants = obj.participants.exclude(id=request.user.id)
-            if other_participants.exists():
-                other_user = other_participants.first()
-                first_name = other_user.first_name or ''
-                last_name = other_user.last_name or ''
-                name = f"{first_name} {last_name}".strip() if (first_name or last_name) else other_user.username
-                return {
-                    'id': other_user.id,
-                    'username': other_user.username,
-                    'name': name,
-                    'email': other_user.email or ''
-                }
+            # Use prefetched participants if available
+            if hasattr(obj, '_prefetched_objects_cache') and 'participants' in obj._prefetched_objects_cache:
+                participants = obj._prefetched_objects_cache['participants']
+            else:
+                participants = obj.participants.all()
+            
+            # Find other participant (not current user)
+            for user in participants:
+                if user.id != request.user.id:
+                    first_name = user.first_name or ''
+                    last_name = user.last_name or ''
+                    name = f"{first_name} {last_name}".strip() if (first_name or last_name) else user.username
+                    return {
+                        'id': user.id,
+                        'username': user.username,
+                        'name': name,
+                        'email': user.email or ''
+                    }
         return None
     
     def get_lastMessage(self, obj):
-        """Get the last message in the chat room"""
-        last_msg = obj.messages.order_by('-created_at').first()
+        """Get the last message in the chat room - use prefetched data if available"""
+        # Check if messages are prefetched
+        if hasattr(obj, '_prefetched_objects_cache') and 'messages' in obj._prefetched_objects_cache:
+            # Messages are prefetched - find the most recent one
+            prefetched = obj._prefetched_objects_cache['messages']
+            if prefetched:
+                # Get the message with the latest created_at
+                last_msg = max(prefetched, key=lambda m: m.created_at, default=None)
+                if last_msg:
+                    return MessageSerializer(last_msg).data
+            return None
+        
+        # Fallback to query if not prefetched (shouldn't happen with proper prefetch)
+        last_msg = obj.messages.select_related('sender').order_by('-created_at').first()
         if last_msg:
             return MessageSerializer(last_msg).data
         return None
     
     def get_unreadCount(self, obj):
-        """Get count of unread messages for current user"""
+        """Get count of unread messages for current user - use prefetched data if available"""
         request = self.context.get('request')
         if request and request.user:
+            # Check if messages are prefetched
+            if hasattr(obj, '_prefetched_objects_cache') and 'messages' in obj._prefetched_objects_cache:
+                prefetched = obj._prefetched_objects_cache['messages']
+                return sum(1 for msg in prefetched 
+                          if not msg.is_read and msg.sender.id != request.user.id)
+            
+            # Fallback to query if not prefetched (shouldn't happen with proper prefetch)
             return obj.messages.filter(is_read=False).exclude(sender=request.user).count()
         return 0
     

@@ -5,10 +5,9 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, AlertCircle } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
-import LoadingIndicator from './LoadingIndicator';
 import '../styles/PageHeader.css';
 
 interface ColumnMapping {
@@ -58,7 +57,7 @@ export function NotesMigrationPage() {
       const data = await apiCall('/api/note-categories/', {
         method: 'GET',
       });
-      setCategories(Array.isArray(data) ? data : []);
+      setCategories(Array.isArray(data.categories) ? data.categories : []);
     } catch (error) {
       console.error('Error loading categories:', error);
     } finally {

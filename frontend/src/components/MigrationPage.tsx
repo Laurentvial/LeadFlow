@@ -7,7 +7,7 @@ import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
 import { Textarea } from './ui/textarea';
-import { ArrowLeft, Upload, FileSpreadsheet, Edit2, Save, X, Calendar, Plus, Trash2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, Edit2, Save, X, Calendar, Plus, Trash2, CheckCircle2, AlertCircle, Loader2, Zap } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
@@ -29,12 +29,6 @@ interface MigratedRow {
   id: string; // Unique ID for this row
   csvData: { [key: string]: string }; // Original CSV data
   mappedData: { [key: string]: any }; // Mapped contact data
-  eventData?: {
-    date: string;
-    hour: string;
-    minute: string;
-    teleoperatorId: string;
-  };
   isEditing: boolean;
   isSaving: boolean;
   contactId?: string; // If already saved
@@ -45,7 +39,7 @@ const CRM_FIELDS = [
   { value: '', label: 'Ignorer cette colonne' },
   { value: 'civility', label: 'Civilité' },
   { value: 'firstName', label: 'Prénom' },
-  { value: 'lastName', label: 'Nom (requis)', required: true },
+  { value: 'lastName', label: 'Nom' },
   { value: 'phone', label: 'Téléphone 1' },
   { value: 'mobile', label: 'Telephone 2' },
   { value: 'email', label: 'Email' },
@@ -81,12 +75,12 @@ const CRM_FIELDS = [
 export function MigrationPage() {
   const navigate = useNavigate();
   const { statuses, loading: statusesLoading } = useStatuses();
-  const { sources, loading: sourcesLoading } = useSources();
+  const { sources, loading: sourcesLoading, reload: reloadSources } = useSources();
   const { users, loading: usersLoading } = useUsers();
   const { currentUser } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const [step, setStep] = useState<'upload' | 'mapping' | 'migration'>('upload');
+  const [step, setStep] = useState<'upload' | 'mapping' | 'processing' | 'results'>('upload');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvData, setCsvData] = useState<any[]>([]);
@@ -106,11 +100,9 @@ export function MigrationPage() {
   const [teleoperatorMapping, setTeleoperatorMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Teleoperator ID
   const [contratMapping, setContratMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Contrat value
   const [sourceMapping, setSourceMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Source ID
-  const [eventDateColumn, setEventDateColumn] = useState<string>(''); // CSV column for event date
-  const [eventHourColumn, setEventHourColumn] = useState<string>(''); // CSV column for event hour (optional)
-  const [eventMinuteColumn, setEventMinuteColumn] = useState<string>(''); // CSV column for event minute (optional)
-  const [defaultEventHour, setDefaultEventHour] = useState<string>('09'); // Default hour if not in CSV
-  const [defaultEventMinute, setDefaultEventMinute] = useState<string>('00'); // Default minute if not in CSV
+  const [failedRows, setFailedRows] = useState<MigratedRow[]>([]); // Rows that failed to insert
+  const [processingProgress, setProcessingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 }); // Progress tracking
+  const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; failureReasons: { [reason: string]: number } }>({ success: 0, failed: 0, failureReasons: {} }); // Migration results summary
 
   // Contrat options from the select
   const contratOptions = [
@@ -262,6 +254,680 @@ export function MigrationPage() {
       toast.error(errorMessage);
       setCsvFile(null);
       setStep('upload');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Helper function to normalize strings for matching
+  const normalizeString = (str: string): string => {
+    return str
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove accents
+      .replace(/[^a-z0-9]/g, '') // Remove special chars and spaces
+      .trim();
+  };
+
+  // Auto-map all CSV headers to CRM fields based on similarity
+  const handleAutoMapAllFields = () => {
+    if (csvHeaders.length === 0) {
+      toast.error('Aucune colonne CSV disponible');
+      return;
+    }
+
+    const newMapping: ColumnMapping = { ...columnMapping };
+    const usedHeaders = new Set<string>();
+
+    // Common variations and synonyms
+    const synonyms: { [key: string]: string[] } = {
+      'firstName': ['prenom', 'firstname', 'first_name', 'nom', 'name'],
+      'lastName': ['nom', 'lastname', 'last_name', 'name', 'surname'],
+      'phone': ['telephone', 'tel', 'phone', 'telephone1', 'tel1', 'mobile'],
+      'mobile': ['mobile', 'telephone2', 'tel2', 'cell', 'cellphone'],
+      'email': ['email', 'mail', 'e-mail', 'courriel'],
+      'birthDate': ['date_naissance', 'birthdate', 'date_naiss', 'naissance'],
+      'birthPlace': ['lieu_naissance', 'birthplace', 'lieu_naiss'],
+      'address': ['adresse', 'address', 'street', 'rue'],
+      'addressComplement': ['complement', 'complement_adresse', 'address_complement'],
+      'postalCode': ['code_postal', 'postalcode', 'zip', 'zipcode', 'cp'],
+      'city': ['ville', 'city', 'commune'],
+      'nationality': ['nationalite', 'nationality', 'pays'],
+      'campaign': ['campagne', 'campaign'],
+      'statusId': ['statut', 'status', 'etat', 'state'],
+      'sourceId': ['source', 'origine', 'origin'],
+      'teleoperatorId': ['teleoperateur', 'teleoperator', 'operateur', 'operator'],
+      'confirmateurId': ['confirmateur', 'confirmer', 'confirmer_id'],
+      'platformId': ['plateforme', 'platform', 'site'],
+      'montantEncaisse': ['montant_encaisse', 'montant', 'amount', 'encaissement'],
+      'bonus': ['bonus', 'prime'],
+      'paiement': ['paiement', 'payment', 'payement'],
+      'contrat': ['contrat', 'contract'],
+      'nomDeScene': ['nom_scene', 'nom_de_scene', 'scene_name', 'pseudo'],
+      'dateProTr': ['date_pro_tr', 'dateprotr', 'pro_tr'],
+      'potentiel': ['potentiel', 'potential'],
+      'produit': ['produit', 'product'],
+      'confirmateurEmail': ['confirmateur_email', 'mail_confirmateur', 'confirmateur_mail'],
+      'confirmateurTelephone': ['confirmateur_telephone', 'tel_confirmateur', 'confirmateur_tel'],
+      'oldContactId': ['ancien_id', 'old_id', 'id_ancien', 'old_contact_id'],
+      'createdAt': ['date_creation', 'created_at', 'date_crea', 'creation'],
+      'updatedAt': ['date_modification', 'updated_at', 'date_modif', 'modification'],
+      'assignedAt': ['date_attribution', 'assigned_at', 'date_assign', 'attribution'],
+    };
+
+    // Generic column names that should only match with very strong evidence
+    const genericColumns = ['id', 'code', 'num', 'number', 'ref', 'reference', 'key', 'pk', 'fk'];
+    
+    // Try to match each CRM field
+    CRM_FIELDS.forEach(field => {
+      if (!field.value) return; // Skip the empty option
+
+      // Skip if already mapped
+      if (newMapping[field.value] && newMapping[field.value] !== '') {
+        return;
+      }
+
+      const fieldValueNormalized = normalizeString(field.value);
+      const fieldLabelNormalized = normalizeString(field.label);
+
+      let bestMatch: string | null = null;
+      let bestScore = 0;
+
+      // Check exact matches first
+      csvHeaders.forEach(header => {
+        if (usedHeaders.has(header)) return;
+
+        const headerNormalized = normalizeString(header);
+        const isGenericColumn = genericColumns.includes(headerNormalized);
+
+        // Exact match with field value
+        if (headerNormalized === fieldValueNormalized) {
+          bestMatch = header;
+          bestScore = 100;
+          return;
+        }
+
+        // Exact match with field label
+        if (headerNormalized === fieldLabelNormalized) {
+          if (bestScore < 90) {
+            bestMatch = header;
+            bestScore = 90;
+          }
+        }
+
+        // Check synonyms - only exact matches
+        const fieldSynonyms = synonyms[field.value] || [];
+        fieldSynonyms.forEach(synonym => {
+          const synonymNormalized = normalizeString(synonym);
+          if (headerNormalized === synonymNormalized) {
+            if (bestScore < 85) {
+              bestMatch = header;
+              bestScore = 85;
+            }
+          }
+        });
+
+        // Partial match - only if header contains the field (not the other way around)
+        // And require minimum length to avoid false positives
+        const minLengthForPartial = 4; // Minimum length for partial matching
+        
+        if (fieldValueNormalized.length >= minLengthForPartial && 
+            headerNormalized.includes(fieldValueNormalized) && 
+            !isGenericColumn) {
+          // Only match if the header is substantially similar (not just contains a short substring)
+          if (headerNormalized.length <= fieldValueNormalized.length * 1.5) {
+            if (bestScore < 70) {
+              bestMatch = header;
+              bestScore = 70;
+            }
+          }
+        }
+
+        if (fieldLabelNormalized.length >= minLengthForPartial && 
+            headerNormalized.includes(fieldLabelNormalized) && 
+            !isGenericColumn) {
+          // Only match if the header is substantially similar
+          if (headerNormalized.length <= fieldLabelNormalized.length * 1.5) {
+            if (bestScore < 60) {
+              bestMatch = header;
+              bestScore = 60;
+            }
+          }
+        }
+      });
+
+      // Set the best match if found and score is good enough (raised threshold to 70)
+      if (bestMatch && bestScore >= 70) {
+        newMapping[field.value] = bestMatch;
+        usedHeaders.add(bestMatch);
+      }
+    });
+
+    setColumnMapping(newMapping);
+    const matchedCount = Object.values(newMapping).filter(v => v && v !== '').length;
+    toast.success(`${matchedCount} champ(s) mappé(s) automatiquement`);
+  };
+
+  // Auto-map a single CSV header to a CRM field based on similarity
+  const handleAutoMapField = (fieldValue: string, fieldLabel: string) => {
+    if (csvHeaders.length === 0) {
+      toast.error('Aucune colonne CSV disponible');
+      return;
+    }
+
+    const fieldValueNormalized = normalizeString(fieldValue);
+    const fieldLabelNormalized = normalizeString(fieldLabel);
+
+    // Common variations and synonyms
+    const synonyms: { [key: string]: string[] } = {
+      'firstName': ['prenom', 'firstname', 'first_name', 'nom', 'name'],
+      'lastName': ['nom', 'lastname', 'last_name', 'name', 'surname'],
+      'phone': ['telephone', 'tel', 'phone', 'telephone1', 'tel1', 'mobile'],
+      'mobile': ['mobile', 'telephone2', 'tel2', 'cell', 'cellphone'],
+      'email': ['email', 'mail', 'e-mail', 'courriel'],
+      'birthDate': ['date_naissance', 'birthdate', 'date_naiss', 'naissance'],
+      'birthPlace': ['lieu_naissance', 'birthplace', 'lieu_naiss'],
+      'address': ['adresse', 'address', 'street', 'rue'],
+      'addressComplement': ['complement', 'complement_adresse', 'address_complement'],
+      'postalCode': ['code_postal', 'postalcode', 'zip', 'zipcode', 'cp'],
+      'city': ['ville', 'city', 'commune'],
+      'nationality': ['nationalite', 'nationality', 'pays'],
+      'campaign': ['campagne', 'campaign'],
+      'statusId': ['statut', 'status', 'etat', 'state'],
+      'sourceId': ['source', 'origine', 'origin'],
+      'teleoperatorId': ['teleoperateur', 'teleoperator', 'operateur', 'operator'],
+      'confirmateurId': ['confirmateur', 'confirmer', 'confirmer_id'],
+      'platformId': ['plateforme', 'platform', 'site'],
+      'montantEncaisse': ['montant_encaisse', 'montant', 'amount', 'encaissement'],
+      'bonus': ['bonus', 'prime'],
+      'paiement': ['paiement', 'payment', 'payement'],
+      'contrat': ['contrat', 'contract'],
+      'nomDeScene': ['nom_scene', 'nom_de_scene', 'scene_name', 'pseudo'],
+      'dateProTr': ['date_pro_tr', 'dateprotr', 'pro_tr'],
+      'potentiel': ['potentiel', 'potential'],
+      'produit': ['produit', 'product'],
+      'confirmateurEmail': ['confirmateur_email', 'mail_confirmateur', 'confirmateur_mail'],
+      'confirmateurTelephone': ['confirmateur_telephone', 'tel_confirmateur', 'confirmateur_tel'],
+      'oldContactId': ['ancien_id', 'old_id', 'id_ancien', 'old_contact_id'],
+      'createdAt': ['date_creation', 'created_at', 'date_crea', 'creation'],
+      'updatedAt': ['date_modification', 'updated_at', 'date_modif', 'modification'],
+      'assignedAt': ['date_attribution', 'assigned_at', 'date_assign', 'attribution'],
+    };
+
+    // Generic column names that should only match with very strong evidence
+    const genericColumns = ['id', 'code', 'num', 'number', 'ref', 'reference', 'key', 'pk', 'fk'];
+    
+    // Get currently mapped columns to avoid conflicts
+    const mappedColumns = Object.values(columnMapping).filter(col => col && col !== '');
+
+    let bestMatch: string | null = null;
+    let bestScore = 0;
+
+    // Check exact matches first
+    csvHeaders.forEach(header => {
+      // Skip if already mapped to another field
+      if (mappedColumns.includes(header) && columnMapping[fieldValue] !== header) {
+        return;
+      }
+
+      const headerNormalized = normalizeString(header);
+      const isGenericColumn = genericColumns.includes(headerNormalized);
+
+      // Exact match with field value
+      if (headerNormalized === fieldValueNormalized) {
+        bestMatch = header;
+        bestScore = 100;
+        return;
+      }
+
+      // Exact match with field label
+      if (headerNormalized === fieldLabelNormalized) {
+        if (bestScore < 90) {
+          bestMatch = header;
+          bestScore = 90;
+        }
+      }
+
+      // Check synonyms - only exact matches
+      const fieldSynonyms = synonyms[fieldValue] || [];
+      fieldSynonyms.forEach(synonym => {
+        const synonymNormalized = normalizeString(synonym);
+        if (headerNormalized === synonymNormalized) {
+          if (bestScore < 85) {
+            bestMatch = header;
+            bestScore = 85;
+          }
+        }
+      });
+
+      // Partial match - only if header contains the field (not the other way around)
+      // And require minimum length to avoid false positives
+      const minLengthForPartial = 4; // Minimum length for partial matching
+      
+      if (fieldValueNormalized.length >= minLengthForPartial && 
+          headerNormalized.includes(fieldValueNormalized) && 
+          !isGenericColumn) {
+        // Only match if the header is substantially similar (not just contains a short substring)
+        if (headerNormalized.length <= fieldValueNormalized.length * 1.5) {
+          if (bestScore < 70) {
+            bestMatch = header;
+            bestScore = 70;
+          }
+        }
+      }
+
+      if (fieldLabelNormalized.length >= minLengthForPartial && 
+          headerNormalized.includes(fieldLabelNormalized) && 
+          !isGenericColumn) {
+        // Only match if the header is substantially similar
+        if (headerNormalized.length <= fieldLabelNormalized.length * 1.5) {
+          if (bestScore < 60) {
+            bestMatch = header;
+            bestScore = 60;
+          }
+        }
+      }
+    });
+
+    // Set the best match if found and score is good enough (raised threshold to 70)
+    if (bestMatch && bestScore >= 70) {
+      setColumnMapping({
+        ...columnMapping,
+        [fieldValue]: bestMatch,
+      });
+      toast.success(`Champ "${fieldLabel}" mappé à "${bestMatch}"`);
+    } else {
+      toast.info(`Aucune correspondance trouvée pour "${fieldLabel}"`);
+    }
+  };
+
+  // Auto-map status values
+  const handleAutoMapStatuses = () => {
+    if (!columnMapping.statusId || csvData.length === 0) return;
+
+    const statusColumn = columnMapping.statusId;
+    const uniqueStatusValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[statusColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...statusMapping };
+    let matchedCount = 0;
+
+    uniqueStatusValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      availableStatuses.forEach(status => {
+        const statusNameNormalized = normalizeString(status.name);
+        const statusIdNormalized = normalizeString(status.id);
+
+        // Exact match
+        if (csvValueNormalized === statusNameNormalized || csvValueNormalized === statusIdNormalized) {
+          if (bestScore < 100) {
+            bestMatch = status;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (csvValueNormalized.includes(statusNameNormalized) || statusNameNormalized.includes(csvValueNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = status;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.id;
+        matchedCount++;
+      }
+    });
+
+    setStatusMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de statut mappée(s) automatiquement`);
+  };
+
+  // Auto-map platform values
+  const handleAutoMapPlatforms = () => {
+    if (!columnMapping.platformId || csvData.length === 0) return;
+
+    const platformColumn = columnMapping.platformId;
+    const uniquePlatformValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[platformColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...platformMapping };
+    let matchedCount = 0;
+
+    uniquePlatformValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      platforms.forEach(platform => {
+        const platformNameNormalized = normalizeString(platform.name);
+        const platformIdNormalized = normalizeString(platform.id);
+
+        // Exact match
+        if (csvValueNormalized === platformNameNormalized || csvValueNormalized === platformIdNormalized) {
+          if (bestScore < 100) {
+            bestMatch = platform;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (csvValueNormalized.includes(platformNameNormalized) || platformNameNormalized.includes(csvValueNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = platform;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.id;
+        matchedCount++;
+      }
+    });
+
+    setPlatformMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de plateforme mappée(s) automatiquement`);
+  };
+
+  // Auto-map confirmateur values
+  const handleAutoMapConfirmateurs = () => {
+    if (!columnMapping.confirmateurId || csvData.length === 0) return;
+
+    const confirmateurColumn = columnMapping.confirmateurId;
+    const uniqueConfirmateurValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[confirmateurColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...confirmateurMapping };
+    let matchedCount = 0;
+
+    uniqueConfirmateurValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      confirmateurs.forEach(confirmateur => {
+        const fullName = `${confirmateur.firstName || ''} ${confirmateur.lastName || ''}`.trim();
+        const displayName = fullName || confirmateur.username || confirmateur.email || '';
+        const displayNameNormalized = normalizeString(displayName);
+        const usernameNormalized = normalizeString(confirmateur.username || '');
+        const emailNormalized = normalizeString(confirmateur.email || '');
+        const idNormalized = normalizeString(confirmateur.id);
+
+        // Exact match
+        if (csvValueNormalized === displayNameNormalized || 
+            csvValueNormalized === usernameNormalized || 
+            csvValueNormalized === emailNormalized ||
+            csvValueNormalized === idNormalized) {
+          if (bestScore < 100) {
+            bestMatch = confirmateur;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (displayNameNormalized.includes(csvValueNormalized) || csvValueNormalized.includes(displayNameNormalized) ||
+                 usernameNormalized.includes(csvValueNormalized) || csvValueNormalized.includes(usernameNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = confirmateur;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.id;
+        matchedCount++;
+      }
+    });
+
+    setConfirmateurMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de confirmateur mappée(s) automatiquement`);
+  };
+
+  // Auto-map teleoperator values
+  const handleAutoMapTeleoperateurs = () => {
+    if (!columnMapping.teleoperatorId || csvData.length === 0) return;
+
+    const teleoperatorColumn = columnMapping.teleoperatorId;
+    const uniqueTeleoperatorValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[teleoperatorColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...teleoperatorMapping };
+    let matchedCount = 0;
+
+    uniqueTeleoperatorValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      teleoperateurs.forEach(teleoperator => {
+        const fullName = `${teleoperator.firstName || ''} ${teleoperator.lastName || ''}`.trim();
+        const displayName = fullName || teleoperator.username || teleoperator.email || '';
+        const displayNameNormalized = normalizeString(displayName);
+        const usernameNormalized = normalizeString(teleoperator.username || '');
+        const emailNormalized = normalizeString(teleoperator.email || '');
+        const idNormalized = normalizeString(teleoperator.id);
+
+        // Exact match
+        if (csvValueNormalized === displayNameNormalized || 
+            csvValueNormalized === usernameNormalized || 
+            csvValueNormalized === emailNormalized ||
+            csvValueNormalized === idNormalized) {
+          if (bestScore < 100) {
+            bestMatch = teleoperator;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (displayNameNormalized.includes(csvValueNormalized) || csvValueNormalized.includes(displayNameNormalized) ||
+                 usernameNormalized.includes(csvValueNormalized) || csvValueNormalized.includes(usernameNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = teleoperator;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.id;
+        matchedCount++;
+      }
+    });
+
+    setTeleoperatorMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de téléopérateur mappée(s) automatiquement`);
+  };
+
+  // Auto-map contrat values
+  const handleAutoMapContrats = () => {
+    if (!columnMapping.contrat || csvData.length === 0) return;
+
+    const contratColumn = columnMapping.contrat;
+    const uniqueContratValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[contratColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...contratMapping };
+    let matchedCount = 0;
+
+    uniqueContratValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      contratOptions.forEach(option => {
+        const optionValueNormalized = normalizeString(option.value);
+        const optionLabelNormalized = normalizeString(option.label);
+
+        // Exact match
+        if (csvValueNormalized === optionValueNormalized || csvValueNormalized === optionLabelNormalized) {
+          if (bestScore < 100) {
+            bestMatch = option;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (csvValueNormalized.includes(optionValueNormalized) || optionValueNormalized.includes(csvValueNormalized) ||
+                 csvValueNormalized.includes(optionLabelNormalized) || optionLabelNormalized.includes(csvValueNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = option;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.value;
+        matchedCount++;
+      }
+    });
+
+    setContratMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de contrat mappée(s) automatiquement`);
+  };
+
+  // Auto-map source values
+  const handleAutoMapSources = () => {
+    if (!columnMapping.sourceId || csvData.length === 0) return;
+
+    const sourceColumn = columnMapping.sourceId;
+    const uniqueSourceValues = Array.from(
+      new Set(
+        csvData
+          .map(row => row[sourceColumn])
+          .filter(val => val && val.toString().trim() !== '')
+          .map(val => val.toString().trim())
+      )
+    );
+
+    const newMapping = { ...sourceMapping };
+    let matchedCount = 0;
+
+    uniqueSourceValues.forEach(csvValue => {
+      if (newMapping[csvValue]) return; // Already mapped
+
+      const csvValueNormalized = normalizeString(csvValue);
+      let bestMatch: any = null;
+      let bestScore = 0;
+
+      sources.forEach(source => {
+        const sourceNameNormalized = normalizeString(source.name);
+        const sourceIdNormalized = normalizeString(source.id);
+
+        // Exact match
+        if (csvValueNormalized === sourceNameNormalized || csvValueNormalized === sourceIdNormalized) {
+          if (bestScore < 100) {
+            bestMatch = source;
+            bestScore = 100;
+          }
+        }
+        // Contains match
+        else if (csvValueNormalized.includes(sourceNameNormalized) || sourceNameNormalized.includes(csvValueNormalized)) {
+          if (bestScore < 70) {
+            bestMatch = source;
+            bestScore = 70;
+          }
+        }
+      });
+
+      if (bestMatch && bestScore >= 70) {
+        newMapping[csvValue] = bestMatch.id;
+        matchedCount++;
+      }
+    });
+
+    setSourceMapping(newMapping);
+    toast.success(`${matchedCount} valeur(s) de source mappée(s) automatiquement`);
+  };
+
+  // Create a new source from CSV value
+  const handleCreateSource = async (csvValue: string) => {
+    if (!csvValue || !csvValue.trim()) {
+      toast.error('Le nom de la source ne peut pas être vide');
+      return;
+    }
+
+    const sourceName = csvValue.trim();
+
+    // Check if source already exists (case-insensitive)
+    const existingSource = sources.find(s => 
+      normalizeString(s.name) === normalizeString(sourceName)
+    );
+
+    if (existingSource) {
+      // Source exists, just map it
+      setSourceMapping({
+        ...sourceMapping,
+        [csvValue]: existingSource.id,
+      });
+      toast.success(`Source "${sourceName}" déjà existante, mappée automatiquement`);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      // Create the source
+      const response = await apiCall('/api/sources/create/', {
+        method: 'POST',
+        body: JSON.stringify({ name: sourceName }),
+      });
+
+      // Reload sources to get the updated list
+      await reloadSources();
+
+      // Map the CSV value to the newly created source
+      setSourceMapping({
+        ...sourceMapping,
+        [csvValue]: response.id,
+      });
+
+      toast.success(`Source "${sourceName}" créée et mappée avec succès`);
+    } catch (error: any) {
+      console.error('Error creating source:', error);
+      const errorMessage = error?.error || error?.message || 'Erreur lors de la création de la source';
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -436,91 +1102,14 @@ export function MigrationPage() {
         }
       });
 
-      // Parse event data from CSV columns if event date column is mapped
-      let eventData: MigratedRow['eventData'] | undefined = undefined;
-      if (eventDateColumn && row[eventDateColumn]) {
-        const dateValue = row[eventDateColumn].toString().trim();
-        if (dateValue) {
-          try {
-            // Parse date in dd/mm/yyyy format
-            let parsedDate: Date | null = null;
-            
-            // Try to parse dd/mm/yyyy format first
-            const ddmmyyyyMatch = dateValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (ddmmyyyyMatch) {
-              const day = parseInt(ddmmyyyyMatch[1], 10);
-              const month = parseInt(ddmmyyyyMatch[2], 10);
-              const year = parseInt(ddmmyyyyMatch[3], 10);
-              parsedDate = new Date(year, month - 1, day);
-            } else {
-              // Fallback to standard Date parsing for other formats
-              parsedDate = new Date(dateValue);
-            }
-            
-            if (parsedDate && !isNaN(parsedDate.getTime())) {
-              // Extract date components
-              const year = parsedDate.getFullYear();
-              const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
-              const day = String(parsedDate.getDate()).padStart(2, '0');
-              const dateStr = `${year}-${month}-${day}`;
-              
-              // Get hour and minute from columns or use defaults
-              let hour = defaultEventHour;
-              let minute = defaultEventMinute;
-              
-              // Try to extract hour from the date value if it contains time
-              const timeMatch = dateValue.match(/(\d{1,2}):(\d{2})/);
-              if (timeMatch) {
-                hour = timeMatch[1].padStart(2, '0');
-                minute = timeMatch[2].padStart(2, '0');
-              } else {
-                // Check if parsed date has time component
-                const hourFromDate = parsedDate.getHours();
-                const minuteFromDate = parsedDate.getMinutes();
-                if (hourFromDate !== 0 || minuteFromDate !== 0) {
-                  hour = String(hourFromDate).padStart(2, '0');
-                  minute = String(minuteFromDate).padStart(2, '0');
-                }
-              }
-              
-              // Override with hour column if mapped
-              if (eventHourColumn && row[eventHourColumn]) {
-                const hourValue = row[eventHourColumn].toString().trim();
-                if (hourValue) {
-                  const hourMatch = hourValue.match(/\d{1,2}/);
-                  if (hourMatch) {
-                    const h = parseInt(hourMatch[0]);
-                    if (h >= 0 && h <= 23) {
-                      hour = String(h).padStart(2, '0');
-                    }
-                  }
-                }
-              }
-              
-              // Override with minute column if mapped
-              if (eventMinuteColumn && row[eventMinuteColumn]) {
-                const minuteValue = row[eventMinuteColumn].toString().trim();
-                if (minuteValue) {
-                  const minuteMatch = minuteValue.match(/\d{1,2}/);
-                  if (minuteMatch) {
-                    const m = parseInt(minuteMatch[0]);
-                    if (m >= 0 && m <= 59) {
-                      minute = String(m).padStart(2, '0');
-                    }
-                  }
-                }
-              }
-              
-              eventData = {
-                date: dateStr,
-                hour: hour,
-                minute: minute,
-                teleoperatorId: defaultTeleoperatorId || ''
-              };
-            }
-          } catch (error) {
-            console.error('Error parsing event date:', error);
-          }
+      // Apply default statusId if statusId is missing
+      // Use defaultStatusId if set, otherwise use first available status
+      if (!mappedData.statusId) {
+        if (defaultStatusId) {
+          mappedData.statusId = defaultStatusId;
+        } else if (availableStatuses.length > 0) {
+          // Auto-set to first available status if no default is set
+          mappedData.statusId = availableStatuses[0].id;
         }
       }
 
@@ -528,15 +1117,14 @@ export function MigrationPage() {
         id: `row-${index}`,
         csvData: row,
         mappedData,
-        eventData,
         isEditing: false,
         isSaving: false,
       };
     });
 
     setMigratedRows(rows);
-    setStep('migration');
-    toast.success(`${rows.length} lignes prêtes pour migration`);
+    // Automatically start processing instead of showing migration step
+    handleBulkSaveFromMapping(rows);
   };
 
   const handleEditRow = (row: MigratedRow) => {
@@ -586,11 +1174,7 @@ export function MigrationPage() {
   };
 
   const handleSaveRow = async (row: MigratedRow) => {
-    // Validate required fields - only lastName is required
-    if (!row.mappedData.lastName || !row.mappedData.lastName.trim()) {
-      toast.error('Le nom est requis');
-      return;
-    }
+    // Validate required fields - only statusId is required
     if (!row.mappedData.statusId) {
       toast.error('Le statut est requis');
       return;
@@ -658,19 +1242,6 @@ export function MigrationPage() {
         throw new Error('Erreur lors de la création du contact');
       }
 
-      // Create event if event data exists
-      if (row.eventData?.date && row.eventData?.hour && row.eventData?.minute) {
-        const timeString = `${row.eventData.hour.padStart(2, '0')}:${row.eventData.minute.padStart(2, '0')}`;
-        await apiCall('/api/events/create/', {
-          method: 'POST',
-          body: JSON.stringify({
-            datetime: `${row.eventData.date}T${timeString}`,
-            contactId: contactId,
-            userId: row.eventData.teleoperatorId || currentUser?.id || null,
-            comment: ''
-          }),
-        });
-      }
 
       setMigratedRows(prev => prev.map(r => 
         r.id === row.id ? { 
@@ -697,6 +1268,251 @@ export function MigrationPage() {
     }
   };
 
+  // Handle bulk save from mapping step (automatic processing)
+  const handleBulkSaveFromMapping = async (rows: MigratedRow[]) => {
+    setStep('processing');
+    setIsLoading(true);
+    setFailedRows([]);
+
+    // Apply defaultStatusId to rows that don't have a statusId
+    // Use defaultStatusId if set, otherwise use first available status
+    const defaultStatusToUse = defaultStatusId || (availableStatuses.length > 0 ? availableStatuses[0].id : '');
+    const rowsWithDefaults = rows.map(r => {
+      if (!r.mappedData.statusId && defaultStatusToUse) {
+        return {
+          ...r,
+          mappedData: {
+            ...r.mappedData,
+            statusId: defaultStatusToUse
+          }
+        };
+      }
+      return r;
+    });
+
+    // Filter rows - only statusId is required (lastName is optional)
+    const rowsToSave = rowsWithDefaults.filter(r => {
+      // Validate required fields - only statusId is required
+      if (!r.mappedData.statusId) {
+        return false;
+      }
+      return true;
+    });
+
+    // Set progress with the actual number of rows to process
+    setProcessingProgress({ current: 0, total: rowsToSave.length });
+
+    if (rowsToSave.length === 0) {
+      toast.error('Aucune ligne valide à migrer');
+      setIsLoading(false);
+      setStep('mapping');
+      return;
+    }
+
+    try {
+      // Process in batches to avoid timeouts (max 500 contacts per batch)
+      const BATCH_SIZE = 500;
+      const batches: MigratedRow[][] = [];
+      
+      for (let i = 0; i < rowsToSave.length; i += BATCH_SIZE) {
+        batches.push(rowsToSave.slice(i, i + BATCH_SIZE));
+      }
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      const contactIdMap = new Map<string, string>();
+      const failedRowsList: MigratedRow[] = [];
+      const failureReasons: { [reason: string]: number } = {};
+
+      const allResults: Array<{ row: MigratedRow; result: any; contactData: any }> = [];
+
+      // Process each batch
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batch = batches[batchIdx];
+        setProcessingProgress({ 
+          current: batchIdx * BATCH_SIZE, 
+          total: rowsToSave.length 
+        });
+
+        // Prepare contacts for bulk creation
+        const contactsPayload = batch.map((row) => {
+          const contactPayload: any = {
+            firstName: row.mappedData.firstName ? row.mappedData.firstName.trim() : '',
+            lastName: row.mappedData.lastName ? row.mappedData.lastName.trim() : '',
+            email: row.mappedData.email || '',
+            phone: row.mappedData.phone ? removePhoneSpaces(String(row.mappedData.phone)) : '',
+            mobile: row.mappedData.mobile && row.mappedData.mobile.trim() ? removePhoneSpaces(String(row.mappedData.mobile)) : removePhoneSpaces(String(row.mappedData.phone || '')),
+            civility: row.mappedData.civility || '',
+            birthDate: row.mappedData.birthDate || '',
+            birthPlace: row.mappedData.birthPlace || '',
+            address: row.mappedData.address || '',
+            addressComplement: row.mappedData.addressComplement || '',
+            postalCode: row.mappedData.postalCode || '',
+            city: row.mappedData.city || '',
+            nationality: row.mappedData.nationality || '',
+            campaign: row.mappedData.campaign || '',
+            statusId: row.mappedData.statusId || null,
+            sourceId: row.mappedData.sourceId || null,
+            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? row.mappedData.teleoperatorId.toString().trim() : null,
+            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? row.mappedData.confirmateurId.toString().trim() : null,
+            platformId: row.mappedData.platformId || null,
+            montantEncaisse: row.mappedData.montantEncaisse || '',
+            bonus: row.mappedData.bonus || '',
+            paiement: row.mappedData.paiement || '',
+            contrat: row.mappedData.contrat || '',
+            nomDeScene: row.mappedData.nomDeScene || '',
+            dateProTr: row.mappedData.dateProTr || '',
+            potentiel: row.mappedData.potentiel || '',
+            produit: row.mappedData.produit || '',
+            confirmateurEmail: row.mappedData.confirmateurEmail || '',
+            confirmateurTelephone: row.mappedData.confirmateurTelephone || '',
+            oldContactId: row.mappedData.oldContactId && row.mappedData.oldContactId.trim() ? row.mappedData.oldContactId.trim() : null,
+          };
+
+          // Add date fields if provided
+          if (row.mappedData.createdAt) {
+            contactPayload.createdAt = row.mappedData.createdAt;
+          }
+          if (row.mappedData.updatedAt) {
+            contactPayload.updatedAt = row.mappedData.updatedAt;
+          }
+          if (row.mappedData.assignedAt) {
+            contactPayload.assignedAt = row.mappedData.assignedAt;
+          }
+
+          return { payload: contactPayload, row };
+        }).filter(item => item !== null) as Array<{ payload: any; row: MigratedRow; eventData?: MigratedRow['eventData'] }>;
+
+        if (contactsPayload.length === 0) continue;
+
+        // Bulk create contacts for this batch
+        let bulkResponse;
+        try {
+          bulkResponse = await apiCall('/api/contacts/bulk-create/', {
+            method: 'POST',
+            body: JSON.stringify(contactsPayload.map(item => item.payload)),
+          });
+        } catch (apiError: any) {
+          // Handle database connection errors or API errors
+          const errorMessage = apiError?.error || apiError?.message || 'Erreur de connexion à la base de données';
+          if (errorMessage.includes('timeout') || errorMessage.includes('connection') || apiError?.status === 503) {
+            // Database connection error - mark all contacts in this batch as failed
+            const reason = 'Erreur de connexion';
+            failureReasons[reason] = (failureReasons[reason] || 0) + contactsPayload.length;
+            
+            for (const contactData of contactsPayload) {
+              failedRowsList.push({
+                ...contactData.row,
+                errors: [`Erreur de connexion: ${errorMessage}`]
+              });
+            }
+            totalFailed += contactsPayload.length;
+            toast.error('Erreur de connexion à la base de données. Veuillez réessayer dans quelques instants.');
+            continue; // Skip to next batch
+          }
+          // Re-throw other errors to be caught by outer try-catch
+          throw apiError;
+        }
+
+        const results = bulkResponse.results || [];
+        totalSuccess += bulkResponse.success || 0;
+        totalFailed += bulkResponse.failed || 0;
+        
+        // Update progress
+        setProcessingProgress({ 
+          current: Math.min((batchIdx + 1) * BATCH_SIZE, rowsToSave.length), 
+          total: rowsToSave.length 
+        });
+        
+        // Process results
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          const contactData = contactsPayload[i];
+          
+          allResults.push({ row: contactData.row, result, contactData });
+          
+          if (result.success && result.contactId) {
+            contactIdMap.set(contactData.row.id, result.contactId);
+          } else {
+            // Track failed rows and categorize errors
+            const errorMessage = result.error || 'Erreur lors de la création';
+            let reason = 'Autre';
+            
+            // Categorize error reasons - check CSV duplicates first, then DB duplicates
+            const errorLower = errorMessage.toLowerCase();
+            if (errorLower.includes('dupliqué dans le csv') || errorLower.includes('duplicate') && errorLower.includes('csv')) {
+              reason = 'Dupliqué dans le CSV';
+            } else if (errorLower.includes('existe déjà dans la base de données') || (errorLower.includes('existe déjà') && errorLower.includes('base de données')) || (errorLower.includes('already exists') && errorLower.includes('database'))) {
+              reason = 'Déjà dans la base de données';
+            } else if (errorLower.includes('existe déjà') || errorLower.includes('déjà') || errorLower.includes('already exists')) {
+              // Fallback for older error messages
+              reason = 'Déjà dans la base de données';
+            } else if (errorLower.includes('dupliqué') || errorLower.includes('doublon')) {
+              // Fallback for duplicate messages
+              reason = 'Dupliqué dans le CSV';
+            } else if (errorLower.includes('connexion') || errorLower.includes('connection') || errorLower.includes('timeout')) {
+              reason = 'Erreur de connexion';
+            }
+            
+            failureReasons[reason] = (failureReasons[reason] || 0) + 1;
+            
+            failedRowsList.push({
+              ...contactData.row,
+              errors: [errorMessage]
+            });
+          }
+        }
+      }
+
+      // Create events asynchronously (don't block UI update)
+      const eventPromises = allResults
+        .filter(item => item.result.success && item.result.contactId && item.contactData.eventData?.date)
+        .map(async (item) => {
+          try {
+            const eventData = item.contactData.eventData;
+            const timeString = `${eventData.hour.padStart(2, '0')}:${eventData.minute.padStart(2, '0')}`;
+            await apiCall('/api/events/create/', {
+              method: 'POST',
+              body: JSON.stringify({
+                datetime: `${eventData.date}T${timeString}`,
+                contactId: item.result.contactId,
+                userId: eventData.teleoperatorId || currentUser?.id || null,
+                comment: ''
+              }),
+            });
+          } catch (error) {
+            console.error('Error creating event:', error);
+          }
+        });
+      
+      // Don't wait for events, update UI immediately
+      Promise.all(eventPromises).catch(err => console.error('Error creating events:', err));
+
+      // Set failed rows and migration results
+      setFailedRows(failedRowsList);
+      setMigrationResults({ success: totalSuccess, failed: totalFailed, failureReasons });
+      setProcessingProgress({ current: rowsToSave.length, total: rowsToSave.length });
+      
+      if (totalFailed === 0) {
+        toast.success(`${totalSuccess} contact(s) créé(s) avec succès`);
+        // If no failures, show success message and return to mapping
+        setTimeout(() => {
+          setStep('mapping');
+        }, 1500);
+      } else {
+        toast.warning(`${totalSuccess} contact(s) créé(s), ${totalFailed} erreur(s)`);
+        setStep('results');
+      }
+    } catch (error: any) {
+      console.error('Error bulk saving contacts:', error);
+      const errorMessage = error?.error || error?.message || 'Erreur lors de la sauvegarde en masse';
+      toast.error(errorMessage);
+      setStep('mapping');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleBulkSave = async () => {
     const rowsToSave = migratedRows.filter(r => !r.contactId && !r.isSaving);
     
@@ -706,20 +1522,202 @@ export function MigrationPage() {
     }
 
     setIsLoading(true);
-    let successCount = 0;
-    let errorCount = 0;
+    
+    // Mark all rows as saving
+    setMigratedRows(prev => prev.map(r => 
+      rowsToSave.some(rs => rs.id === r.id) ? { ...r, isSaving: true, errors: [] } : r
+    ));
 
-    for (const row of rowsToSave) {
-      try {
-        await handleSaveRow(row);
-        successCount++;
-      } catch (error) {
-        errorCount++;
+    try {
+      // Process in batches to avoid timeouts (max 500 contacts per batch)
+      const BATCH_SIZE = 500;
+      const batches: MigratedRow[][] = [];
+      
+      for (let i = 0; i < rowsToSave.length; i += BATCH_SIZE) {
+        batches.push(rowsToSave.slice(i, i + BATCH_SIZE));
       }
-    }
 
-    setIsLoading(false);
-    toast.success(`${successCount} contact(s) créé(s), ${errorCount} erreur(s)`);
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      const contactIdMap = new Map<string, string>();
+
+      const allResults: Array<{ row: MigratedRow; result: any; contactData: any }> = [];
+
+      // Process each batch
+      for (const batch of batches) {
+        // Prepare contacts for bulk creation
+        const contactsPayload = batch.map((row) => {
+          // Validate required fields - only statusId is required
+          if (!row.mappedData.statusId) {
+            return null;
+          }
+
+          const contactPayload: any = {
+            firstName: row.mappedData.firstName ? row.mappedData.firstName.trim() : '',
+            lastName: row.mappedData.lastName ? row.mappedData.lastName.trim() : '',
+            email: row.mappedData.email || '',
+            phone: row.mappedData.phone ? removePhoneSpaces(String(row.mappedData.phone)) : '',
+            mobile: row.mappedData.mobile && row.mappedData.mobile.trim() ? removePhoneSpaces(String(row.mappedData.mobile)) : removePhoneSpaces(String(row.mappedData.phone || '')),
+            civility: row.mappedData.civility || '',
+            birthDate: row.mappedData.birthDate || '',
+            birthPlace: row.mappedData.birthPlace || '',
+            address: row.mappedData.address || '',
+            addressComplement: row.mappedData.addressComplement || '',
+            postalCode: row.mappedData.postalCode || '',
+            city: row.mappedData.city || '',
+            nationality: row.mappedData.nationality || '',
+            campaign: row.mappedData.campaign || '',
+            statusId: row.mappedData.statusId || null,
+            sourceId: row.mappedData.sourceId || null,
+            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? row.mappedData.teleoperatorId.toString().trim() : null,
+            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? row.mappedData.confirmateurId.toString().trim() : null,
+            platformId: row.mappedData.platformId || null,
+            montantEncaisse: row.mappedData.montantEncaisse || '',
+            bonus: row.mappedData.bonus || '',
+            paiement: row.mappedData.paiement || '',
+            contrat: row.mappedData.contrat || '',
+            nomDeScene: row.mappedData.nomDeScene || '',
+            dateProTr: row.mappedData.dateProTr || '',
+            potentiel: row.mappedData.potentiel || '',
+            produit: row.mappedData.produit || '',
+            confirmateurEmail: row.mappedData.confirmateurEmail || '',
+            confirmateurTelephone: row.mappedData.confirmateurTelephone || '',
+            oldContactId: row.mappedData.oldContactId && row.mappedData.oldContactId.trim() ? row.mappedData.oldContactId.trim() : null,
+          };
+
+          // Add date fields if provided
+          if (row.mappedData.createdAt) {
+            contactPayload.createdAt = row.mappedData.createdAt;
+          }
+          if (row.mappedData.updatedAt) {
+            contactPayload.updatedAt = row.mappedData.updatedAt;
+          }
+          if (row.mappedData.assignedAt) {
+            contactPayload.assignedAt = row.mappedData.assignedAt;
+          }
+
+          return { payload: contactPayload, row };
+        }).filter(item => item !== null) as Array<{ payload: any; row: MigratedRow; eventData?: MigratedRow['eventData'] }>;
+
+        if (contactsPayload.length === 0) continue;
+
+        // Bulk create contacts for this batch
+        let bulkResponse;
+        try {
+          bulkResponse = await apiCall('/api/contacts/bulk-create/', {
+            method: 'POST',
+            body: JSON.stringify(contactsPayload.map(item => item.payload)),
+          });
+        } catch (apiError: any) {
+          // Handle database connection errors or API errors
+          const errorMessage = apiError?.error || apiError?.message || 'Erreur de connexion à la base de données';
+          if (errorMessage.includes('timeout') || errorMessage.includes('connection') || apiError?.status === 503) {
+            // Database connection error - mark all contacts in this batch as failed
+            totalFailed += contactsPayload.length;
+            toast.error('Erreur de connexion à la base de données. Veuillez réessayer dans quelques instants.');
+            // Update migratedRows to mark these as failed
+            setMigratedRows(prev => prev.map(r => {
+              const contactData = contactsPayload.find(cp => cp.row.id === r.id);
+              if (contactData) {
+                return { ...r, isSaving: false, errors: [`Erreur de connexion: ${errorMessage}`] };
+              }
+              return r;
+            }));
+            continue; // Skip to next batch
+          }
+          // Re-throw other errors to be caught by outer try-catch
+          throw apiError;
+        }
+
+        const results = bulkResponse.results || [];
+        totalSuccess += bulkResponse.success || 0;
+        totalFailed += bulkResponse.failed || 0;
+        
+        // Process results
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          const contactData = contactsPayload[i];
+          
+          allResults.push({ row: contactData.row, result, contactData });
+          
+          if (result.success && result.contactId) {
+            contactIdMap.set(contactData.row.id, result.contactId);
+          }
+        }
+      }
+
+      // Create events asynchronously (don't block UI update)
+      const eventPromises = allResults
+        .filter(item => item.result.success && item.result.contactId && item.contactData.eventData?.date)
+        .map(async (item) => {
+          try {
+            const eventData = item.contactData.eventData;
+            const timeString = `${eventData.hour.padStart(2, '0')}:${eventData.minute.padStart(2, '0')}`;
+            await apiCall('/api/events/create/', {
+              method: 'POST',
+              body: JSON.stringify({
+                datetime: `${eventData.date}T${timeString}`,
+                contactId: item.result.contactId,
+                userId: eventData.teleoperatorId || currentUser?.id || null,
+                comment: ''
+              }),
+            });
+          } catch (error) {
+            console.error('Error creating event:', error);
+          }
+        });
+      
+      // Don't wait for events, update UI immediately
+      Promise.all(eventPromises).catch(err => console.error('Error creating events:', err));
+
+      // Update migrated rows with results
+      setMigratedRows(prev => prev.map(r => {
+        const contactId = contactIdMap.get(r.id);
+        if (contactId) {
+          return {
+            ...r,
+            isSaving: false,
+            isEditing: false,
+            contactId,
+            errors: []
+          };
+        }
+        
+        // Check if this row had an error
+        const resultItem = allResults.find(item => item.row.id === r.id);
+        if (resultItem && !resultItem.result.success) {
+          return {
+            ...r,
+            isSaving: false,
+            errors: [resultItem.result.error || 'Erreur lors de la création']
+          };
+        }
+        
+        return r;
+      }));
+
+      if (totalFailed === 0) {
+        toast.success(`${totalSuccess} contact(s) créé(s) avec succès`);
+      } else {
+        toast.warning(`${totalSuccess} contact(s) créé(s), ${totalFailed} erreur(s)`);
+      }
+    } catch (error: any) {
+      console.error('Error bulk saving contacts:', error);
+      const errorMessage = error?.error || error?.message || 'Erreur lors de la sauvegarde en masse';
+      
+      // Mark all rows as failed
+      setMigratedRows(prev => prev.map(r => 
+        rowsToSave.some(rs => rs.id === r.id) ? { 
+          ...r, 
+          isSaving: false,
+          errors: [errorMessage]
+        } : r
+      ));
+      
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleReset = () => {
@@ -735,14 +1733,12 @@ export function MigrationPage() {
     setContratMapping({});
     setSourceMapping({});
     setMigratedRows([]);
+    setFailedRows([]);
     setError(null);
     setIsLoading(false);
+    setProcessingProgress({ current: 0, total: 0 });
+    setMigrationResults({ success: 0, failed: 0, failureReasons: {} });
     setExcludeFirstRow(true); // Reset to default
-    setEventDateColumn('');
-    setEventHourColumn('');
-    setEventMinuteColumn('');
-    setDefaultEventHour('09');
-    setDefaultEventMinute('00');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -913,10 +1909,24 @@ export function MigrationPage() {
 
               <div className="space-y-4">
                 <div>
-                  <h3 className="font-semibold text-lg">Mapper vos colonnes CSV aux champs CRM</h3>
-                  <p className="text-sm text-slate-600 mt-1">
-                    Les champs marqués d'un <span className="text-red-600 font-semibold">*</span> sont obligatoires
-                  </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <h3 className="font-semibold text-lg">Mapper vos colonnes CSV aux champs CRM</h3>
+                      <p className="text-sm text-slate-600 mt-1">
+                        Les champs marqués d'un <span className="text-red-600 font-semibold">*</span> sont obligatoires
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAutoMapAllFields}
+                      className="flex items-center gap-2"
+                    >
+                      <Zap className="w-4 h-4" />
+                      Auto-mapper
+                    </Button>
+                  </div>
                 </div>
                 <div className="max-h-96 overflow-y-auto border rounded p-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -935,7 +1945,7 @@ export function MigrationPage() {
                       const isMapped = !!columnMapping[field.value];
                       
                       return (
-                        <div key={field.value} className="flex items-center gap-3">
+                        <div key={field.value} className="flex items-center gap-2">
                           <Label className={`w-40 text-sm font-medium flex-shrink-0 ${isRequired && !isMapped ? 'text-red-600' : ''}`}>
                             {field.label}
                             {isRequired && <span className="text-red-600 ml-1">*</span>}
@@ -972,7 +1982,19 @@ export function MigrationPage() {
               {columnMapping.statusId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de statut</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de statut</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapStatuses}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de statut de votre CSV aux statuts de la base de données
                     </p>
@@ -1054,7 +2076,19 @@ export function MigrationPage() {
               {columnMapping.platformId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de plateforme</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de plateforme</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapPlatforms}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de plateforme de votre CSV aux plateformes de la base de données
                     </p>
@@ -1123,7 +2157,19 @@ export function MigrationPage() {
               {columnMapping.confirmateurId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de confirmateur</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de confirmateur</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapConfirmateurs}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de confirmateur de votre CSV aux confirmateurs de la base de données
                     </p>
@@ -1195,7 +2241,19 @@ export function MigrationPage() {
               {columnMapping.teleoperatorId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de téléopérateur</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de téléopérateur</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapTeleoperateurs}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de téléopérateur de votre CSV aux téléopérateurs de la base de données
                     </p>
@@ -1268,7 +2326,19 @@ export function MigrationPage() {
               {columnMapping.contrat && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de contrat</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de contrat</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapContrats}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de contrat de votre CSV aux options de contrat disponibles
                     </p>
@@ -1337,7 +2407,19 @@ export function MigrationPage() {
               {columnMapping.sourceId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les valeurs de source</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les valeurs de source</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAutoMapSources}
+                        className="flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4" />
+                        Auto-mapper
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs de source de votre CSV aux sources de la base de données
                     </p>
@@ -1366,34 +2448,54 @@ export function MigrationPage() {
                       return (
                         <div className="border rounded p-4 bg-slate-50">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {uniqueSourceValues.map((csvValue) => (
-                              <div key={csvValue} className="flex items-center gap-3">
-                                <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
-                                  {csvValue}
-                                </Label>
-                                <Select
-                                  value={sourceMapping[csvValue] || '__none__'}
-                                  onValueChange={(value) => {
-                                    setSourceMapping({
-                                      ...sourceMapping,
-                                      [csvValue]: value === '__none__' ? '' : value,
-                                    });
-                                  }}
-                                >
-                                  <SelectTrigger className="flex-1">
-                                    <SelectValue placeholder="Sélectionner une source" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="__none__">-- Non mappé --</SelectItem>
-                                    {sources.map((source) => (
-                                      <SelectItem key={source.id} value={source.id}>
-                                        {source.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ))}
+                            {uniqueSourceValues.map((csvValue) => {
+                              const isMapped = !!sourceMapping[csvValue];
+                              return (
+                                <div key={csvValue} className="flex items-center gap-2">
+                                  <Label className="w-32 text-sm font-medium flex-shrink-0 truncate" title={csvValue}>
+                                    {csvValue}
+                                  </Label>
+                                  <Select
+                                    value={sourceMapping[csvValue] || '__none__'}
+                                    onValueChange={(value) => {
+                                      setSourceMapping({
+                                        ...sourceMapping,
+                                        [csvValue]: value === '__none__' ? '' : value,
+                                      });
+                                    }}
+                                  >
+                                    <SelectTrigger className="flex-1">
+                                      <SelectValue placeholder="Sélectionner une source" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">-- Non mappé --</SelectItem>
+                                      {sources.map((source) => (
+                                        <SelectItem key={source.id} value={source.id}>
+                                          {source.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {!isMapped && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      onClick={() => handleCreateSource(csvValue)}
+                                      disabled={isLoading}
+                                      className="flex-shrink-0 h-8 w-8"
+                                      title={`Créer la source "${csvValue}"`}
+                                    >
+                                      {isLoading ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Plus className="w-4 h-4" />
+                                      )}
+                                    </Button>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -1402,144 +2504,16 @@ export function MigrationPage() {
                 </div>
               )}
 
-              {/* Event Date Mapping Section */}
-              <div className="mt-6 pt-4 border-t">
-                <h3 className="font-semibold text-lg mb-2">Configuration des événements</h3>
-                <p className="text-sm text-slate-600 mb-4">
-                  Configurez la création automatique d'événements basée sur une colonne de date du CSV
-                  <br />
-                  <span className="text-xs text-slate-500">Format de date attendu: dd/mm/yyyy (ex: 25/12/2024)</span>
-                </p>
-                <div className="space-y-4 bg-slate-50 p-4 rounded">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">Colonne de date pour l'événement</Label>
-                      <Select
-                        value={eventDateColumn || '__none__'}
-                        onValueChange={(value) => {
-                          setEventDateColumn(value === '__none__' ? '' : value);
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Sélectionner une colonne" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">-- Aucune --</SelectItem>
-                          {csvHeaders
-                            .filter(header => 
-                              !eventHourColumn || eventHourColumn !== header || eventDateColumn === header
-                            )
-                            .filter(header => 
-                              !eventMinuteColumn || eventMinuteColumn !== header || eventDateColumn === header
-                            )
-                            .map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">Colonne d'heure (optionnel)</Label>
-                      <Select
-                        value={eventHourColumn || '__none__'}
-                        onValueChange={(value) => {
-                          setEventHourColumn(value === '__none__' ? '' : value);
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Sélectionner une colonne" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">-- Aucune --</SelectItem>
-                          {csvHeaders
-                            .filter(header => 
-                              !eventDateColumn || eventDateColumn !== header || eventHourColumn === header
-                            )
-                            .filter(header => 
-                              !eventMinuteColumn || eventMinuteColumn !== header || eventHourColumn === header
-                            )
-                            .map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">Colonne de minutes (optionnel)</Label>
-                      <Select
-                        value={eventMinuteColumn || '__none__'}
-                        onValueChange={(value) => {
-                          setEventMinuteColumn(value === '__none__' ? '' : value);
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Sélectionner une colonne" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">-- Aucune --</SelectItem>
-                          {csvHeaders
-                            .filter(header => 
-                              !eventDateColumn || eventDateColumn !== header || eventMinuteColumn === header
-                            )
-                            .filter(header => 
-                              !eventHourColumn || eventHourColumn !== header || eventMinuteColumn === header
-                            )
-                            .map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">Heure par défaut</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="23"
-                        value={defaultEventHour}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 23)) {
-                            setDefaultEventHour(val || '00');
-                          }
-                        }}
-                        placeholder="09"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Utilisée si aucune colonne d'heure n'est mappée</p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium mb-2 block">Minutes par défaut</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="59"
-                        value={defaultEventMinute}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 59)) {
-                            setDefaultEventMinute(val || '00');
-                          }
-                        }}
-                        placeholder="00"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Utilisées si aucune colonne de minutes n'est mappée</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
 
-              {/* CSV Preview Table - Show all contacts */}
+              {/* CSV Preview Table - Show up to 500 contacts */}
               {csvData.length > 0 && (
                 <div className="mt-6 pt-4 border-t">
-                  <h4 className="font-medium mb-2">Aperçu de toutes les données CSV</h4>
+                  <h4 className="font-medium mb-2">Aperçu des données CSV</h4>
                   <p className="text-sm text-slate-600 mb-3">
-                    Tous les contacts du fichier CSV ({csvData.length} ligne(s))
+                    {csvData.length > 500 
+                      ? `Affichage des 500 premiers contacts sur ${csvData.length} ligne(s) au total`
+                      : `Tous les contacts du fichier CSV (${csvData.length} ligne(s))`
+                    }
                   </p>
                   <div className="border rounded overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm">
@@ -1554,7 +2528,7 @@ export function MigrationPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {csvData.map((row, idx) => (
+                        {csvData.slice(0, 500).map((row, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
                             <td className="px-3 py-2 border-b bg-white sticky left-0 z-10 font-medium">{idx + 1}</td>
                             {csvHeaders.map((header) => (
@@ -1578,9 +2552,9 @@ export function MigrationPage() {
                 </Button>
                 <Button 
                   onClick={handleStartMigration} 
-                  disabled={!columnMapping.firstName || !columnMapping.lastName || !columnMapping.phone || !columnMapping.statusId}
+                  disabled={!columnMapping.statusId}
                 >
-                  Continuer vers la migration
+                  Démarrer la migration
                 </Button>
               </div>
             </CardContent>
@@ -1588,99 +2562,75 @@ export function MigrationPage() {
         </div>
       )}
 
-      {step === 'migration' && (
+      {step === 'processing' && (
+        <Card>
+          <CardContent className="pt-12 pb-12">
+            <div className="flex flex-col items-center justify-center">
+              <LoadingIndicator />
+              <p className="mt-4 text-lg font-medium text-slate-700">
+                Migration en cours...
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                {processingProgress.total > 0 
+                  ? `Traitement de ${processingProgress.current} sur ${processingProgress.total} contacts`
+                  : 'Préparation des données...'
+                }
+              </p>
+              {processingProgress.total > 0 && (
+                <div className="mt-4 w-full max-w-md">
+                  <div className="w-full bg-slate-200 rounded-full h-2.5">
+                    <div 
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                      style={{ 
+                        width: `${Math.min(100, (processingProgress.current / processingProgress.total) * 100)}%` 
+                      }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {step === 'results' && (
         <div className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Étape 3 : Migration des données</CardTitle>
+                <CardTitle>Résultats de la migration</CardTitle>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={handleReset}>
                     Nouveau fichier
                   </Button>
-                  <Button onClick={handleBulkSave} disabled={isLoading || migratedRows.filter(r => !r.contactId).length === 0}>
-                    <Save className="w-4 h-4 mr-2" />
-                    Sauvegarder tout ({migratedRows.filter(r => !r.contactId).length})
+                  <Button variant="outline" onClick={() => setStep('mapping')}>
+                    Retour au mapping
                   </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="bg-blue-50 border border-blue-200 rounded p-4">
-                  <p className="text-sm text-blue-800">
-                    <strong>Instructions:</strong> Vous pouvez éditer chaque ligne individuellement, ajouter des événements, puis sauvegarder.
-                    Les lignes déjà sauvegardées sont marquées en vert.
+                {/* Success count */}
+                <div className="bg-green-50 border border-green-200 rounded p-4">
+                  <p className="text-sm text-green-800">
+                    <strong>✓ Contacts créés avec succès:</strong> {migrationResults.success}
                   </p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse">
-                    <thead className="bg-slate-100">
-                      <tr>
-                        <th className="px-3 py-2 text-left border">Ligne</th>
-                        <th className="px-3 py-2 text-left border">Prénom</th>
-                        <th className="px-3 py-2 text-left border">Nom</th>
-                        <th className="px-3 py-2 text-left border">Email</th>
-                        <th className="px-3 py-2 text-left border">Téléphone</th>
-                        <th className="px-3 py-2 text-left border">Statut</th>
-                        <th className="px-3 py-2 text-left border">Événement</th>
-                        <th className="px-3 py-2 text-left border">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {migratedRows.map((row, index) => {
-                        const isSaved = !!row.contactId;
-                        
-                        return (
-                          <tr key={row.id} className={isSaved ? 'bg-green-50' : ''}>
-                            <td className="px-3 py-2 border">{index + 1}</td>
-                            <td className="px-3 py-2 border">{row.mappedData.firstName || '-'}</td>
-                            <td className="px-3 py-2 border">{row.mappedData.lastName || '-'}</td>
-                            <td className="px-3 py-2 border">{row.mappedData.email || '-'}</td>
-                            <td className="px-3 py-2 border">{formatPhoneNumber(row.mappedData.phone) || '-'}</td>
-                            <td className="px-3 py-2 border">
-                              {availableStatuses.find(s => s.id === row.mappedData.statusId)?.name || '-'}
-                            </td>
-                            <td className="px-3 py-2 border">
-                              {row.eventData?.date ? (
-                                <span className="text-xs">
-                                  {row.eventData.date} {row.eventData.hour}:{row.eventData.minute}
-                                </span>
-                              ) : (
-                                '-'
-                              )}
-                            </td>
-                            <td className="px-3 py-2 border">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleEditRow(row)}
-                                disabled={isSaved}
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </Button>
-                              {isSaved && (
-                                <CheckCircle2 className="w-4 h-4 text-green-600 ml-2 inline" />
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {migratedRows.some(r => r.errors && r.errors.length > 0) && (
-                  <div className="bg-red-50 border border-red-200 rounded p-4">
-                    <h4 className="font-medium text-red-600 mb-2">Erreurs:</h4>
-                    {migratedRows.map((row, idx) => 
-                      row.errors && row.errors.length > 0 && (
-                        <p key={idx} className="text-sm text-red-600">
-                          Ligne {idx + 1}: {row.errors.join(', ')}
-                        </p>
-                      )
-                    )}
+                {/* Failed count and reasons */}
+                {migrationResults.failed > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                    <p className="text-sm text-yellow-800 mb-3">
+                      <strong>⚠ Contacts non créés:</strong> {migrationResults.failed}
+                    </p>
+                    <div className="space-y-2">
+                      {Object.entries(migrationResults.failureReasons).map(([reason, count]) => (
+                        <div key={reason} className="text-sm text-yellow-700 pl-4">
+                          • {reason}: {count}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1863,82 +2813,6 @@ export function MigrationPage() {
                 </div>
               </div>
 
-              {/* Event Section */}
-              <div className="mt-6 pt-6 border-t">
-                <h3 className="text-lg font-semibold mb-4">Événement (optionnel)</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="modal-form-field">
-                    <Label>Date de l'événement</Label>
-                    <DateInput
-                      value={editingRowData.eventData?.date || ''}
-                      onChange={(value) => setEditingRowData({
-                        ...editingRowData,
-                        eventData: {
-                          ...editingRowData.eventData || { date: '', hour: '', minute: '', teleoperatorId: defaultTeleoperatorId || '' },
-                          date: value
-                        }
-                      })}
-                    />
-                  </div>
-                  <div className="modal-form-field">
-                    <Label>Heure</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        type="number"
-                        placeholder="HH"
-                        value={editingRowData.eventData?.hour || ''}
-                        onChange={(e) => setEditingRowData({
-                          ...editingRowData,
-                          eventData: {
-                            ...editingRowData.eventData || { date: '', hour: '', minute: '', teleoperatorId: defaultTeleoperatorId || '' },
-                            hour: e.target.value
-                          }
-                        })}
-                        min="0"
-                        max="23"
-                      />
-                      <Input
-                        type="number"
-                        placeholder="MM"
-                        value={editingRowData.eventData?.minute || ''}
-                        onChange={(e) => setEditingRowData({
-                          ...editingRowData,
-                          eventData: {
-                            ...editingRowData.eventData || { date: '', hour: '', minute: '', teleoperatorId: defaultTeleoperatorId || '' },
-                            minute: e.target.value
-                          }
-                        })}
-                        min="0"
-                        max="59"
-                      />
-                    </div>
-                  </div>
-                  <div className="modal-form-field">
-                    <Label>Téléopérateur pour l'événement</Label>
-                    <Select
-                      value={editingRowData.eventData?.teleoperatorId || defaultTeleoperatorId || ''}
-                      onValueChange={(value) => setEditingRowData({
-                        ...editingRowData,
-                        eventData: {
-                          ...editingRowData.eventData || { date: '', hour: '', minute: '', teleoperatorId: defaultTeleoperatorId || '' },
-                          teleoperatorId: value
-                        }
-                      })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner un téléopérateur" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {teleoperateurs.map((teleoperator) => (
-                          <SelectItem key={teleoperator.id} value={teleoperator.id}>
-                            {teleoperator.firstName} {teleoperator.lastName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
 
               <div className="modal-form-actions">
                 <Button type="button" variant="outline" onClick={handleCloseEditModal}>

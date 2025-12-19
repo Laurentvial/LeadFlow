@@ -13,6 +13,7 @@ import { CsvImport } from './components/CsvImport';
 import { MigrationPage } from './components/MigrationPage';
 import { NotesMigrationPage } from './components/NotesMigrationPage';
 import { LogsMigrationPage } from './components/LogsMigrationPage';
+import { EventsMigrationPage } from './components/EventsMigrationPage';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
@@ -169,6 +170,15 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <LogsMigrationPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/events/migration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <EventsMigrationPage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

@@ -15,6 +15,7 @@ urlpatterns = [
     path('contacts/', api_views.ContactView.as_view(), name='contact-list'),
     path('contacts/fosse/', api_views.FosseContactView.as_view(), name='fosse-contact-list'),
     path('contacts/create/', api_views.contact_create, name='contact-create'),
+    path('contacts/bulk-create/', api_views.contacts_bulk_create, name='contacts-bulk-create'),
     path('contacts/csv-import-preview/', api_views.csv_import_preview, name='csv-import-preview'),
     path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
