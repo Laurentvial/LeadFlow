@@ -111,15 +111,50 @@ echo "✓ Static files collected"
 print_step "Building frontend..."
 cd ../frontend
 if [ -f "package.json" ]; then
-    # Check if node_modules exists, if not install
-    if [ ! -d "node_modules" ]; then
-        print_step "Installing Node.js dependencies..."
-        npm install
+    # Check if Node.js/npm is installed
+    if ! command -v npm &> /dev/null && ! command -v node &> /dev/null; then
+        print_error "Node.js/npm not found!"
+        echo ""
+        echo "To install Node.js on AlmaLinux, run:"
+        echo "  dnf install -y nodejs npm"
+        echo ""
+        echo "Or install Node.js 18+ from NodeSource:"
+        echo "  curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -"
+        echo "  dnf install -y nodejs"
+        echo ""
+        print_warning "Skipping frontend build. Install Node.js and run this script again."
+    else
+        NPM_CMD=$(which npm 2>/dev/null || echo "npm")
+        NODE_CMD=$(which node 2>/dev/null || echo "node")
+        
+        NODE_VERSION=$($NODE_CMD --version 2>&1 | sed 's/v//' | cut -d. -f1)
+        echo "Using Node: $($NODE_CMD --version 2>&1)"
+        echo "Using npm: $($NPM_CMD --version 2>&1)"
+        
+        # Check Node.js version (Vite requires Node.js 14.18+)
+        if [ "$NODE_VERSION" -lt 14 ]; then
+            print_error "Node.js version is too old! Found: $($NODE_CMD --version)"
+            echo ""
+            echo "Vite requires Node.js 14.18+ (preferably 18+)."
+            echo ""
+            echo "To install Node.js 18 on AlmaLinux, run:"
+            echo "  curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -"
+            echo "  dnf install -y nodejs"
+            echo ""
+            print_warning "Skipping frontend build. Install Node.js 18+ and run this script again."
+        else
+            # Check if node_modules exists, if not install
+            if [ ! -d "node_modules" ]; then
+                print_step "Installing Node.js dependencies..."
+                $NPM_CMD install
+            fi
+            
+            # Build frontend
+            print_step "Building frontend..."
+            $NPM_CMD run build
+            echo "✓ Frontend built successfully"
+        fi
     fi
-    
-    # Build frontend
-    npm run build
-    echo "✓ Frontend built successfully"
 else
     print_warning "package.json not found, skipping frontend build"
 fi
