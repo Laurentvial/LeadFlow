@@ -8932,6 +8932,13 @@ def verify_otp(request):
             'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# Health check endpoint
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health_check(request):
+    """Health check endpoint for API."""
+    return Response({"status": "healthy", "service": "backend"}, status=status.HTTP_200_OK)
+
 # Custom token serializer to check if user is deleted
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):

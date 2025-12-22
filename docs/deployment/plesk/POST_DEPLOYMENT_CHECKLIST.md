@@ -59,7 +59,48 @@ Enter:
 4. Update paths to match your domain
 5. **Set Document Root** to `/httpdocs/frontend/dist` in Hosting Settings to serve frontend
 
-### Step 4: Verify Application is Running
+### Step 4: Start Django Backend ⚠️ CRITICAL
+
+**The backend must be running for the API to work!**
+
+**Option A: Using Systemd Service (Recommended)**
+```bash
+# Create service file
+sudo nano /etc/systemd/system/leadflow.service
+# Copy content from docs/deployment/plesk/leadflow.service
+# Update paths and user
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable leadflow
+sudo systemctl start leadflow
+sudo systemctl status leadflow
+```
+
+**Option B: Using Passenger (If Python enabled in Plesk)**
+- **Hosting & DNS** → **Python**
+- Ensure Python is enabled
+- Set Application root: `/backend`
+- Set Startup file: `passenger_wsgi.py`
+
+**Option C: Manual Start (Testing)**
+```bash
+cd /var/www/vhosts/blissful-spence.82-165-44-164.plesk.page/httpdocs/backend
+python3.12 -m daphne -b 127.0.0.1 -p 8000 backend.asgi:application
+```
+
+**Verify backend is running:**
+```bash
+# Check if port 8000 is listening
+netstat -tulpn | grep :8000
+
+# Test API locally
+curl http://127.0.0.1:8000/api/health/
+```
+
+**See:** `docs/deployment/plesk/START_BACKEND.md` for detailed instructions
+
+### Step 5: Verify Application is Running
 
 **Check URLs:**
 - Frontend: `http://blissful-spence.82-165-44-164.plesk.page`
@@ -67,7 +108,7 @@ Enter:
 - Admin Panel: `http://blissful-spence.82-165-44-164.plesk.page/admin/`
 - Static Files: `http://blissful-spence.82-165-44-164.plesk.page/static/`
 
-### Step 5: Enable HTTPS/SSL
+### Step 6: Enable HTTPS/SSL
 
 1. **Plesk Panel** → **SSL/TLS Certificates**
 2. Click **Let's Encrypt** or **Add SSL Certificate**
@@ -75,7 +116,7 @@ Enter:
 4. Enable **Redirect from HTTP to HTTPS**
 5. Click **Install**
 
-### Step 6: Test Application Features
+### Step 7: Test Application Features
 
 **Test Checklist:**
 - [ ] Frontend loads correctly
@@ -86,7 +127,7 @@ Enter:
 - [ ] Database operations work
 - [ ] WebSocket connections (if enabled)
 
-### Step 7: Set Up Monitoring
+### Step 8: Set Up Monitoring
 
 **Check Logs:**
 ```bash
@@ -100,7 +141,7 @@ tail -f /var/www/vhosts/blissful-spence.82-165-44-164.plesk.page/logs/error_log
 journalctl -u leadflow -f  # If using systemd
 ```
 
-### Step 8: Configure Scheduled Tasks (Optional)
+### Step 9: Configure Scheduled Tasks (Optional)
 
 **For periodic tasks (e.g., cleanup, backups):**
 1. **Plesk Panel** → **Scheduled Tasks**

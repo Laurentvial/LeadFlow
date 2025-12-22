@@ -2,6 +2,8 @@ from django.urls import path
 from . import views as api_views
 
 urlpatterns = [
+    # Health check endpoint
+    path('health/', api_views.health_check, name='api-health-check'),
     # Notes endpoints
     path('notes/', api_views.NoteListCreateView.as_view(), name='note-list-create'),
     path('notes/create/', api_views.NoteListCreateView.as_view(), name='note-create'),
