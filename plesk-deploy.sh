@@ -18,8 +18,36 @@ if [ ! -d "backend" ] || [ ! -d "frontend" ]; then
     exit 1
 fi
 
-# Find Python executable
-PYTHON_CMD=$(which python3 2>/dev/null || which python 2>/dev/null || echo "python3")
+# Find Python executable - prioritize Python 3.12, then 3.11, 3.10, etc.
+# Check for Python 3.12 first (required version)
+if command -v python3.12 &> /dev/null; then
+    PYTHON_CMD="python3.12"
+elif [ -f "/opt/plesk/python/3.12/bin/python3" ]; then
+    PYTHON_CMD="/opt/plesk/python/3.12/bin/python3"
+elif command -v python3.11 &> /dev/null; then
+    PYTHON_CMD="python3.11"
+    echo "⚠ Warning: Using Python 3.11 instead of 3.12"
+elif command -v python3.10 &> /dev/null; then
+    PYTHON_CMD="python3.10"
+    echo "⚠ Warning: Using Python 3.10 instead of 3.12"
+elif command -v python3.9 &> /dev/null; then
+    PYTHON_CMD="python3.9"
+    echo "⚠ Warning: Using Python 3.9 instead of 3.12"
+elif command -v python3.8 &> /dev/null; then
+    PYTHON_CMD="python3.8"
+    echo "⚠ Warning: Using Python 3.8 instead of 3.12"
+elif command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+    PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
+    if [ "$(printf '%s\n' "3.8" "$PYTHON_VERSION" | sort -V | head -n1)" != "3.8" ]; then
+        echo "❌ Error: Python 3.8+ required. Found: Python $PYTHON_VERSION"
+        echo "Please install Python 3.12 or contact your hosting provider."
+        exit 1
+    fi
+else
+    echo "❌ Error: Python 3.8+ not found. Please install Python 3.12."
+    exit 1
+fi
 
 # Always use python -m pip (more reliable)
 # First check if pip module is available
