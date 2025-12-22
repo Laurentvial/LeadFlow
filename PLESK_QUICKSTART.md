@@ -106,6 +106,34 @@ cd backend && python manage.py collectstatic --noinput
 
 ## 🆘 Troubleshooting
 
+**"Repository does not seem to exist anymore" error in Plesk:**
+- **Issue:** The GitHub repository URL in Plesk is incorrect, private, or inaccessible
+- **Solution 1: Find your GitHub repository URL**
+  1. Go to your GitHub repository page (e.g., `https://github.com/yourusername/LeadFlow`)
+  2. Click the green **Code** button
+  3. Copy the HTTPS URL (e.g., `https://github.com/yourusername/LeadFlow.git`)
+  4. Make sure the repository name matches exactly (case-sensitive)
+  
+- **Solution 2: Check repository visibility**
+  - If repository is **private**, you need authentication:
+    1. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+    2. Generate new token with `repo` permissions
+    3. In Plesk Git settings, use format: `https://YOUR_TOKEN@github.com/username/repo.git`
+    4. Or use: `https://username:token@github.com/username/repo.git`
+  
+- **Solution 3: Verify repository exists**
+  - Visit the GitHub URL directly in your browser
+  - Make sure repository wasn't renamed or deleted
+  - Check you have access to the repository
+  
+- **Solution 4: Update Plesk Git repository URL**
+  1. Go to **Git** section in Plesk Dashboard
+  2. Click on your repository (`leadflow-blissful-spence`)
+  3. Click **Edit** or **Settings** (gear icon)
+  4. Update **Repository URL** field with correct GitHub URL
+  5. Click **OK** or **Apply**
+  6. Try **Pull** button again
+
 **Application won't start:**
 - Check Python logs in Plesk
 - Verify environment variables are set
