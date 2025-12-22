@@ -53,6 +53,8 @@ class Contact(models.Model):
     creator = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_contacts')
     
     # Confirmateur fields
+    confirmateur_email = models.EmailField(max_length=100, blank=True, default='')
+    confirmateur_telephone = models.CharField(max_length=20, blank=True, default='')
     platform = models.ForeignKey('Platform', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
     montant_encaisse = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     bonus = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -374,7 +376,6 @@ class Log(models.Model):
     event_type = models.CharField(max_length=100, default="")  # createUser, editUser, createContact, etc.
     user_id = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='activity_logs')
     contact_id = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='contact_logs')
-    creator_id = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_logs')
     created_at = models.DateTimeField(auto_now_add=True)
     details = models.JSONField(default=dict, blank=True)  # IP, browser info, and other metadata
     old_value = models.JSONField(default=dict, null=True, blank=True)  # Previous state

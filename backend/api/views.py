@@ -416,7 +416,7 @@ def compute_changed_fields(old_value, new_value):
     
     return changes
 
-def create_log_entry(event_type, user_id, request, old_value=None, new_value=None, contact_id=None, creator_id=None):
+def create_log_entry(event_type, user_id, request, old_value=None, new_value=None, contact_id=None):
     """Create a log entry for an activity"""
     try:
         print(f"[LOG ENTRY] Creating log entry: event_type={event_type}, contact_id={contact_id.id if contact_id else None}")
@@ -443,7 +443,6 @@ def create_log_entry(event_type, user_id, request, old_value=None, new_value=Non
             event_type=event_type,
             user_id=user_id if user_id else None,
             contact_id=contact_id if contact_id else None,
-            creator_id=creator_id if creator_id else None,
             details=details,
             old_value=serialized_old_value,
             new_value=serialized_new_value
@@ -2442,6 +2441,12 @@ def contact_create(request):
             print(f"[DEBUG] Error setting confirmateur during contact creation: {e}")
             pass
     
+    # Handle confirmateur email and telephone
+    if request.data.get('confirmateurEmail'):
+        contact_data['confirmateur_email'] = request.data.get('confirmateurEmail', '').strip()
+    if request.data.get('confirmateurTelephone'):
+        contact_data['confirmateur_telephone'] = request.data.get('confirmateurTelephone', '').strip()
+    
     # Handle platform - use get() for better performance
     platform_id = request.data.get('platformId')
     if platform_id:
@@ -2466,8 +2471,7 @@ def contact_create(request):
             request=request,
             old_value={},  # No old value for creation
             new_value=contact_data_for_log,
-            contact_id=contact,
-            creator_id=request.user if request.user.is_authenticated else None
+            contact_id=contact
         )
         
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -2533,10 +2537,62 @@ def contacts_bulk_create(request):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     # Helper functions
-    def get_date(value):
-        if not value or value == '':
+    def parse_date(date_str):
+        """Parse date string to date object"""
+        if not date_str or str(date_str).strip() == '':
             return None
-        return value
+        # If already a date object, return it
+        if isinstance(date_str, date) and not isinstance(date_str, datetime):
+            return date_str
+        # If datetime object, extract date
+        if isinstance(date_str, datetime):
+            return date_str.date()
+        date_str = str(date_str).strip()
+        # Try common date formats
+        formats = ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+        return None
+    
+    def parse_datetime(datetime_str):
+        """Parse datetime string to timezone-aware datetime object"""
+        if not datetime_str or str(datetime_str).strip() == '':
+            return None
+        # If already a datetime object, make it timezone-aware and return
+        if isinstance(datetime_str, datetime):
+            if timezone.is_aware(datetime_str):
+                return datetime_str
+            return timezone.make_aware(datetime_str)
+        # If date object, convert to datetime
+        if isinstance(datetime_str, date):
+            dt = datetime.combine(datetime_str, datetime.min.time())
+            return timezone.make_aware(dt)
+        datetime_str = str(datetime_str).strip()
+        # Try common datetime formats
+        formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M',
+            '%Y-%m-%d',
+            '%d/%m/%Y %H:%M:%S',
+            '%d/%m/%Y %H:%M',
+            '%d/%m/%Y',
+            '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y %H:%M',
+            '%m/%d/%Y',
+        ]
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(datetime_str, fmt)
+                return timezone.make_aware(parsed)
+            except ValueError:
+                continue
+        return None
     
     def phone_to_int(value):
         if not value:
@@ -2666,7 +2722,7 @@ def contacts_bulk_create(request):
                 'phone': phone_to_int(contact_data.get('phone', '')),
                 'mobile': phone_to_int(contact_data.get('mobile', '')),
                 'email': email,
-                'birth_date': get_date(contact_data.get('birthDate')),
+                'birth_date': parse_date(contact_data.get('birthDate')),
                 'birth_place': contact_data.get('birthPlace', '') or '',
                 'address': contact_data.get('address', '') or '',
                 'address_complement': contact_data.get('addressComplement', '') or '',
@@ -2719,21 +2775,31 @@ def contacts_bulk_create(request):
             if contact_data.get('nomDeScene'):
                 contact_obj_data['nom_de_scene'] = contact_data.get('nomDeScene')
             if contact_data.get('dateProTr'):
-                contact_obj_data['date_pro_tr'] = get_date(contact_data.get('dateProTr'))
+                # date_pro_tr is a CharField, so store as string
+                contact_obj_data['date_pro_tr'] = str(contact_data.get('dateProTr')).strip() if contact_data.get('dateProTr') else ''
             if contact_data.get('potentiel'):
                 contact_obj_data['potentiel'] = contact_data.get('potentiel')
             if contact_data.get('produit'):
                 contact_obj_data['produit'] = contact_data.get('produit')
-            # Note: confirmateurEmail and confirmateurTelephone fields were removed in migration 0085
-            # These fields are no longer part of the Contact model
+            # Handle confirmateur email and telephone
+            if contact_data.get('confirmateurEmail'):
+                contact_obj_data['confirmateur_email'] = contact_data.get('confirmateurEmail', '').strip()
+            if contact_data.get('confirmateurTelephone'):
+                contact_obj_data['confirmateur_telephone'] = contact_data.get('confirmateurTelephone', '').strip()
             
-            # Handle date fields
+            # Handle datetime fields
             if contact_data.get('createdAt'):
-                contact_obj_data['created_at'] = get_date(contact_data.get('createdAt'))
+                parsed_dt = parse_datetime(contact_data.get('createdAt'))
+                if parsed_dt:
+                    contact_obj_data['created_at'] = parsed_dt
             if contact_data.get('updatedAt'):
-                contact_obj_data['updated_at'] = get_date(contact_data.get('updatedAt'))
+                parsed_dt = parse_datetime(contact_data.get('updatedAt'))
+                if parsed_dt:
+                    contact_obj_data['updated_at'] = parsed_dt
             if contact_data.get('assignedAt'):
-                contact_obj_data['assigned_at'] = get_date(contact_data.get('assignedAt'))
+                parsed_dt = parse_datetime(contact_data.get('assignedAt'))
+                if parsed_dt:
+                    contact_obj_data['assigned_at'] = parsed_dt
             
             contacts_to_create.append((Contact(**contact_obj_data), contact_data))
             results.append({'index': idx, 'success': True, 'contactId': contact_id})
@@ -3276,7 +3342,6 @@ def csv_import_contacts(request):
                     event_type='bulkImportContacts',
                     user_id=request.user if request.user.is_authenticated else None,
                     contact_id=None,  # Bulk import doesn't have a single contact
-                    creator_id=request.user if request.user.is_authenticated else None,
                     details=bulk_log_details,
                     old_value={},
                     new_value={'imported': results['imported'], 'total': results['total']}
@@ -3649,7 +3714,6 @@ def csv_import_notes(request):
                     event_type='bulkImportNotes',
                     user_id=request.user if request.user.is_authenticated else None,
                     contact_id=None,  # Bulk import doesn't have a single contact
-                    creator_id=request.user if request.user.is_authenticated else None,
                     details=bulk_log_details,
                     old_value={},
                     new_value={'imported': results['imported'], 'total': results['total']}
@@ -3767,9 +3831,6 @@ def csv_import_logs(request):
             # Handle any other exception (invalid ID format, etc.)
             default_user_obj = None
     
-    # Always use current user as default creator
-    default_creator_obj = request.user
-    
     try:
         import csv
         import io
@@ -3853,6 +3914,34 @@ def csv_import_logs(request):
         # Pre-load existing log IDs to check for duplicates
         # This avoids N+1 query problem when checking if log IDs already exist
         existing_log_ids = set(Log.objects.values_list('id', flat=True))
+        
+        # Pre-load existing logs to check for duplicates based on content
+        # Create a set of tuples (event_type, contact_id, user_id, created_at) for fast lookup
+        # This allows us to skip logs that are exact duplicates even if they have different IDs
+        existing_logs_signatures = set()
+        existing_logs_query = Log.objects.select_related('contact_id', 'user_id').values(
+            'event_type', 'contact_id', 'user_id', 'created_at'
+        )
+        for log in existing_logs_query:
+            # Create a signature tuple for duplicate detection
+            # Normalize created_at to minute precision to handle slight time differences
+            created_at = log['created_at']
+            if created_at:
+                # Round to minute precision to handle slight time differences from CSV imports
+                if timezone.is_aware(created_at):
+                    created_at_normalized = created_at.replace(second=0, microsecond=0)
+                else:
+                    created_at_normalized = timezone.make_aware(created_at).replace(second=0, microsecond=0)
+            else:
+                created_at_normalized = None
+            
+            signature = (
+                log['event_type'] or '',
+                log['contact_id'] or None,
+                log['user_id'] or None,
+                created_at_normalized
+            )
+            existing_logs_signatures.add(signature)
         
         # Pre-load all users for fast lookup
         # Use both string and integer keys to handle different ID formats
@@ -3997,16 +4086,6 @@ def csv_import_logs(request):
                     results['failed'] += 1
                     continue
                 
-                # Handle creator_id - use from CSV if provided, otherwise use current user
-                # If creator is not found, use current user as default (not an error)
-                creator_obj = default_creator_obj
-                if 'creator_id' in log_data and log_data['creator_id']:
-                    creator_id_str = str(log_data['creator_id']).strip()
-                    creator_obj = users_by_id.get(creator_id_str)
-                    # If creator not found, use default creator (current user)
-                    if not creator_obj:
-                        creator_obj = default_creator_obj
-                
                 # Handle log ID - use from CSV if provided, otherwise generate
                 log_id = None
                 if 'id' in log_data and log_data['id']:
@@ -4043,13 +4122,75 @@ def csv_import_logs(request):
                 
                 log_data['id'] = log_id
                 log_data['user_id'] = user_obj
-                log_data['creator_id'] = creator_obj
                 
                 # Remove old_contact_id from log_data (it's not a Log field)
+                # Remove creator_id from log_data (it's not a Log field anymore)
+                log_data.pop('creator_id', None)
                 log_data.pop('old_contact_id', None)
                 
                 # Store created_at separately if provided (needs special handling)
                 custom_created_at = log_data.pop('created_at', None)
+                
+                # Check if log already exists in database based on content (not just ID)
+                # Create signature for duplicate detection
+                if custom_created_at:
+                    # Normalize created_at to minute precision to handle slight time differences
+                    if timezone.is_aware(custom_created_at):
+                        created_at_normalized = custom_created_at.replace(second=0, microsecond=0)
+                    else:
+                        created_at_normalized = timezone.make_aware(custom_created_at).replace(second=0, microsecond=0)
+                else:
+                    created_at_normalized = None
+                
+                log_signature = (
+                    log_data.get('event_type', '') or '',
+                    contact_obj.id if contact_obj else None,
+                    user_obj.id if user_obj else None,
+                    created_at_normalized
+                )
+                
+                # Check if this log already exists
+                if log_signature in existing_logs_signatures:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Log already exists in database (duplicate: event_type={log_data.get("event_type")}, contact_id={contact_obj.id if contact_obj else None}, user_id={user_obj.id if user_obj else None}, created_at={created_at_normalized})'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Also check against logs in current batch to avoid duplicates within CSV
+                batch_signature_exists = False
+                for pending_log in logs_to_create:
+                    pending_created_at = row_data_map.get(pending_log.id, {}).get('created_at')
+                    if pending_created_at:
+                        if timezone.is_aware(pending_created_at):
+                            pending_created_at_normalized = pending_created_at.replace(second=0, microsecond=0)
+                        else:
+                            pending_created_at_normalized = timezone.make_aware(pending_created_at).replace(second=0, microsecond=0)
+                    else:
+                        pending_created_at_normalized = None
+                    
+                    pending_signature = (
+                        pending_log.event_type or '',
+                        pending_log.contact_id.id if pending_log.contact_id else None,
+                        pending_log.user_id.id if pending_log.user_id else None,
+                        pending_created_at_normalized
+                    )
+                    
+                    if pending_signature == log_signature:
+                        batch_signature_exists = True
+                        break
+                
+                if batch_signature_exists:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Duplicate log found in CSV (same event_type, contact_id, user_id, and created_at)'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Add to existing signatures set to track duplicates within batch
+                existing_logs_signatures.add(log_signature)
                 
                 # Store row data for results
                 event_type_preview = log_data.get('event_type', '')[:50] + ('...' if len(log_data.get('event_type', '')) > 50 else '')
@@ -5019,8 +5160,7 @@ def contact_detail(request, contact_id):
                     request=request,
                     old_value=old_value_changes,
                     new_value=new_value_changes,
-                    contact_id=contact,
-                    creator_id=request.user if request.user.is_authenticated else None
+                    contact_id=contact
                 )
             
             return Response({'contact': serializer.data})
@@ -5692,8 +5832,7 @@ def event_create(request):
                     request=request,
                     old_value={},
                     new_value=event_data,
-                    contact_id=event.contactId,
-                    creator_id=request.user if request.user.is_authenticated else None
+                    contact_id=event.contactId
                 )
                 print(f"[EVENT LOG] Log entry created successfully")
             except Exception as e:
@@ -5787,8 +5926,7 @@ def event_update(request, event_id):
                     request=request,
                     old_value=old_event_data,
                     new_value=new_event_data,
-                    contact_id=contact_for_log,
-                    creator_id=request.user if request.user.is_authenticated else None
+                    contact_id=contact_for_log
                 )
                 print(f"[EVENT LOG] Log entry created successfully")
             except Exception as e:
@@ -5839,8 +5977,7 @@ def event_delete(request, event_id):
                 request=request,
                 old_value=event_data,
                 new_value={},
-                contact_id=contact,
-                creator_id=request.user if request.user.is_authenticated else None
+                contact_id=contact
             )
             print(f"[EVENT LOG] Log entry created successfully")
         except Exception as e:
@@ -6420,13 +6557,12 @@ def contact_logs(request, contact_id):
         contact = get_object_or_404(Contact, id=contact_id)
         
         # Get all logs for this contact with optimized queries
-        # Use select_related to avoid N+1 queries when accessing user_id, contact_id, creator_id
+        # Use select_related to avoid N+1 queries when accessing user_id, contact_id
         logs = Log.objects.filter(
             contact_id=contact
         ).select_related(
-            'user_id',  # For userId in serializer
-            'contact_id',  # For contactId in serializer
-            'creator_id'  # For creatorId and creatorName in serializer
+            'user_id',  # For userId and userName (who performed the action) in serializer
+            'contact_id'  # For contactId in serializer
         ).order_by('-created_at')
         
         # Debug: Print log types being returned
@@ -7438,9 +7574,15 @@ def email_list(request):
         is_starred = request.query_params.get('isStarred', None)
         contact_id = request.query_params.get('contactId', None)
         
-        # Pagination parameters
-        page = int(request.query_params.get('page', 1))
-        limit = int(request.query_params.get('limit', 50))
+        # Pagination parameters - define outside try block to avoid NameError in except block
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            limit = int(request.query_params.get('limit', 50))
+        except (ValueError, TypeError):
+            limit = 50
         offset = (page - 1) * limit
         
         emails = Email.objects.filter(user=user)
@@ -8058,8 +8200,15 @@ def chat_messages(request, chat_room_id):
         
         if request.method == 'GET':
             # Get pagination parameters - ALWAYS limit to 15 messages per page
-            limit = min(int(request.query_params.get('limit', 15)), 15)  # Max 15 messages per page
-            offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+            # Define outside try block to avoid NameError in except block
+            try:
+                limit = min(int(request.query_params.get('limit', 15)), 15)  # Max 15 messages per page
+            except (ValueError, TypeError):
+                limit = 15
+            try:
+                offset = int(request.query_params.get('offset', 0))  # Default to 0 (start from most recent)
+            except (ValueError, TypeError):
+                offset = 0
             
             # Get total count for pagination info
             total_count = Message.objects.filter(chat_room=chat_room).count()

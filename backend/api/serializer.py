@@ -896,9 +896,8 @@ class EventSerializer(serializers.ModelSerializer):
 
 class LogSerializer(serializers.ModelSerializer):
     userId = serializers.SerializerMethodField()
+    userName = serializers.SerializerMethodField()
     contactId = serializers.SerializerMethodField()
-    creatorId = serializers.SerializerMethodField()
-    creatorName = serializers.SerializerMethodField()
     eventType = serializers.CharField(source='event_type', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     oldValue = serializers.JSONField(source='old_value', read_only=True)
@@ -906,30 +905,27 @@ class LogSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Log
-        fields = ['id', 'eventType', 'userId', 'contactId', 'creatorId', 'creatorName', 'createdAt', 'details', 'oldValue', 'newValue']
+        fields = ['id', 'eventType', 'userId', 'userName', 'contactId', 'createdAt', 'details', 'oldValue', 'newValue']
         read_only_fields = ['id', 'createdAt']
     
     def get_userId(self, obj):
         return obj.user_id.id if obj.user_id else None
     
+    def get_userName(self, obj):
+        # Return the name of the user who performed the action (user_id)
+        if obj.user_id:
+            return f"{obj.user_id.first_name} {obj.user_id.last_name}".strip() or obj.user_id.username
+        return None
+    
     def get_contactId(self, obj):
         return obj.contact_id.id if obj.contact_id else None
-    
-    def get_creatorId(self, obj):
-        return obj.creator_id.id if obj.creator_id else None
-    
-    def get_creatorName(self, obj):
-        if obj.creator_id:
-            return f"{obj.creator_id.first_name} {obj.creator_id.last_name}".strip() or obj.creator_id.username
-        return None
     
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['eventType'] = instance.event_type
         ret['userId'] = instance.user_id.id if instance.user_id else None
+        ret['userName'] = self.get_userName(instance)
         ret['contactId'] = instance.contact_id.id if instance.contact_id else None
-        ret['creatorId'] = instance.creator_id.id if instance.creator_id else None
-        ret['creatorName'] = self.get_creatorName(instance)
         ret['createdAt'] = instance.created_at
         ret['details'] = instance.details if instance.details else {}
         ret['oldValue'] = instance.old_value if instance.old_value else {}

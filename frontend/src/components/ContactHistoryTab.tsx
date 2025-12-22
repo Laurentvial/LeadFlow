@@ -15,7 +15,7 @@ interface ContactHistoryTabProps {
 interface Log {
   id: string;
   eventType: string;
-  creatorName?: string;
+  userName?: string;
   createdAt: string;
   oldValue?: any;
   newValue?: any;
@@ -215,9 +215,9 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                         <Label className="text-sm font-semibold text-slate-900">
                           {getEventTypeLabel(log.eventType)}
                         </Label>
-                        {log.creatorName && (
+                        {log.userName && (
                           <p className="text-xs text-slate-600 mt-1">
-                            Par {log.creatorName}
+                            Par {log.userName}
                           </p>
                         )}
                         {changedFields.length > 0 && (
@@ -287,10 +287,10 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
                   <p className="mt-1">{getEventTypeLabel(selectedLog.eventType)}</p>
                 </div>
                 
-                {selectedLog.creatorName && (
+                {selectedLog.userName && (
                   <div>
-                    <Label className="text-sm font-semibold">Créateur</Label>
-                    <p className="mt-1">{selectedLog.creatorName}</p>
+                    <Label className="text-sm font-semibold">Utilisateur</Label>
+                    <p className="mt-1">{selectedLog.userName}</p>
                   </div>
                 )}
                 

@@ -5,10 +5,11 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import LoadingIndicator from './LoadingIndicator';
+import { autoPopulateUserMapping } from '../utils/crmUserMapping';
 import '../styles/PageHeader.css';
 
 interface ColumnMapping {
@@ -21,7 +22,6 @@ const LOG_FIELDS = [
   { value: 'eventType', label: 'Type d\'événement (requis)', required: true },
   { value: 'oldContactId', label: 'Ancien ID Contact' },
   { value: 'userId', label: 'ID Utilisateur' },
-  { value: 'creatorId', label: 'ID Créateur' },
   { value: 'createdAt', label: 'Date de création' },
   { value: 'details', label: 'Détails (JSON)' },
   { value: 'oldValue', label: 'Ancienne valeur (JSON)' },
@@ -50,12 +50,31 @@ export function LogsMigrationPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [defaultUserId, setDefaultUserId] = useState<string>(''); // Default user ID if no mapping
+  const [autoMappingApplied, setAutoMappingApplied] = useState(false); // Track if auto-mapping was applied
 
   // Load existing event types
   React.useEffect(() => {
     loadEventTypes();
     loadUsers();
   }, []);
+
+  // Auto-populate user mapping when CSV data and users are both loaded
+  React.useEffect(() => {
+    if (
+      csvData.length > 0 &&
+      users.length > 0 &&
+      columnMapping.userId &&
+      !autoMappingApplied &&
+      Object.keys(userIdMapping).length === 0
+    ) {
+      const autoMapping = autoPopulateUserMapping(csvData, columnMapping.userId, users);
+      if (Object.keys(autoMapping).length > 0) {
+        setUserIdMapping(autoMapping);
+        setAutoMappingApplied(true);
+        toast.success(`Mapping automatique appliqué: ${Object.keys(autoMapping).length} utilisateur(s) mappé(s)`);
+      }
+    }
+  }, [csvData, users, columnMapping.userId, autoMappingApplied]);
 
   async function loadEventTypes() {
     setEventTypesLoading(true);
@@ -261,6 +280,7 @@ export function LogsMigrationPage() {
     setColumnMapping({});
     setEventTypeMapping({});
     setUserIdMapping({});
+    setAutoMappingApplied(false);
     setStep('upload');
     setError(null);
     setImportResults(null);
@@ -509,9 +529,39 @@ export function LogsMigrationPage() {
               {columnMapping.userId && csvData.length > 0 && (
                 <div className="space-y-4 pt-4 border-t">
                   <div>
-                    <h3 className="font-semibold text-lg mb-2">Mapper les IDs utilisateur</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-lg">Mapper les IDs utilisateur</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!columnMapping.userId) {
+                            toast.error('Veuillez d\'abord mapper la colonne ID utilisateur');
+                            return;
+                          }
+                          const autoMapping = autoPopulateUserMapping(csvData, columnMapping.userId, users);
+                          if (Object.keys(autoMapping).length > 0) {
+                            setUserIdMapping({ ...userIdMapping, ...autoMapping });
+                            setAutoMappingApplied(true);
+                            toast.success(`Mapping automatique appliqué: ${Object.keys(autoMapping).length} utilisateur(s) mappé(s)`);
+                          } else {
+                            toast.info('Aucun utilisateur trouvé pour les IDs CRM de l\'ancien système');
+                          }
+                        }}
+                        disabled={usersLoading || !columnMapping.userId || csvData.length === 0}
+                      >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Auto-remplir depuis l'ancien CRM
+                      </Button>
+                    </div>
                     <p className="text-sm text-slate-600 mb-4">
                       Mappez les valeurs d'ID utilisateur de votre CSV aux IDs utilisateur du système. Si aucune valeur n'est sélectionnée, l'utilisateur par défaut sera utilisé.
+                      {autoMappingApplied && (
+                        <span className="block mt-2 text-green-600 font-medium">
+                          ✓ Mapping automatique appliqué depuis l'ancien CRM
+                        </span>
+                      )}
                     </p>
                     
                     {/* Default User Selection */}

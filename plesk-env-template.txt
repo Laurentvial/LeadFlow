@@ -1,0 +1,87 @@
+# LeadFlow Environment Variables Template for Plesk
+# Copy these variables to Plesk: Python → Environment Variables
+# Replace all placeholder values with your actual configuration
+
+# ============================================
+# Django Core Settings
+# ============================================
+SECRET_KEY=your-secret-key-here-generate-a-new-one
+DEBUG=False
+ALLOWED_HOSTS=your-domain.com,www.your-domain.com
+
+# ============================================
+# Database Configuration (PostgreSQL)
+# ============================================
+DB_HOST=localhost
+DB_NAME=leadflow_db
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_PORT=5432
+
+# Alternative: Use DATABASE_URL format
+# DATABASE_URL=postgresql://user:password@localhost:5432/leadflow_db
+
+# ============================================
+# Redis Configuration (Optional - for WebSocket)
+# ============================================
+# If using local Redis:
+REDIS_URL=redis://localhost:6379/0
+USE_REDIS=True
+
+# If using external Redis:
+# REDIS_URL=redis://username:password@host:port/0
+# USE_REDIS=True
+
+# If not using Redis (WebSocket will use in-memory):
+# USE_REDIS=False
+
+# ============================================
+# CORS & Security
+# ============================================
+CSRF_TRUSTED_ORIGINS=https://your-domain.com,https://www.your-domain.com
+
+# ============================================
+# Static & Media Files
+# ============================================
+# These paths are typically set automatically, but you can override:
+# STATIC_ROOT=/var/www/vhosts/your-domain.com/httpdocs/backend/staticfiles
+# MEDIA_ROOT=/var/www/vhosts/your-domain.com/httpdocs/backend/media
+
+# ============================================
+# Email Configuration (Optional)
+# ============================================
+EMAIL_HOST=smtp.your-provider.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your-email@example.com
+EMAIL_HOST_PASSWORD=your-email-password
+DEFAULT_FROM_EMAIL=noreply@your-domain.com
+
+# ============================================
+# AWS S3 Configuration (Optional - for media storage)
+# ============================================
+# AWS_ACCESS_KEY_ID=your-aws-access-key
+# AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+# AWS_STORAGE_BUCKET_NAME=your-bucket-name
+# AWS_S3_REGION_NAME=us-east-1
+# AWS_S3_CUSTOM_DOMAIN=your-cloudfront-domain.cloudfront.net
+
+# ============================================
+# Application Port (if using custom startup)
+# ============================================
+PORT=8000
+
+# ============================================
+# Instructions:
+# ============================================
+# 1. Generate a new SECRET_KEY:
+#    python -c "import secrets; print(secrets.token_urlsafe(50))"
+#
+# 2. Replace all placeholder values above
+#
+# 3. In Plesk, go to: Python → Environment Variables
+#
+# 4. Add each variable one by one, or use the import feature if available
+#
+# 5. After setting variables, restart your application
+
