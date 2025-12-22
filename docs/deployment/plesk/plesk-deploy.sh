@@ -8,13 +8,18 @@ echo "🚀 Starting LeadFlow deployment on Plesk..."
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR"
+# Navigate to project root (three levels up from docs/deployment/plesk/)
+# Script location: project/docs/deployment/plesk/plesk-deploy.sh
+# We need to go to: project/
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+cd "$PROJECT_ROOT"
 
 # Verify we're in the right place
 if [ ! -d "backend" ] || [ ! -d "frontend" ]; then
     echo "Error: Could not find backend/ or frontend/ directories."
     echo "Current directory: $(pwd)"
-    echo "Please run this script from the project root directory."
+    echo "Script directory: $SCRIPT_DIR"
+    echo "Project root: $PROJECT_ROOT"
     exit 1
 fi
 
