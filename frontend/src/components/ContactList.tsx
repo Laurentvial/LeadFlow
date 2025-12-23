@@ -413,6 +413,7 @@ export function ContactList({
   const [statuses, setStatuses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isBulkAssigning, setIsBulkAssigning] = useState(false);
   
   // Pending filters (what user is typing/selecting)
   const [pendingSearchTerm, setPendingSearchTerm] = useState('');
@@ -2502,6 +2503,7 @@ export function ContactList({
   }
 
   async function executeBulkAssignTeleoperator(teleoperatorIdValue: string) {
+    setIsBulkAssigning(true);
     try {
       const promises = Array.from(selectedContacts).map(contactId =>
         apiCall(`/api/contacts/${contactId}/`, {
@@ -2520,6 +2522,8 @@ export function ContactList({
       console.error('Error assigning teleoperator:', error);
       const errorMessage = error?.response?.error || error?.message || 'Erreur lors de l\'attribution du téléopérateur';
       toast.error(errorMessage);
+    } finally {
+      setIsBulkAssigning(false);
     }
   }
 
@@ -2552,6 +2556,7 @@ export function ContactList({
   }
 
   async function executeBulkAssignConfirmateur(confirmateurIdValue: string) {
+    setIsBulkAssigning(true);
     try {
       const promises = Array.from(selectedContacts).map(async (contactId) => {
         const response = await apiCall(`/api/contacts/${contactId}/`, {
@@ -2571,6 +2576,8 @@ export function ContactList({
       console.error('Error assigning confirmateur:', error);
       const errorMessage = error?.response?.error || error?.message || 'Erreur lors de l\'attribution du confirmateur';
       toast.error(errorMessage);
+    } finally {
+      setIsBulkAssigning(false);
     }
   }
 
@@ -3866,10 +3873,14 @@ export function ContactList({
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
-                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : undefined} onValueChange={handleBulkAssignTeleoperator}>
-                        <SelectTrigger className="w-[200px]">
-                          <UserCheck className="w-4 h-4 mr-2" />
-                          <SelectValue placeholder="Attribuer un téléopérateur" />
+                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : undefined} onValueChange={handleBulkAssignTeleoperator} disabled={isBulkAssigning}>
+                        <SelectTrigger className="w-[200px]" disabled={isBulkAssigning}>
+                          {isBulkAssigning ? (
+                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <UserCheck className="w-4 h-4 mr-2" />
+                          )}
+                          <SelectValue placeholder={isBulkAssigning ? "Attribution en cours..." : "Attribuer un téléopérateur"} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Aucun téléopérateur</SelectItem>
@@ -3897,10 +3908,14 @@ export function ContactList({
 
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un confirmateur</Label>
-                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : undefined} onValueChange={handleBulkAssignConfirmateur}>
-                        <SelectTrigger className="w-[200px]">
-                          <UserCheck className="w-4 h-4 mr-2" />
-                          <SelectValue placeholder="Attribuer un confirmateur" />
+                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : undefined} onValueChange={handleBulkAssignConfirmateur} disabled={isBulkAssigning}>
+                        <SelectTrigger className="w-[200px]" disabled={isBulkAssigning}>
+                          {isBulkAssigning ? (
+                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <UserCheck className="w-4 h-4 mr-2" />
+                          )}
+                          <SelectValue placeholder={isBulkAssigning ? "Attribution en cours..." : "Attribuer un confirmateur"} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Aucun confirmateur</SelectItem>
