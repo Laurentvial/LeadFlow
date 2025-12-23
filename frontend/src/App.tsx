@@ -28,9 +28,10 @@ import { Layout } from './components/Layout';
 import { Toaster } from './components/ui/sonner';
 import { MessagePopupWrapper } from './components/MessagePopupWrapper';
 import { EventPopupWrapper } from './components/EventPopupWrapper';
+import { signOut } from './utils/auth';
 
 function Logout() {
-    localStorage.clear();
+    signOut();
     return <Navigate to="/login" />;
 }
 

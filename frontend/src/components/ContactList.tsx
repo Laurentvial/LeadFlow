@@ -425,10 +425,37 @@ export function ContactList({
   const [appliedStatusType, setAppliedStatusType] = useState<'all' | 'lead' | 'client'>('all');
   const [appliedColumnFilters, setAppliedColumnFilters] = useState<Record<string, string | string[] | { from?: string; to?: string }>>({});
   
+  // Check if this is the Fosse page (needed for localStorage keys)
+  const isFossePage = apiEndpoint.includes('/fosse/');
+  
+  // Helper function to get storage key (needed for order initialization)
+  const getStorageKey = (suffix: string) => {
+    return isFossePage ? `fosse-table-${suffix}` : `contacts-table-${suffix}`;
+  };
+  
+  // Load selected order from localStorage or use default
+  const getInitialSelectedOrder = (): 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random' => {
+    const storageKey = getStorageKey('order');
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const validOrders: Array<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random'> = [
+          'created_at_asc', 'created_at_desc', 'updated_at_asc', 'updated_at_desc', 'assigned_at_asc', 'assigned_at_desc', 'email_asc', 'random'
+        ];
+        if (validOrders.includes(saved as any)) {
+          return saved as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
+        }
+      } catch {
+        // Invalid value, use default
+      }
+    }
+    return 'created_at_desc';
+  };
+  
   // Order selection state - used by select dropdown
   // For Fosse page: used when settings.defaultOrder is 'none' or not set
   // For Contacts page: always used
-  const [selectedOrder, setSelectedOrder] = useState<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random'>('created_at_desc');
+  const [selectedOrder, setSelectedOrder] = useState<'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random'>(getInitialSelectedOrder());
   
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -572,14 +599,9 @@ export function ContactList({
     { id: 'previousTeleoperator', label: 'Téléopérateur précédent', defaultVisible: false },
   ];
   
-  // Check if this is the Fosse page (before using it in localStorage keys)
-  const isFossePage = apiEndpoint.includes('/fosse/');
-  
   // Load column visibility and order from localStorage or use defaults
   // Use separate localStorage keys for Contacts vs Fosse to avoid conflicts
-  const getStorageKey = (suffix: string) => {
-    return isFossePage ? `fosse-table-${suffix}` : `contacts-table-${suffix}`;
-  };
+  // Note: getStorageKey is already defined above for order initialization
   
   const getInitialColumnOrder = () => {
     const storageKey = getStorageKey('column-order');
@@ -618,7 +640,7 @@ export function ContactList({
   const [fosseSettings, setFosseSettings] = useState<{
     forcedColumns: string[];
     forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
-    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random';
+    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
   } | null>(null);
   const [fosseSettingsLoading, setFosseSettingsLoading] = useState(false);
   
@@ -943,6 +965,12 @@ export function ContactList({
       }
     }
   }, [isFossePage, fosseSettings, openFilterColumn]);
+  
+  // Save selected order to localStorage whenever it changes
+  useEffect(() => {
+    const storageKey = getStorageKey('order');
+    localStorage.setItem(storageKey, selectedOrder);
+  }, [selectedOrder, isFossePage]);
   
   // Save column order to localStorage
   const saveColumnOrder = (order: string[]) => {
@@ -1951,7 +1979,7 @@ export function ContactList({
                 className="contacts-name-link"
                 title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
               >
-                {truncateText(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-')}
+                {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
               </button>
               {lastOpenedContactId === contact.id && (
                 <span 
@@ -1978,7 +2006,7 @@ export function ContactList({
       case 'civility':
         return <td key={columnId} title={contact.civility || ''}>{truncateText(contact.civility || '-')}</td>;
       case 'phone':
-        return <td key={columnId} title={formatPhoneNumber(contact.phone) || ''}>{truncateText(formatPhoneNumber(contact.phone) || '-')}</td>;
+        return <td key={columnId} title={formatPhoneNumber(contact.phone) || ''}>{formatPhoneNumber(contact.phone) || '-'}</td>;
       case 'mobile':
         return <td key={columnId} title={formatPhoneNumber(contact.mobile) || ''}>{truncateText(formatPhoneNumber(contact.mobile) || '-')}</td>;
       case 'email':
@@ -2047,7 +2075,12 @@ export function ContactList({
       case 'updatedAt':
         return (
           <td key={columnId}>
-            {contact.lastLogDate 
+            {contact.updatedAt 
+              ? new Date(contact.updatedAt).toLocaleString('fr-FR', {
+                  dateStyle: 'short',
+                  timeStyle: 'short'
+                })
+              : contact.lastLogDate
               ? new Date(contact.lastLogDate).toLocaleString('fr-FR', {
                   dateStyle: 'short',
                   timeStyle: 'short'
@@ -3670,7 +3703,7 @@ export function ContactList({
                 value={isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' ? fosseSettings.defaultOrder : selectedOrder}
                 disabled={isFossePage && fosseSettings?.defaultOrder !== undefined && fosseSettings.defaultOrder !== 'none'}
                 onValueChange={(value) => {
-                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'email_asc' | 'random';
+                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
                   setSelectedOrder(orderValue);
                 }}
               >
@@ -3682,6 +3715,8 @@ export function ContactList({
                   <SelectItem value="created_at_desc">Date de création (nouveau à ancien)</SelectItem>
                   <SelectItem value="updated_at_asc">Date de modification (ancien à nouveau)</SelectItem>
                   <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
+                  <SelectItem value="assigned_at_asc">Date d'attribution (ancien à nouveau)</SelectItem>
+                  <SelectItem value="assigned_at_desc">Date d'attribution (nouveau à ancien)</SelectItem>
                   <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
                   <SelectItem value="random">Aléatoire</SelectItem>
                 </SelectContent>

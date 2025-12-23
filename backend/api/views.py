@@ -1253,6 +1253,10 @@ class ContactView(generics.ListAPIView):
                 ).order_by('-sort_date', '-updated_at')
             elif order_param == 'email_asc':
                 queryset = queryset.order_by('email')
+            elif order_param == 'assigned_at_asc':
+                queryset = queryset.order_by('assigned_at')
+            elif order_param == 'assigned_at_desc':
+                queryset = queryset.order_by('-assigned_at')
             elif order_param == 'random':
                 queryset = queryset.order_by('?')
             else:
@@ -2179,6 +2183,10 @@ class FosseContactView(generics.ListAPIView):
                     queryset = queryset.order_by('-updated_at')
                 elif order_to_apply == 'email_asc':
                     queryset = queryset.order_by('email')
+                elif order_to_apply == 'assigned_at_asc':
+                    queryset = queryset.order_by('assigned_at')
+                elif order_to_apply == 'assigned_at_desc':
+                    queryset = queryset.order_by('-assigned_at')
                 elif order_to_apply == 'random':
                     queryset = queryset.order_by('?')
                 else:
@@ -2457,8 +2465,71 @@ def contact_create(request):
         except Exception:
             pass
     
+    # Handle datetime fields from migration/CSV
+    def parse_datetime(datetime_str):
+        """Parse datetime string to timezone-aware datetime object"""
+        if not datetime_str or str(datetime_str).strip() == '':
+            return None
+        from datetime import datetime
+        from django.utils import timezone
+        # If already a datetime object, make it timezone-aware and return
+        if isinstance(datetime_str, datetime):
+            if timezone.is_aware(datetime_str):
+                return datetime_str
+            return timezone.make_aware(datetime_str)
+        datetime_str = str(datetime_str).strip()
+        # Try common datetime formats
+        formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M',
+            '%Y-%m-%d',
+            '%d/%m/%Y %H:%M:%S',
+            '%d/%m/%Y %H:%M',
+            '%d/%m/%Y',
+            '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y %H:%M',
+            '%m/%d/%Y',
+        ]
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(datetime_str, fmt)
+                return timezone.make_aware(parsed)
+            except ValueError:
+                continue
+        return None
+    
+    # Set created_at from CSV if provided (for migration)
+    if request.data.get('createdAt'):
+        parsed_dt = parse_datetime(request.data.get('createdAt'))
+        if parsed_dt:
+            contact_data['created_at'] = parsed_dt
+    
+    # Handle updatedAt and assignedAt
+    if request.data.get('updatedAt'):
+        parsed_dt = parse_datetime(request.data.get('updatedAt'))
+        if parsed_dt:
+            contact_data['updated_at'] = parsed_dt
+    if request.data.get('assignedAt'):
+        parsed_dt = parse_datetime(request.data.get('assignedAt'))
+        if parsed_dt:
+            contact_data['assigned_at'] = parsed_dt
+    
     try:
-        contact = Contact.objects.create(**contact_data)
+        # If created_at is set, we need to create the object and then update it
+        # because auto_now_add might override it during create()
+        if 'created_at' in contact_data:
+            # Create without created_at first, then update it
+            created_at_value = contact_data.pop('created_at')
+            contact = Contact.objects.create(**contact_data)
+            # Update created_at after creation to override auto_now_add
+            Contact.objects.filter(id=contact.id).update(created_at=created_at_value)
+            # Refresh the contact object to get the updated created_at
+            contact.refresh_from_db()
+        else:
+            contact = Contact.objects.create(**contact_data)
         
         # Create log entry for contact creation
         serializer = ContactSerializer(contact, context={'request': request})
@@ -2612,6 +2683,7 @@ def contacts_bulk_create(request):
     confirmateur_ids = set()
     platform_ids = set()
     emails_to_check = set()
+    old_contact_ids_to_check = set()
     
     for contact_data in contacts_data:
         if contact_data.get('statusId'):
@@ -2627,6 +2699,10 @@ def contacts_bulk_create(request):
         email = contact_data.get('email', '').strip()
         if email:
             emails_to_check.add(email)
+        # Collect old_contact_ids for update check
+        old_contact_id = contact_data.get('oldContactId', '').strip() if contact_data.get('oldContactId') else ''
+        if old_contact_id:
+            old_contact_ids_to_check.add(old_contact_id)
     
     # Bulk fetch all related objects
     statuses_dict = {s.id: s for s in Status.objects.filter(id__in=status_ids)} if status_ids else {}
@@ -2677,11 +2753,20 @@ def contacts_bulk_create(request):
     # Check existing emails in bulk
     existing_emails = set(Contact.objects.filter(email__in=emails_to_check).values_list('email', flat=True)) if emails_to_check else set()
     
+    # Pre-fetch existing contacts by old_contact_id for updates
+    existing_contacts_by_old_id = {}
+    if old_contact_ids_to_check:
+        existing_contacts = Contact.objects.filter(old_contact_id__in=old_contact_ids_to_check).exclude(old_contact_id__isnull=True).exclude(old_contact_id='')
+        for contact in existing_contacts:
+            if contact.old_contact_id:
+                existing_contacts_by_old_id[contact.old_contact_id.strip()] = contact
+    
     # Track emails seen in this batch to detect CSV duplicates
     emails_seen_in_batch = {}
     
-    # Prepare contacts for bulk creation
+    # Prepare contacts for bulk creation and updates
     contacts_to_create = []
+    contacts_to_update = []
     results = []
     from django.utils import timezone
     
@@ -2692,15 +2777,24 @@ def contacts_bulk_create(request):
                 results.append({'index': idx, 'success': False, 'error': 'Le statut est requis'})
                 continue
             
-            # Check email uniqueness
+            # Handle old_contact_id and check for existing contact
+            old_contact_id_value = contact_data.get('oldContactId', '') or ''
+            old_contact_id_clean = old_contact_id_value.strip() if old_contact_id_value.strip() else None
+            
+            # Check if contact with this old_contact_id already exists
+            existing_contact = None
+            if old_contact_id_clean:
+                existing_contact = existing_contacts_by_old_id.get(old_contact_id_clean)
+            
+            # Check email uniqueness (skip if updating existing contact)
             email = contact_data.get('email', '').strip()
-            if email:
+            if email and not existing_contact:
                 # First check if this email appears multiple times in the CSV batch
                 if email in emails_seen_in_batch:
                     results.append({'index': idx, 'success': False, 'error': f'Email dupliqué dans le CSV: {email}'})
                     continue
                 
-                # Then check if email exists in database
+                # Then check if email exists in database (only for new contacts)
                 if email in existing_emails:
                     results.append({'index': idx, 'success': False, 'error': f'Un contact avec cet email existe déjà dans la base de données: {email}'})
                     continue
@@ -2708,34 +2802,105 @@ def contacts_bulk_create(request):
                 # Mark this email as seen in this batch
                 emails_seen_in_batch[email] = idx
             
-            # Generate contact ID
-            contact_id = uuid.uuid4().hex[:12]
-            while Contact.objects.filter(id=contact_id).exists() or any(c[0].id == contact_id for c in contacts_to_create):
-                contact_id = uuid.uuid4().hex[:12]
+            if existing_contact:
+                # Update existing contact instead of creating new one
+                # Update all fields from contact_data
+                existing_contact.civility = contact_data.get('civility', '') or ''
+                existing_contact.fname = contact_data.get('firstName', '') or ''
+                existing_contact.lname = contact_data.get('lastName', '') or ''
+                existing_contact.phone = phone_to_int(contact_data.get('phone', ''))
+                existing_contact.mobile = phone_to_int(contact_data.get('mobile', ''))
+                existing_contact.email = email
+                existing_contact.birth_date = parse_date(contact_data.get('birthDate'))
+                existing_contact.birth_place = contact_data.get('birthPlace', '') or ''
+                existing_contact.address = contact_data.get('address', '') or ''
+                existing_contact.address_complement = contact_data.get('addressComplement', '') or ''
+                existing_contact.postal_code = contact_data.get('postalCode', '') or ''
+                existing_contact.city = contact_data.get('city', '') or ''
+                existing_contact.nationality = contact_data.get('nationality', '') or ''
+                existing_contact.campaign = contact_data.get('campaign', '') or ''
+                
+                # Update status
+                status_id = contact_data.get('statusId')
+                if status_id and status_id in statuses_dict:
+                    existing_contact.status = statuses_dict[status_id]
+                elif 'statusId' in contact_data and not status_id:
+                    existing_contact.status = None
+                
+                # Update source
+                source_id = contact_data.get('sourceId')
+                if source_id and source_id in sources_dict:
+                    existing_contact.source = sources_dict[source_id]
+                elif 'sourceId' in contact_data and not source_id:
+                    existing_contact.source = None
+                
+                # Update teleoperator
+                teleoperator_id = str(contact_data.get('teleoperatorId', '')) if contact_data.get('teleoperatorId') else None
+                if teleoperator_id and teleoperator_id in teleoperator_users_dict:
+                    existing_contact.teleoperator = teleoperator_users_dict[teleoperator_id]
+                    if not existing_contact.assigned_at:
+                        existing_contact.assigned_at = timezone.now()
+                elif 'teleoperatorId' in contact_data and not teleoperator_id:
+                    existing_contact.teleoperator = None
+                
+                # Update confirmateur
+                confirmateur_id = str(contact_data.get('confirmateurId', '')) if contact_data.get('confirmateurId') else None
+                if confirmateur_id and confirmateur_id in confirmateur_users_dict:
+                    existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id]
+                elif 'confirmateurId' in contact_data and not confirmateur_id:
+                    existing_contact.confirmateur = None
+                
+                # Update platform
+                platform_id = contact_data.get('platformId')
+                if platform_id and platform_id in platforms_dict:
+                    existing_contact.platform = platforms_dict[platform_id]
+                elif 'platformId' in contact_data and not platform_id:
+                    existing_contact.platform = None
+                
+                # Update custom fields
+                if 'montantEncaisse' in contact_data:
+                    existing_contact.montant_encaisse = contact_data.get('montantEncaisse') if contact_data.get('montantEncaisse') else None
+                if 'bonus' in contact_data:
+                    existing_contact.bonus = contact_data.get('bonus') if contact_data.get('bonus') else None
+                if 'paiement' in contact_data:
+                    existing_contact.paiement = contact_data.get('paiement', '') or ''
+                if 'contrat' in contact_data:
+                    existing_contact.contrat = contact_data.get('contrat', '') or ''
+                if 'nomDeScene' in contact_data:
+                    existing_contact.nom_de_scene = contact_data.get('nomDeScene', '') or ''
+                if 'dateProTr' in contact_data:
+                    existing_contact.date_pro_tr = str(contact_data.get('dateProTr')).strip() if contact_data.get('dateProTr') else ''
+                if 'potentiel' in contact_data:
+                    existing_contact.potentiel = contact_data.get('potentiel', '') or ''
+                if 'produit' in contact_data:
+                    existing_contact.produit = contact_data.get('produit', '') or ''
+                
+                # Update confirmateur email and telephone
+                if 'confirmateurEmail' in contact_data:
+                    existing_contact.confirmateur_email = contact_data.get('confirmateurEmail', '').strip()
+                if 'confirmateurTelephone' in contact_data:
+                    existing_contact.confirmateur_telephone = contact_data.get('confirmateurTelephone', '').strip()
+                
+                # Update datetime fields
+                if contact_data.get('createdAt'):
+                    parsed_dt = parse_datetime(contact_data.get('createdAt'))
+                    if parsed_dt:
+                        existing_contact.created_at = parsed_dt
+                if contact_data.get('updatedAt'):
+                    parsed_dt = parse_datetime(contact_data.get('updatedAt'))
+                    if parsed_dt:
+                        existing_contact.updated_at = parsed_dt
+                if contact_data.get('assignedAt'):
+                    parsed_dt = parse_datetime(contact_data.get('assignedAt'))
+                    if parsed_dt:
+                        existing_contact.assigned_at = parsed_dt
+                
+                contacts_to_update.append(existing_contact)
+                results.append({'index': idx, 'success': True, 'contactId': existing_contact.id, 'updated': True})
+                continue  # Skip creation logic for this contact
             
-            # Build contact data
-            contact_obj_data = {
-                'id': contact_id,
-                'civility': contact_data.get('civility', '') or '',
-                'fname': contact_data.get('firstName', '') or '',
-                'lname': contact_data.get('lastName', '') or '',
-                'phone': phone_to_int(contact_data.get('phone', '')),
-                'mobile': phone_to_int(contact_data.get('mobile', '')),
-                'email': email,
-                'birth_date': parse_date(contact_data.get('birthDate')),
-                'birth_place': contact_data.get('birthPlace', '') or '',
-                'address': contact_data.get('address', '') or '',
-                'address_complement': contact_data.get('addressComplement', '') or '',
-                'postal_code': contact_data.get('postalCode', '') or '',
-                'city': contact_data.get('city', '') or '',
-                'nationality': contact_data.get('nationality', '') or '',
-                'campaign': contact_data.get('campaign', '') or '',
-                'creator': request.user,
-            }
-            
-            # Handle old_contact_id
-            old_contact_id_value = contact_data.get('oldContactId', '') or ''
-            contact_obj_data['old_contact_id'] = old_contact_id_value.strip() if old_contact_id_value.strip() else None
+            # No existing contact found, proceed with creation
+            contact_obj_data['old_contact_id'] = old_contact_id_clean
             
             # Set status
             status_id = contact_data.get('statusId')
@@ -2747,11 +2912,28 @@ def contacts_bulk_create(request):
             if source_id and source_id in sources_dict:
                 contact_obj_data['source'] = sources_dict[source_id]
             
+            # Handle datetime fields FIRST (before setting teleoperator assigned_at)
+            # This ensures CSV values take precedence
+            if contact_data.get('createdAt'):
+                parsed_dt = parse_datetime(contact_data.get('createdAt'))
+                if parsed_dt:
+                    contact_obj_data['created_at'] = parsed_dt
+            if contact_data.get('updatedAt'):
+                parsed_dt = parse_datetime(contact_data.get('updatedAt'))
+                if parsed_dt:
+                    contact_obj_data['updated_at'] = parsed_dt
+            if contact_data.get('assignedAt'):
+                parsed_dt = parse_datetime(contact_data.get('assignedAt'))
+                if parsed_dt:
+                    contact_obj_data['assigned_at'] = parsed_dt
+            
             # Set teleoperator
             teleoperator_id = str(contact_data.get('teleoperatorId', '')) if contact_data.get('teleoperatorId') else None
             if teleoperator_id and teleoperator_id in teleoperator_users_dict:
                 contact_obj_data['teleoperator'] = teleoperator_users_dict[teleoperator_id]
-                contact_obj_data['assigned_at'] = timezone.now()
+                # Only set assigned_at to now() if not already set from CSV
+                if 'assigned_at' not in contact_obj_data:
+                    contact_obj_data['assigned_at'] = timezone.now()
             
             # Set confirmateur
             confirmateur_id = str(contact_data.get('confirmateurId', '')) if contact_data.get('confirmateurId') else None
@@ -2787,20 +2969,6 @@ def contacts_bulk_create(request):
             if contact_data.get('confirmateurTelephone'):
                 contact_obj_data['confirmateur_telephone'] = contact_data.get('confirmateurTelephone', '').strip()
             
-            # Handle datetime fields
-            if contact_data.get('createdAt'):
-                parsed_dt = parse_datetime(contact_data.get('createdAt'))
-                if parsed_dt:
-                    contact_obj_data['created_at'] = parsed_dt
-            if contact_data.get('updatedAt'):
-                parsed_dt = parse_datetime(contact_data.get('updatedAt'))
-                if parsed_dt:
-                    contact_obj_data['updated_at'] = parsed_dt
-            if contact_data.get('assignedAt'):
-                parsed_dt = parse_datetime(contact_data.get('assignedAt'))
-                if parsed_dt:
-                    contact_obj_data['assigned_at'] = parsed_dt
-            
             contacts_to_create.append((Contact(**contact_obj_data), contact_data))
             results.append({'index': idx, 'success': True, 'contactId': contact_id})
             
@@ -2809,6 +2977,57 @@ def contacts_bulk_create(request):
             error_details = traceback.format_exc()
             print(f"Error preparing contact {idx}: {error_details}")
             results.append({'index': idx, 'success': False, 'error': str(e)})
+    
+    # Bulk update existing contacts
+    if contacts_to_update:
+        try:
+            from django.db import transaction
+            UPDATE_BATCH_SIZE = 50  # Smaller batch size to avoid timeouts
+            
+            # Process updates in batches within a transaction
+            with transaction.atomic():
+                for i in range(0, len(contacts_to_update), UPDATE_BATCH_SIZE):
+                    batch = contacts_to_update[i:i + UPDATE_BATCH_SIZE]
+                    Contact.objects.bulk_update(
+                        batch,
+                        [
+                            'civility', 'fname', 'lname', 'phone', 'mobile', 'email',
+                            'birth_date', 'birth_place', 'address', 'address_complement',
+                            'postal_code', 'city', 'nationality', 'campaign',
+                            'status', 'source', 'teleoperator', 'confirmateur', 'platform',
+                            'montant_encaisse', 'bonus', 'paiement', 'contrat',
+                            'nom_de_scene', 'date_pro_tr', 'potentiel', 'produit',
+                            'confirmateur_email', 'confirmateur_telephone',
+                            'created_at', 'updated_at', 'assigned_at'
+                        ],
+                        batch_size=UPDATE_BATCH_SIZE
+                    )
+            
+            # Note: Log entries are skipped for bulk operations to improve performance
+            # If logging is needed, it can be added as a background task
+            
+        except Exception as e:
+            import traceback
+            from django.db import OperationalError
+            error_details = traceback.format_exc()
+            print(f"Error bulk updating contacts: {error_details}")
+            
+            # Handle database connection errors
+            if isinstance(e, OperationalError) or 'timeout' in str(e).lower() or 'connection' in str(e).lower():
+                return Response({
+                    'error': 'Database connection timeout. Please try again in a moment.',
+                    'results': results,
+                    'total': len(contacts_data),
+                    'success': sum(1 for r in results if r.get('success')),
+                    'failed': len(contacts_data)
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # Mark update results as failed
+            for result in results:
+                if result.get('updated') and result.get('success'):
+                    result['success'] = False
+                    result['error'] = f'Bulk update failed: {str(e)}'
+                    result.pop('updated', None)
     
     # Bulk create contacts in smaller batches to avoid timeouts
     if contacts_to_create:
@@ -2849,11 +3068,17 @@ def contacts_bulk_create(request):
                     result['success'] = False
                     result['error'] = f'Bulk creation failed: {str(e)}'
     
+    # Count updated vs created contacts
+    updated_count = sum(1 for r in results if r.get('success') and r.get('updated'))
+    created_count = sum(1 for r in results if r.get('success') and not r.get('updated'))
+    
     return Response({
         'results': results,
         'total': len(contacts_data),
         'success': sum(1 for r in results if r.get('success')),
-        'failed': sum(1 for r in results if not r.get('success'))
+        'failed': sum(1 for r in results if not r.get('success')),
+        'created': created_count,
+        'updated': updated_count
     }, status=status.HTTP_201_CREATED)
 
 @api_view(['POST'])

@@ -102,7 +102,7 @@ export function MigrationPage() {
   const [sourceMapping, setSourceMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Source ID
   const [failedRows, setFailedRows] = useState<MigratedRow[]>([]); // Rows that failed to insert
   const [processingProgress, setProcessingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 }); // Progress tracking
-  const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; failureReasons: { [reason: string]: number } }>({ success: 0, failed: 0, failureReasons: {} }); // Migration results summary
+  const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; created: number; updated: number; failureReasons: { [reason: string]: number } }>({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {} }); // Migration results summary
 
   // Contrat options from the select
   const contratOptions = [
@@ -1230,18 +1230,56 @@ export function MigrationPage() {
         contactPayload.assignedAt = row.mappedData.assignedAt;
       }
 
-      // Create contact
-      const contactResponse = await apiCall('/api/contacts/create/', {
-        method: 'POST',
-        body: JSON.stringify(contactPayload),
-      });
-
-      const contactId = contactResponse?.contact?.id || contactResponse?.id;
-      
-      if (!contactId) {
-        throw new Error('Erreur lors de la création du contact');
+      // Check if contact with oldContactId exists
+      let existingContactId: string | null = null;
+      if (contactPayload.oldContactId) {
+        try {
+          const searchResponse = await apiCall('/api/contacts/', {
+            method: 'GET',
+            params: new URLSearchParams({
+              filter_oldContactId: contactPayload.oldContactId,
+              limit: '100'
+            })
+          });
+          
+          if (searchResponse.contacts && Array.isArray(searchResponse.contacts)) {
+            const existingContact = searchResponse.contacts.find((c: any) => 
+              c.oldContactId && c.oldContactId.trim() === contactPayload.oldContactId.trim()
+            );
+            if (existingContact) {
+              existingContactId = existingContact.id;
+            }
+          }
+        } catch (searchError) {
+          console.error('Error searching for existing contact:', searchError);
+          // Continue with creation if search fails
+        }
       }
 
+      let contactId: string;
+      let isUpdate = false;
+
+      if (existingContactId) {
+        // Update existing contact
+        isUpdate = true;
+        await apiCall(`/api/contacts/${existingContactId}/`, {
+          method: 'PATCH',
+          body: JSON.stringify(contactPayload),
+        });
+        contactId = existingContactId;
+      } else {
+        // Create new contact
+        const contactResponse = await apiCall('/api/contacts/create/', {
+          method: 'POST',
+          body: JSON.stringify(contactPayload),
+        });
+
+        contactId = contactResponse?.contact?.id || contactResponse?.id;
+        
+        if (!contactId) {
+          throw new Error('Erreur lors de la création du contact');
+        }
+      }
 
       setMigratedRows(prev => prev.map(r => 
         r.id === row.id ? { 
@@ -1253,7 +1291,7 @@ export function MigrationPage() {
         } : r
       ));
 
-      toast.success(`Contact créé avec succès`);
+      toast.success(isUpdate ? `Contact mis à jour avec succès` : `Contact créé avec succès`);
     } catch (error: any) {
       console.error('Error saving row:', error);
       const errorMessage = error?.error || error?.message || 'Erreur lors de la sauvegarde';
@@ -1320,6 +1358,8 @@ export function MigrationPage() {
 
       let totalSuccess = 0;
       let totalFailed = 0;
+      let totalCreated = 0;
+      let totalUpdated = 0;
       const contactIdMap = new Map<string, string>();
       const failedRowsList: MigratedRow[] = [];
       const failureReasons: { [reason: string]: number } = {};
@@ -1417,6 +1457,8 @@ export function MigrationPage() {
         const results = bulkResponse.results || [];
         totalSuccess += bulkResponse.success || 0;
         totalFailed += bulkResponse.failed || 0;
+        totalCreated += bulkResponse.created || 0;
+        totalUpdated += bulkResponse.updated || 0;
         
         // Update progress
         setProcessingProgress({ 
@@ -1490,17 +1532,28 @@ export function MigrationPage() {
 
       // Set failed rows and migration results
       setFailedRows(failedRowsList);
-      setMigrationResults({ success: totalSuccess, failed: totalFailed, failureReasons });
+      setMigrationResults({ success: totalSuccess, failed: totalFailed, created: totalCreated, updated: totalUpdated, failureReasons });
       setProcessingProgress({ current: rowsToSave.length, total: rowsToSave.length });
       
       if (totalFailed === 0) {
-        toast.success(`${totalSuccess} contact(s) créé(s) avec succès`);
+        if (totalUpdated > 0 && totalCreated > 0) {
+          toast.success(`${totalCreated} contact(s) créé(s), ${totalUpdated} contact(s) mis à jour avec succès`);
+        } else if (totalUpdated > 0) {
+          toast.success(`${totalUpdated} contact(s) mis à jour avec succès`);
+        } else {
+          toast.success(`${totalCreated} contact(s) créé(s) avec succès`);
+        }
         // If no failures, show success message and return to mapping
         setTimeout(() => {
           setStep('mapping');
         }, 1500);
       } else {
-        toast.warning(`${totalSuccess} contact(s) créé(s), ${totalFailed} erreur(s)`);
+        const successMsg = totalUpdated > 0 && totalCreated > 0 
+          ? `${totalCreated} créé(s), ${totalUpdated} mis à jour`
+          : totalUpdated > 0 
+            ? `${totalUpdated} mis à jour`
+            : `${totalCreated} créé(s)`;
+        toast.warning(`${successMsg}, ${totalFailed} erreur(s)`);
         setStep('results');
       }
     } catch (error: any) {
@@ -1539,6 +1592,8 @@ export function MigrationPage() {
 
       let totalSuccess = 0;
       let totalFailed = 0;
+      let totalCreated = 0;
+      let totalUpdated = 0;
       const contactIdMap = new Map<string, string>();
 
       const allResults: Array<{ row: MigratedRow; result: any; contactData: any }> = [];
@@ -1632,6 +1687,8 @@ export function MigrationPage() {
         const results = bulkResponse.results || [];
         totalSuccess += bulkResponse.success || 0;
         totalFailed += bulkResponse.failed || 0;
+        totalCreated += bulkResponse.created || 0;
+        totalUpdated += bulkResponse.updated || 0;
         
         // Process results
         for (let i = 0; i < results.length; i++) {
@@ -1697,9 +1754,20 @@ export function MigrationPage() {
       }));
 
       if (totalFailed === 0) {
-        toast.success(`${totalSuccess} contact(s) créé(s) avec succès`);
+        if (totalUpdated > 0 && totalCreated > 0) {
+          toast.success(`${totalCreated} contact(s) créé(s), ${totalUpdated} contact(s) mis à jour avec succès`);
+        } else if (totalUpdated > 0) {
+          toast.success(`${totalUpdated} contact(s) mis à jour avec succès`);
+        } else {
+          toast.success(`${totalCreated} contact(s) créé(s) avec succès`);
+        }
       } else {
-        toast.warning(`${totalSuccess} contact(s) créé(s), ${totalFailed} erreur(s)`);
+        const successMsg = totalUpdated > 0 && totalCreated > 0 
+          ? `${totalCreated} créé(s), ${totalUpdated} mis à jour`
+          : totalUpdated > 0 
+            ? `${totalUpdated} mis à jour`
+            : `${totalCreated} créé(s)`;
+        toast.warning(`${successMsg}, ${totalFailed} erreur(s)`);
       }
     } catch (error: any) {
       console.error('Error bulk saving contacts:', error);
@@ -2611,18 +2679,30 @@ export function MigrationPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {/* Success count */}
-                <div className="bg-green-50 border border-green-200 rounded p-4">
-                  <p className="text-sm text-green-800">
-                    <strong>✓ Contacts créés avec succès:</strong> {migrationResults.success}
-                  </p>
-                </div>
+                {/* Success count with breakdown */}
+                {migrationResults.success > 0 && (
+                  <div className="bg-green-50 border border-green-200 rounded p-4">
+                    <p className="text-sm text-green-800 mb-2">
+                      <strong>✓ Contacts traités avec succès:</strong> {migrationResults.success}
+                    </p>
+                    {(migrationResults.created > 0 || migrationResults.updated > 0) && (
+                      <div className="text-sm text-green-700 pl-4 space-y-1 mt-2">
+                        {migrationResults.created > 0 && (
+                          <div>• Contacts créés: <strong>{migrationResults.created}</strong></div>
+                        )}
+                        {migrationResults.updated > 0 && (
+                          <div>• Contacts mis à jour: <strong>{migrationResults.updated}</strong></div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Failed count and reasons */}
                 {migrationResults.failed > 0 && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
                     <p className="text-sm text-yellow-800 mb-3">
-                      <strong>⚠ Contacts non créés:</strong> {migrationResults.failed}
+                      <strong>⚠ Contacts non traités:</strong> {migrationResults.failed}
                     </p>
                     <div className="space-y-2">
                       {Object.entries(migrationResults.failureReasons).map(([reason, count]) => (

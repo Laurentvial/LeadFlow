@@ -267,6 +267,8 @@ class FosseSettings(models.Model):
         ('created_at_desc', 'Date de création (nouveau à ancien)'),
         ('updated_at_asc', 'Date de modification (ancien à nouveau)'),
         ('updated_at_desc', 'Date de modification (nouveau à ancien)'),
+        ('assigned_at_asc', 'Date d\'attribution (ancien à nouveau)'),
+        ('assigned_at_desc', 'Date d\'attribution (nouveau à ancien)'),
         ('email_asc', 'Email (ordre alphabétique)'),
         ('random', 'Aléatoire'),
     ]
