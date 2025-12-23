@@ -5447,39 +5447,64 @@ def contact_detail(request, contact_id):
                 # Use _id fields to avoid Django ORM caching issues
                 # Only set default status if BOTH fields are None (meaning both were cleared)
                 if teleoperator_id is None and confirmateur_id is None:
-                    # Both are None - check for default fosse status
-                    # Note: UserDetailsModel, FosseSettings, and Status are already imported at the top of the file
+                    # Both are None - check for previous status first, then default fosse status
+                    # Note: UserDetailsModel, FosseSettings, Status, and Log are already imported at the top of the file
                     try:
-                        user_details = UserDetailsModel.objects.filter(django_user=request.user).first()
-                        if user_details and user_details.role_id:
-                            # Use select_related to avoid N+1 query
-                            fosse_setting = FosseSettings.objects.select_related('default_status').filter(role_id=user_details.role_id).first()
-                            if fosse_setting:
-                                default_status_id = getattr(fosse_setting, 'default_status_id', None)
-                                
-                                # Determine which status to use: FosseSettings.default_status or fallback to is_fosse_default=True
+                        # First, try to get previous status from logs
+                        previous_status_name = None
+                        logs = Log.objects.filter(
+                            contact_id=contact,
+                            event_type='editContact'
+                        ).order_by('-created_at')
+                        
+                        current_status_name = contact.status.name if contact.status else ''
+                        for log in logs:
+                            if log.old_value and log.new_value:
+                                old_status = log.old_value.get('statusName', '')
+                                new_status = log.new_value.get('statusName', '')
+                                if old_status and old_status != new_status and new_status == current_status_name:
+                                    previous_status_name = old_status
+                                    break
+                        
+                        status_to_use = None
+                        
+                        # If previous_status exists, use it
+                        if previous_status_name:
+                            try:
+                                status_to_use = Status.objects.get(name=previous_status_name)
+                            except Status.DoesNotExist:
                                 status_to_use = None
-                                if default_status_id:
-                                    # Use the status configured in FosseSettings
-                                    try:
-                                        status_to_use = Status.objects.get(id=default_status_id)
-                                    except Status.DoesNotExist:
-                                        status_to_use = None
-                                
-                                # Fallback: if no status from FosseSettings, use the status with is_fosse_default=True
-                                if not status_to_use:
-                                    status_to_use = Status.objects.filter(is_fosse_default=True).first()
-                                
-                                # Apply the status if we found one and statusId wasn't explicitly set
-                                if status_to_use:
-                                    if 'statusId' not in request.data:
+                        
+                        # If previous_status is empty, use default status from FosseSettings
+                        if not status_to_use:
+                            user_details = UserDetailsModel.objects.filter(django_user=request.user).first()
+                            if user_details and user_details.role_id:
+                                # Use select_related to avoid N+1 query
+                                fosse_setting = FosseSettings.objects.select_related('default_status').filter(role_id=user_details.role_id).first()
+                                if fosse_setting:
+                                    default_status_id = getattr(fosse_setting, 'default_status_id', None)
+                                    
+                                    if default_status_id:
+                                        # Use the status configured in FosseSettings
                                         try:
-                                            contact.status = status_to_use
-                                        except Exception:
-                                            import traceback
-                                            traceback.print_exc()
+                                            status_to_use = Status.objects.get(id=default_status_id)
+                                        except Status.DoesNotExist:
+                                            status_to_use = None
+                                    
+                                    # Fallback: if no status from FosseSettings, use the status with is_fosse_default=True
+                                    if not status_to_use:
+                                        status_to_use = Status.objects.filter(is_fosse_default=True).first()
+                        
+                        # Apply the status if we found one and statusId wasn't explicitly set
+                        if status_to_use:
+                            if 'statusId' not in request.data:
+                                try:
+                                    contact.status = status_to_use
+                                except Exception:
+                                    import traceback
+                                    traceback.print_exc()
                     except Exception:
-                        # If there's an error getting the default status, log it but don't fail the update
+                        # If there's an error getting the status, log it but don't fail the update
                         import traceback
                         traceback.print_exc()
             
