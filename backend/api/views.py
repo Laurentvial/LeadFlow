@@ -2077,10 +2077,7 @@ class FosseContactView(generics.ListAPIView):
                         # This ensures we only show contacts with the most recent/latest status
                         q_objects.append(models.Q(status_id__in=regular_values))
                     elif column_id == 'source':
-                        print(f"[FOSSE DEBUG] Applying source filter with values: {regular_values}")
-                        print(f"[FOSSE DEBUG] Source filter type check - first value type: {type(regular_values[0])}")
                         q_objects.append(models.Q(source_id__in=regular_values))
-                        print(f"[FOSSE DEBUG] Source filter Q object created: {q_objects[-1]}")
                     elif column_id == 'teleoperator':
                         # For Fosse, teleoperator is always null, so regular values would exclude all
                         queryset = queryset.none()
@@ -2143,7 +2140,6 @@ class FosseContactView(generics.ListAPIView):
                         # Find contacts that have logs with old_value.statusName matching filter values
                         # where status actually changed (old != new)
                         matching_contact_ids = set()
-                        print(f"[FOSSE DEBUG] previousStatus filter - regular_values: {regular_values}")
                         
                         # Get all contacts with status change logs
                         contacts_with_logs = Contact.objects.filter(
@@ -2152,8 +2148,6 @@ class FosseContactView(generics.ListAPIView):
                         ).exclude(
                             contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
                         ).distinct()
-                        
-                        print(f"[FOSSE DEBUG] Found {contacts_with_logs.count()} contacts with status change logs")
                         
                         for contact in contacts_with_logs:
                             # Get current status name for this contact
@@ -2186,28 +2180,21 @@ class FosseContactView(generics.ListAPIView):
                                 # Check if the immediate previous status matches any of the filter values
                                 if previous_status in regular_values:
                                     matching_contact_ids.add(contact.id)
-                                    print(f"[FOSSE DEBUG] Contact {contact.id} - current: '{current_status_name}', previous: '{previous_status}' - MATCH")
                             elif not current_status_name:
                                 # Contact has no current status - check if empty is selected
                                 pass
-                        
-                        print(f"[FOSSE DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
                         
                         # Match preview logic:
                         # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
                         # - So we need to add regular values filter, and empty filter will be combined with OR if has_empty is True
                         if matching_contact_ids:
                             q_objects.append(models.Q(id__in=matching_contact_ids))
-                            print(f"[FOSSE DEBUG] previousStatus filter - Added Q object with {len(matching_contact_ids)} contact IDs")
                         elif not has_empty:
                             # No matches and no empty option - exclude all (strict filter)
-                            print(f"[FOSSE DEBUG] previousStatus filter - No matches found and empty not selected, excluding all contacts")
                             queryset = queryset.none()
                             break
                         # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
                         # The empty filter (already added above) will be applied, showing only contacts with empty previousStatus
-                        elif has_empty:
-                            print(f"[FOSSE DEBUG] previousStatus filter - No matches found but empty selected, will show only empty contacts")
                     elif column_id == 'previousTeleoperator':
                         # Filter by previous teleoperator from logs
                         # Similar to previousStatus - find contacts with matching old_value.teleoperatorName
@@ -2241,46 +2228,22 @@ class FosseContactView(generics.ListAPIView):
                 
                 # Apply combined filter
                 if q_objects:
-                    if column_id == 'source':
-                        print(f"[FOSSE DEBUG] About to apply source filter. Q objects count: {len(q_objects)}")
-                        print(f"[FOSSE DEBUG] Queryset count before filter: {queryset.count()}")
-                    if column_id in ['previousStatus', 'previousTeleoperator']:
-                        print(f"[FOSSE DEBUG] {column_id} - q_objects count: {len(q_objects)}, has_empty: {has_empty}, regular_values: {regular_values}")
-                        print(f"[FOSSE DEBUG] {column_id} - q_objects: {q_objects}")
                     if len(q_objects) == 1:
                         # Single filter - apply directly
                         queryset = queryset.filter(q_objects[0])
-                        if column_id in ['previousStatus', 'previousTeleoperator']:
-                            print(f"[FOSSE DEBUG] {column_id} - Applied single filter, queryset count after: {queryset.count()}")
                     else:
                         # Multiple filters - combine with OR (empty OR regular values)
                         # For previousStatus and previousTeleoperator, ensure empty filter is only included if has_empty is True
-                        if column_id in ['previousStatus', 'previousTeleoperator']:
-                            print(f"[FOSSE DEBUG] {column_id} combining {len(q_objects)} Q objects, has_empty: {has_empty}, regular_values: {regular_values}")
                         combined_q = q_objects[0]
                         for q_obj in q_objects[1:]:
                             combined_q |= q_obj
                         queryset = queryset.filter(combined_q)
-                        if column_id in ['previousStatus', 'previousTeleoperator']:
-                            print(f"[FOSSE DEBUG] {column_id} - Applied combined filter, queryset count after: {queryset.count()}")
-                elif column_id in ['previousStatus', 'previousTeleoperator']:
-                    # No q_objects but we're filtering - this shouldn't happen, but log it
-                    print(f"[FOSSE DEBUG] WARNING: {column_id} - has_empty: {has_empty}, regular_values: {regular_values}, but q_objects is empty!")
-                    
+                else:
                     # Special handling for managerTeam in Fosse
                     if column_id == 'managerTeam' and regular_values:
                         # Filter by creator's team for Fosse contacts
                         team_user_ids = TeamMember.objects.filter(team_id__in=regular_values).values_list('user__django_user__id', flat=True)
                         queryset = queryset.filter(creator_id__in=team_user_ids)
-                    
-                    # Debug logging for source filter
-                    if column_id == 'source':
-                        queryset_after_count = queryset.count()
-                        print(f"[FOSSE DEBUG] Source filter applied. Queryset count after filter: {queryset_after_count}")
-                        # Sample a few source_ids to verify
-                        sample_sources = list(queryset.values_list('source_id', flat=True)[:10])
-                        print(f"[FOSSE DEBUG] Sample source_ids after filter: {sample_sources}")
-                        print(f"[FOSSE DEBUG] Expected source_ids: {regular_values}")
         
         # Apply date range filters
         for column_id, date_range in date_range_filters.items():
@@ -5261,15 +5224,8 @@ def contact_detail(request, contact_id):
                         old_user_details = UserDetailsModel.objects.filter(django_user_id=old_teleoperator_django_id).first()
                         if old_user_details:
                             old_teleoperator_userdetails_id = old_user_details.id
-                    except Exception as e:
-                        print(f"[DEBUG] Error getting old teleoperator UserDetails ID: {e}")
-                
-                # Debug logging
-                print(f"[DEBUG] ===== Updating teleoperator for contact {contact.id} =====")
-                print(f"[DEBUG] Raw teleoperator_id from request: {teleoperator_id_raw} (type: {type(teleoperator_id_raw)})")
-                print(f"[DEBUG] Old teleoperator_django_id: {old_teleoperator_django_id} (type: {type(old_teleoperator_django_id)})")
-                print(f"[DEBUG] Old teleoperator_userdetails_id: {old_teleoperator_userdetails_id}")
-                print(f"[DEBUG] New teleoperator_id (UserDetails ID): {new_teleoperator_id} (type: {type(new_teleoperator_id)})")
+                    except Exception:
+                        pass
                 
                 # Teleoperator changed if:
                 # 1. Old is None and new is not None (assigning)
@@ -5289,9 +5245,6 @@ def contact_detail(request, contact_id):
                 else:
                     # Both are None
                     teleoperator_changed = False
-                    change_type = "both None"
-                
-                print(f"[DEBUG] Teleoperator changed: {teleoperator_changed} ({change_type})")
                 
                 if new_teleoperator_id is not None:
                     try:
@@ -5303,9 +5256,8 @@ def contact_detail(request, contact_id):
                             user_details = UserDetailsModel.objects.filter(id=str(new_teleoperator_id)).first()
                             if user_details and user_details.django_user:
                                 teleoperator_user = user_details.django_user
-                                print(f"[DEBUG] Found teleoperator via UserDetails ID: {new_teleoperator_id} -> Django User ID: {teleoperator_user.id}")
-                        except Exception as e:
-                            print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        except Exception:
+                            pass
                         
                         # Fallback: Try Django User ID lookup only if UserDetails lookup failed
                         if not teleoperator_user:
@@ -5313,8 +5265,6 @@ def contact_detail(request, contact_id):
                                 # Try as Django User ID (if it's numeric)
                                 int_id = int(new_teleoperator_id)
                                 teleoperator_user = DjangoUser.objects.filter(id=int_id).first()
-                                if teleoperator_user:
-                                    print(f"[DEBUG] Found teleoperator via Django User ID: {new_teleoperator_id}")
                             except (ValueError, TypeError):
                                 pass
                         
@@ -5325,23 +5275,16 @@ def contact_detail(request, contact_id):
                                 from django.utils import timezone
                                 contact.assigned_at = timezone.now()
                                 contact._assigned_at_was_set = True  # Mark that we set assigned_at
-                                print(f"[DEBUG] ✓✓✓ Teleoperator CHANGED from {old_teleoperator_django_id} to {teleoperator_user.id}")
-                                print(f"[DEBUG] ✓✓✓ Set assigned_at to {contact.assigned_at}")
-                            else:
-                                print(f"[DEBUG] ✗ Teleoperator NOT changed (same value), keeping assigned_at as {contact.assigned_at}")
                             # Clear any cached relationship
                             if hasattr(contact, '_teleoperator_cache'):
                                 delattr(contact, '_teleoperator_cache')
-                            print(f"[DEBUG] Set teleoperator to user ID: {teleoperator_user.id}, Name: {teleoperator_user.first_name} {teleoperator_user.last_name}")
                         else:
-                            print(f"[DEBUG] ERROR: Teleoperator user not found for ID: {new_teleoperator_id}")
                             # Don't clear the teleoperator if user not found - return error instead
                             return Response(
                                 {'error': f'Utilisateur téléopérateur avec l\'ID {new_teleoperator_id} non trouvé'},
                                 status=status.HTTP_400_BAD_REQUEST
                             )
                     except Exception as e:
-                        print(f"[DEBUG] ERROR setting teleoperator: {e}")
                         import traceback
                         traceback.print_exc()
                 else:
@@ -5351,20 +5294,13 @@ def contact_detail(request, contact_id):
                     if teleoperator_changed:
                         contact.assigned_at = None
                         contact._assigned_at_was_set = True  # Mark that we modified assigned_at
-                        print(f"[DEBUG] ✓✓✓ Teleoperator CLEARED (was {old_teleoperator_django_id}), set assigned_at to None")
-                    else:
-                        print(f"[DEBUG] ✗ Teleoperator NOT changed (already None), keeping assigned_at as {contact.assigned_at}")
                     # Clear any cached relationship
                     if hasattr(contact, '_teleoperator_cache'):
                         delattr(contact, '_teleoperator_cache')
-                    print(f"[DEBUG] Cleared teleoperator (set to None)")
-                print(f"[DEBUG] ===== End teleoperator update for contact {contact.id} =====")
             
             # Update confirmateur if provided
             if 'confirmateurId' in request.data:
-                print(f"[DEBUG] ===== CONFIRMATEUR UPDATE BLOCK ENTERED =====")
                 confirmateur_id_raw = request.data.get('confirmateurId')
-                print(f"[DEBUG] confirmateurId found in request.data: {confirmateur_id_raw} (type: {type(confirmateur_id_raw)})")
                 
                 # Normalize empty string, 'none', or None to None
                 if confirmateur_id_raw is None or confirmateur_id_raw == '' or confirmateur_id_raw == 'none':
@@ -5384,15 +5320,8 @@ def contact_detail(request, contact_id):
                         old_user_details = UserDetailsModel.objects.filter(django_user_id=old_confirmateur_django_id).first()
                         if old_user_details:
                             old_confirmateur_userdetails_id = old_user_details.id
-                    except Exception as e:
-                        print(f"[DEBUG] Error getting old confirmateur UserDetails ID: {e}")
-                
-                # Debug logging
-                print(f"[DEBUG] ===== Updating confirmateur for contact {contact.id} =====")
-                print(f"[DEBUG] Raw confirmateur_id from request: {confirmateur_id_raw} (type: {type(confirmateur_id_raw)})")
-                print(f"[DEBUG] Old confirmateur_django_id: {old_confirmateur_django_id} (type: {type(old_confirmateur_django_id)})")
-                print(f"[DEBUG] Old confirmateur_userdetails_id: {old_confirmateur_userdetails_id}")
-                print(f"[DEBUG] New confirmateur_id (UserDetails ID): {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
+                    except Exception:
+                        pass
                 
                 # Confirmateur changed if:
                 # 1. Old is None and new is not None (assigning)
@@ -5401,25 +5330,18 @@ def contact_detail(request, contact_id):
                 # Compare UserDetails IDs (strings)
                 if old_confirmateur_userdetails_id is None and new_confirmateur_id is not None:
                     confirmateur_changed = True
-                    change_type = "assigning (None -> value)"
                 elif old_confirmateur_userdetails_id is not None and new_confirmateur_id is None:
                     confirmateur_changed = True
-                    change_type = "clearing (value -> None)"
                 elif old_confirmateur_userdetails_id is not None and new_confirmateur_id is not None:
                     # Both are not None, compare as strings (UserDetails IDs)
                     confirmateur_changed = (str(old_confirmateur_userdetails_id) != str(new_confirmateur_id))
-                    change_type = f"reassigning ({old_confirmateur_userdetails_id} -> {new_confirmateur_id})" if confirmateur_changed else f"same value ({old_confirmateur_userdetails_id})"
                 else:
                     # Both are None
                     confirmateur_changed = False
-                    change_type = "both None"
-                
-                print(f"[DEBUG] Confirmateur changed: {confirmateur_changed} ({change_type})")
                 
                 if new_confirmateur_id is not None:
                     try:
                         # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
-                        print(f"[DEBUG] Looking up confirmateur user with ID: {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
                         confirmateur_user = None
                         
                         # First try as UserDetails ID (string) - this is what frontend sends
@@ -5427,9 +5349,8 @@ def contact_detail(request, contact_id):
                             user_details = UserDetailsModel.objects.filter(id=str(new_confirmateur_id)).first()
                             if user_details and user_details.django_user:
                                 confirmateur_user = user_details.django_user
-                                print(f"[DEBUG] Found confirmateur via UserDetails ID: {new_confirmateur_id} -> Django User ID: {confirmateur_user.id}")
-                        except Exception as e:
-                            print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        except Exception:
+                            pass
                         
                         # Fallback: Try Django User ID lookup only if UserDetails lookup failed
                         if not confirmateur_user:
@@ -5437,31 +5358,21 @@ def contact_detail(request, contact_id):
                                 # Try as Django User ID (if it's numeric)
                                 int_id = int(new_confirmateur_id)
                                 confirmateur_user = DjangoUser.objects.filter(id=int_id).first()
-                                if confirmateur_user:
-                                    print(f"[DEBUG] Found confirmateur via Django User ID: {new_confirmateur_id}")
                             except (ValueError, TypeError):
                                 pass
                         
                         if confirmateur_user:
-                            print(f"[DEBUG] Found confirmateur user: ID={confirmateur_user.id}, Name={confirmateur_user.first_name} {confirmateur_user.last_name}")
                             contact.confirmateur = confirmateur_user
                             # Clear any cached relationship
                             if hasattr(contact, '_confirmateur_cache'):
                                 delattr(contact, '_confirmateur_cache')
-                            print(f"[DEBUG] Set contact.confirmateur to user ID: {confirmateur_user.id}, Name: {confirmateur_user.first_name} {confirmateur_user.last_name}")
-                            print(f"[DEBUG] contact.confirmateur_id after assignment: {contact.confirmateur_id}")
                         else:
-                            print(f"[DEBUG] ERROR: Confirmateur user not found for ID: {new_confirmateur_id}")
-                            # Check if any users exist with similar IDs
-                            all_user_ids = list(DjangoUser.objects.values_list('id', flat=True)[:10])
-                            print(f"[DEBUG] Sample Django User IDs in database: {all_user_ids}")
                             # Don't clear the confirmateur if user not found - return error instead
                             return Response(
                                 {'error': f'Utilisateur confirmateur avec l\'ID {new_confirmateur_id} non trouvé'},
                                 status=status.HTTP_400_BAD_REQUEST
                             )
-                    except Exception as e:
-                        print(f"[DEBUG] ERROR setting confirmateur: {e}")
+                    except Exception:
                         import traceback
                         traceback.print_exc()
                 else:
@@ -5470,9 +5381,6 @@ def contact_detail(request, contact_id):
                     # Clear any cached relationship
                     if hasattr(contact, '_confirmateur_cache'):
                         delattr(contact, '_confirmateur_cache')
-                    print(f"[DEBUG] Cleared confirmateur (set to None)")
-                    print(f"[DEBUG] After clearing confirmateur - teleoperator: {contact.teleoperator}, confirmateur: {contact.confirmateur}")
-                print(f"[DEBUG] ===== End confirmateur update for contact {contact.id} =====")
             
             # Update campaign if provided
             if 'campaign' in request.data:
@@ -5525,22 +5433,11 @@ def contact_detail(request, contact_id):
             
             # Check if teleoperator or confirmateur was changed and if both are now null
             # If both are null, set status to default fosse status from user's role settings
-            print(f"[DEBUG] ===== CHECKING DEFAULT FOSSE STATUS =====")
             # Note: teleoperator_changed and confirmateur_changed are already set above in the update blocks
             
             # Use _id fields to check actual database values (avoids Django ORM caching issues)
             teleoperator_id = getattr(contact, 'teleoperator_id', None)
             confirmateur_id = getattr(contact, 'confirmateur_id', None)
-            
-            print(f"[DEBUG] Teleoperator changed: {teleoperator_changed}, Confirmateur changed: {confirmateur_changed}")
-            print(f"[DEBUG] Contact teleoperator_id: {teleoperator_id}, confirmateur_id: {confirmateur_id}")
-            print(f"[DEBUG] Contact teleoperator object: {contact.teleoperator}, confirmateur object: {contact.confirmateur}")
-            print(f"[DEBUG] Teleoperator is None: {teleoperator_id is None}, Confirmateur is None: {confirmateur_id is None}")
-            print(f"[DEBUG] Request data keys: {list(request.data.keys())}")
-            if 'teleoperatorId' in request.data:
-                print(f"[DEBUG] Request teleoperatorId value: {request.data.get('teleoperatorId')}")
-            if 'confirmateurId' in request.data:
-                print(f"[DEBUG] Request confirmateurId value: {request.data.get('confirmateurId')}")
             
             # Only check for default fosse status if we're clearing assignments (both become None)
             # This prevents running the logic when assigning users
@@ -5550,19 +5447,15 @@ def contact_detail(request, contact_id):
                 # Use _id fields to avoid Django ORM caching issues
                 # Only set default status if BOTH fields are None (meaning both were cleared)
                 if teleoperator_id is None and confirmateur_id is None:
-                    print(f"[DEBUG] Both teleoperator and confirmateur are None - checking for default fosse status")
                     # Both are None - check for default fosse status
                     # Note: UserDetailsModel, FosseSettings, and Status are already imported at the top of the file
                     try:
                         user_details = UserDetailsModel.objects.filter(django_user=request.user).first()
-                        print(f"[DEBUG] User details found: {user_details is not None}, Role ID: {user_details.role_id if user_details else None}")
                         if user_details and user_details.role_id:
                             # Use select_related to avoid N+1 query
                             fosse_setting = FosseSettings.objects.select_related('default_status').filter(role_id=user_details.role_id).first()
-                            print(f"[DEBUG] Fosse setting found: {fosse_setting is not None}")
                             if fosse_setting:
                                 default_status_id = getattr(fosse_setting, 'default_status_id', None)
-                                print(f"[DEBUG] Default status ID from FosseSettings: {default_status_id}")
                                 
                                 # Determine which status to use: FosseSettings.default_status or fallback to is_fosse_default=True
                                 status_to_use = None
@@ -5570,70 +5463,43 @@ def contact_detail(request, contact_id):
                                     # Use the status configured in FosseSettings
                                     try:
                                         status_to_use = Status.objects.get(id=default_status_id)
-                                        print(f"[DEBUG] Using FosseSettings default status: {status_to_use.name} (ID: {status_to_use.id})")
                                     except Status.DoesNotExist:
-                                        print(f"[DEBUG] FosseSettings default status {default_status_id} not found, falling back to is_fosse_default")
                                         status_to_use = None
                                 
                                 # Fallback: if no status from FosseSettings, use the status with is_fosse_default=True
                                 if not status_to_use:
                                     status_to_use = Status.objects.filter(is_fosse_default=True).first()
-                                    if status_to_use:
-                                        print(f"[DEBUG] Using fallback status with is_fosse_default=True: {status_to_use.name} (ID: {status_to_use.id})")
-                                    else:
-                                        print(f"[DEBUG] No status with is_fosse_default=True found")
                                 
                                 # Apply the status if we found one and statusId wasn't explicitly set
                                 if status_to_use:
                                     if 'statusId' not in request.data:
-                                        print(f"[DEBUG] StatusId not in request.data, updating to default fosse status")
                                         try:
                                             contact.status = status_to_use
-                                            print(f"[DEBUG] SUCCESS: Set contact status to default fosse status: {status_to_use.name} (ID: {status_to_use.id})")
-                                        except Exception as status_error:
-                                            print(f"[DEBUG] Error setting default status object: {status_error}")
+                                        except Exception:
                                             import traceback
                                             traceback.print_exc()
-                                    else:
-                                        print(f"[DEBUG] StatusId is in request.data, skipping default status update")
-                                else:
-                                    print(f"[DEBUG] No default status available (neither FosseSettings.default_status nor is_fosse_default=True)")
-                            else:
-                                print(f"[DEBUG] No fosse setting found for role {user_details.role_id}")
-                        else:
-                            print(f"[DEBUG] User has no role or user_details not found")
-                    except Exception as e:
+                    except Exception:
                         # If there's an error getting the default status, log it but don't fail the update
-                        print(f"[DEBUG] Error setting default fosse status: {e}")
                         import traceback
                         traceback.print_exc()
-                else:
-                    print(f"[DEBUG] Not both None - teleoperator_id: {teleoperator_id}, confirmateur_id: {confirmateur_id}")
             
             # Save the contact with all modifications
             try:
-                # Debug: Check assigned_at before save
-                print(f"[DEBUG] Before save - contact.assigned_at: {contact.assigned_at}")
-                
                 # If assigned_at was modified, update it directly in the database first
                 # This ensures it's persisted regardless of Django's change tracking
                 if hasattr(contact, '_assigned_at_was_set'):
                     assigned_at_value = contact.assigned_at
                     # Direct database update to ensure assigned_at is saved
                     Contact.objects.filter(id=contact.id).update(assigned_at=assigned_at_value)
-                    print(f"[DEBUG] Directly updated assigned_at in DB: {assigned_at_value}")
                     # Refresh the contact object so Django knows about the DB change
                     contact.refresh_from_db(fields=['assigned_at'])
                     delattr(contact, '_assigned_at_was_set')
                 
                 # Save all other modified fields normally
-                print(f"[DEBUG] Before save - contact.confirmateur_id: {contact.confirmateur_id}, contact.teleoperator_id: {contact.teleoperator_id}")
                 contact.save()
                 
                 # Verify assigned_at was saved
                 contact.refresh_from_db()
-                print(f"[DEBUG] After save - contact.assigned_at: {contact.assigned_at}")
-                print(f"[DEBUG] After save - contact.confirmateur_id: {contact.confirmateur_id}, contact.teleoperator_id: {contact.teleoperator_id}")
                 # Django automatically handles transaction commits - no manual commit needed
             except ValueError as e:
                 # Handle ValueError specifically (e.g., invalid phone/mobile format)
@@ -5690,28 +5556,13 @@ def contact_detail(request, contact_id):
                 # Force Django to load the confirmateur relationship
                 # Access the confirmateur to ensure it's loaded from DB
                 if hasattr(contact, 'confirmateur_id') and contact.confirmateur_id:
-                    confirmateur_obj = contact.confirmateur  # This forces Django to load the relationship
-                    if confirmateur_obj:
-                        # Verify the confirmateur has the expected data
-                        first_name = getattr(confirmateur_obj, 'first_name', '') or ''
-                        last_name = getattr(confirmateur_obj, 'last_name', '') or ''
-                        confirmateur_name = f"{first_name} {last_name}".strip()
-                        print(f"[DEBUG] Reloaded contact - confirmateur_id: {contact.confirmateur_id}, confirmateur_name: {confirmateur_name}")
-                    else:
-                        print(f"[DEBUG] Reloaded contact - confirmateur_id exists ({contact.confirmateur_id}) but confirmateur object is None")
-                else:
-                    print(f"[DEBUG] Reloaded contact - no confirmateur_id (confirmateur is None)")
+                    contact.confirmateur  # This forces Django to load the relationship
             except Contact.DoesNotExist:
                 # Contact was deleted or doesn't exist - this shouldn't happen but handle it gracefully
-                print(f"[DEBUG] Contact {contact_id} not found after save, using original contact object")
                 # Use the contact object we just saved (it should still be valid)
                 pass
-            except Exception as reload_error:
-                # If reload fails, log it but continue with the contact object we saved
-                print(f"[DEBUG] Error reloading contact: {reload_error}")
-                import traceback
-                traceback.print_exc()
-                # Continue with the contact object we just saved
+            except Exception:
+                # If reload fails, continue with the contact object we saved
                 pass
             
             # Get new value after saving
@@ -6949,8 +6800,6 @@ def status_update(request, status_id):
         serializer.save()
         # Refresh from database to get updated values
         status_obj.refresh_from_db()
-        logger.info(f"[DEBUG] Status after update - is_event: {status_obj.is_event}, is_fosse_default: {status_obj.is_fosse_default}")
-        print(f"[DEBUG] Status after update - is_event: {status_obj.is_event}, is_fosse_default: {status_obj.is_fosse_default}", flush=True, file=sys.stderr)
         sys.stderr.flush()
         return Response(StatusSerializer(status_obj).data, status=status.HTTP_200_OK)
     logger.error(f"[ERROR] Status update validation errors: {serializer.errors}")

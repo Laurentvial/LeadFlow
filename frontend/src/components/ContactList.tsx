@@ -695,7 +695,7 @@ export function ContactList({
             defaultOrder: data.defaultOrder || 'none',
           });
         } catch (error: any) {
-          console.error('[FOSSE DEBUG] Error loading Fosse settings:', error);
+          console.error('Error loading Fosse settings:', error);
           // If settings don't exist, use defaults
           setFosseSettings({
             forcedColumns: [],

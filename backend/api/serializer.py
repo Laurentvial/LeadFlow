@@ -1416,30 +1416,21 @@ class StatusSerializer(serializers.ModelSerializer):
             if 'isFosseDefault' in self.initial_data:
                 is_fosse_default_value = bool(self.initial_data.get('isFosseDefault', False))
                 validated_data['is_fosse_default'] = is_fosse_default_value
-                print(f"[DEBUG] Found isFosseDefault in initial_data: {is_fosse_default_value}", flush=True)
-            else:
-                print(f"[DEBUG] isFosseDefault NOT in initial_data", flush=True)
             
             # Handle clientDefault - check if it's explicitly in the request (even if False)
             if 'clientDefault' in self.initial_data:
                 client_default_value = bool(self.initial_data.get('clientDefault', False))
                 validated_data['client_default'] = client_default_value
-                print(f"[DEBUG] Found clientDefault in initial_data: {client_default_value}", flush=True)
-            else:
-                print(f"[DEBUG] clientDefault NOT in initial_data", flush=True)
         
         # Also check validated_data (after source mapping, if it worked)
         if 'is_event' in validated_data and is_event_value is None:
             is_event_value = validated_data['is_event']
-            print(f"[DEBUG] Found is_event in validated_data: {is_event_value}", flush=True)
         
         if 'is_fosse_default' in validated_data and is_fosse_default_value is None:
             is_fosse_default_value = validated_data['is_fosse_default']
-            print(f"[DEBUG] Found is_fosse_default in validated_data: {is_fosse_default_value}", flush=True)
         
         if 'client_default' in validated_data and client_default_value is None:
             client_default_value = validated_data['client_default']
-            print(f"[DEBUG] Found client_default in validated_data: {client_default_value}", flush=True)
         
         # If setting is_fosse_default to True, unset all other statuses
         if is_fosse_default_value:
@@ -1461,27 +1452,18 @@ class StatusSerializer(serializers.ModelSerializer):
             if hasattr(updated_instance, 'is_event'):
                 updated_instance.is_event = is_event_value
                 fields_to_update.append('is_event')
-                print(f"[DEBUG] Setting is_event to: {is_event_value}", flush=True)
-            else:
-                print(f"[ERROR] Field 'is_event' does not exist on Status model!", flush=True)
         
         if is_fosse_default_value is not None:
             # Verify the field exists on the model
             if hasattr(updated_instance, 'is_fosse_default'):
                 updated_instance.is_fosse_default = is_fosse_default_value
                 fields_to_update.append('is_fosse_default')
-                print(f"[DEBUG] Setting is_fosse_default to: {is_fosse_default_value}", flush=True)
-            else:
-                print(f"[ERROR] Field 'is_fosse_default' does not exist on Status model!", flush=True)
         
         if client_default_value is not None:
             # Verify the field exists on the model
             if hasattr(updated_instance, 'client_default'):
                 updated_instance.client_default = client_default_value
                 fields_to_update.append('client_default')
-                print(f"[DEBUG] Setting client_default to: {client_default_value}", flush=True)
-            else:
-                print(f"[ERROR] Field 'client_default' does not exist on Status model!", flush=True)
         
         # Save explicitly if we have fields to update
         if fields_to_update:
@@ -1489,10 +1471,6 @@ class StatusSerializer(serializers.ModelSerializer):
             Status.objects.filter(id=updated_instance.id).update(**{field: getattr(updated_instance, field) for field in fields_to_update})
             # Refresh instance to get updated values
             updated_instance.refresh_from_db()
-            print(f"[DEBUG] Directly updated database fields: {fields_to_update}", flush=True)
-            print(f"[DEBUG] After DB update - is_event: {updated_instance.is_event}, is_fosse_default: {updated_instance.is_fosse_default}, client_default: {updated_instance.client_default}", flush=True)
-        else:
-            print(f"[DEBUG] No fields to update", flush=True)
         
         sys.stdout.flush()
         return updated_instance
