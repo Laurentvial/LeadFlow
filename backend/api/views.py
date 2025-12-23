@@ -1733,51 +1733,31 @@ class FosseContactView(generics.ListAPIView):
                                     q_objects.append(models.Q(civility__in=regular_values))
                                 elif column_id == 'previousStatus':
                                     # Filter by IMMEDIATE previous status (the status right before the current one)
-                                    # NOT any status in the history - only the most recent previous status
-                                    # Match the same logic as regular filter
+                                    # PERFORMANCE: Use a single efficient database query with joins
                                     from .models import Log
+                                    from django.db.models import OuterRef, Exists, F, Q
                                     
-                                    matching_contact_ids = set()
+                                    # Use Exists subquery to find contacts where:
+                                    # 1. They have a log with old_value.statusName IN (filter_values)
+                                    # 2. The log's new_value.statusName matches their current status.name
+                                    # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
+                                    matching_contact_ids = Contact.objects.filter(
+                                        Exists(
+                                            Log.objects.filter(
+                                                contact_id=OuterRef('pk'),
+                                                event_type='editContact',
+                                                old_value__statusName__in=regular_values,
+                                                new_value__statusName__isnull=False
+                                            ).exclude(
+                                                old_value__statusName=F('new_value__statusName')
+                                            ).filter(
+                                                # Match log's new_status with contact's current status
+                                                new_value__statusName=OuterRef('status__name')
+                                            ).order_by('-created_at')[:1]
+                                        )
+                                    ).values_list('id', flat=True)
                                     
-                                    # Get all contacts with status change logs
-                                    contacts_with_logs = Contact.objects.filter(
-                                        contact_logs__old_value__statusName__isnull=False,
-                                        contact_logs__new_value__statusName__isnull=False
-                                    ).exclude(
-                                        contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
-                                    ).distinct()
-                                    
-                                    for contact in contacts_with_logs:
-                                        # Get current status name for this contact
-                                        current_status_name = contact.status.name if contact.status else ''
-                                        
-                                        # Get the most recent status change log where new_status matches current status
-                                        # This ensures we get the IMMEDIATE previous status (right before current)
-                                        most_recent_log = Log.objects.filter(
-                                            contact_id=contact,
-                                            old_value__statusName__isnull=False,
-                                            new_value__statusName__isnull=False
-                                        ).exclude(
-                                            old_value__statusName=models.F('new_value__statusName')
-                                        ).order_by('-created_at')
-                                        
-                                        # Find the log where new_status matches the current status
-                                        # IMPORTANT: Match serializer logic exactly - check old_status != new_status and old_status is truthy
-                                        matching_log = None
-                                        for log in most_recent_log:
-                                            if log.old_value and log.new_value:
-                                                old_status = log.old_value.get('statusName', '') if log.old_value else ''
-                                                new_status = log.new_value.get('statusName', '') if log.new_value else ''
-                                                # Match serializer logic: old_status must be truthy, different from new_status, and new_status matches current
-                                                if old_status and old_status != new_status and new_status == current_status_name:
-                                                    matching_log = log
-                                                    break
-                                        
-                                        if matching_log:
-                                            previous_status = matching_log.old_value.get('statusName', '') if matching_log.old_value else ''
-                                            # Check if the immediate previous status matches any of the filter values
-                                            if previous_status in regular_values:
-                                                matching_contact_ids.add(contact.id)
+                                    matching_contact_ids = list(matching_contact_ids)
                                     
                                     if matching_contact_ids:
                                         q_objects.append(models.Q(id__in=matching_contact_ids))
@@ -2162,57 +2142,31 @@ class FosseContactView(generics.ListAPIView):
                         break
                     elif column_id == 'previousStatus':
                         # Filter by IMMEDIATE previous status (the status right before the current one)
-                        # NOT any status in the history - only the most recent previous status
-                        # We'll find contacts that have at least one status change log with matching old_value.statusName
-                        # This is an approximation - ideally we'd match exactly the most recent one, but that's complex
+                        # PERFORMANCE: Use a single efficient database query with joins
                         from .models import Log
+                        from django.db.models import OuterRef, Exists, F
                         
-                        # Find contacts that have logs with old_value.statusName matching filter values
-                        # where status actually changed (old != new)
-                        matching_contact_ids = set()
+                        # Use Exists subquery to find contacts where:
+                        # 1. They have a log with old_value.statusName IN (filter_values)
+                        # 2. The log's new_value.statusName matches their current status.name
+                        # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
+                        matching_contact_ids = Contact.objects.filter(
+                            Exists(
+                                Log.objects.filter(
+                                    contact_id=OuterRef('pk'),
+                                    event_type='editContact',
+                                    old_value__statusName__in=regular_values,
+                                    new_value__statusName__isnull=False
+                                ).exclude(
+                                    old_value__statusName=F('new_value__statusName')
+                                ).filter(
+                                    # Match log's new_status with contact's current status
+                                    new_value__statusName=OuterRef('status__name')
+                                ).order_by('-created_at')[:1]
+                            )
+                        ).values_list('id', flat=True)
                         
-                        # Get all contacts with status change logs
-                        contacts_with_logs = Contact.objects.filter(
-                            contact_logs__old_value__statusName__isnull=False,
-                            contact_logs__new_value__statusName__isnull=False
-                        ).exclude(
-                            contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
-                        ).distinct()
-                        
-                        for contact in contacts_with_logs:
-                            # Get current status name for this contact
-                            current_status_name = contact.status.name if contact.status else ''
-                            
-                            # Get the most recent status change log where new_status matches current status
-                            # This ensures we get the IMMEDIATE previous status (right before current)
-                            most_recent_log = Log.objects.filter(
-                                contact_id=contact,
-                                old_value__statusName__isnull=False,
-                                new_value__statusName__isnull=False
-                            ).exclude(
-                                old_value__statusName=models.F('new_value__statusName')
-                            ).order_by('-created_at')
-                            
-                            # Find the log where new_status matches the current status
-                            # IMPORTANT: Match serializer logic exactly - check old_status != new_status and old_status is truthy
-                            matching_log = None
-                            for log in most_recent_log:
-                                if log.old_value and log.new_value:
-                                    old_status = log.old_value.get('statusName', '') if log.old_value else ''
-                                    new_status = log.new_value.get('statusName', '') if log.new_value else ''
-                                    # Match serializer logic: old_status must be truthy, different from new_status, and new_status matches current
-                                    if old_status and old_status != new_status and new_status == current_status_name:
-                                        matching_log = log
-                                        break
-                            
-                            if matching_log:
-                                previous_status = matching_log.old_value.get('statusName', '') if matching_log.old_value else ''
-                                # Check if the immediate previous status matches any of the filter values
-                                if previous_status in regular_values:
-                                    matching_contact_ids.add(contact.id)
-                            elif not current_status_name:
-                                # Contact has no current status - check if empty is selected
-                                pass
+                        matching_contact_ids = list(matching_contact_ids)
                         
                         # Match preview logic:
                         # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
