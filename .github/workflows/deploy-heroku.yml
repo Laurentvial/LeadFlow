@@ -19,10 +19,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.8'
+      - name: Install Heroku CLI
+        run: |
+          curl https://cli-assets.heroku.com/install.sh | sh
+          heroku --version
+
+      - name: Login to Heroku
+        run: |
+          echo "${{secrets.HEROKU_API_KEY}}" | heroku login --api-key --interactive=false
 
       - name: Deploy to Heroku
         uses: akhileshns/heroku-deploy@v3.13.15
@@ -35,18 +39,12 @@ jobs:
       - name: Run migrations
         run: |
           heroku run bash -c "cd backend && python manage.py migrate" --app leadflow-backend-eu
-        env:
-          HEROKU_API_KEY: ${{secrets.HEROKU_API_KEY}}
 
       - name: Collect static files
         run: |
           heroku run bash -c "cd backend && python manage.py collectstatic --noinput" --app leadflow-backend-eu
-        env:
-          HEROKU_API_KEY: ${{secrets.HEROKU_API_KEY}}
 
       - name: Restart dynos
         run: |
           heroku restart --app leadflow-backend-eu
-        env:
-          HEROKU_API_KEY: ${{secrets.HEROKU_API_KEY}}
 
