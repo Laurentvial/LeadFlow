@@ -614,17 +614,22 @@ class ContactSerializer(serializers.ModelSerializer):
             ret['lastLogDate'] = latest_log.created_at if latest_log else None
         
         # Add previous status and previous teleoperator from logs (keep this for backward compatibility)
-        from .models import Log
-        logs = Log.objects.filter(
-            contact_id=instance,
-            event_type='editContact'
-        ).order_by('-created_at')
-        
+        # PERFORMANCE: Use prefetched logs if available to avoid N+1 queries
         previous_status = None
         previous_teleoperator = None
         
         # Get current status name for comparison
         current_status_name = instance.status.name if instance.status else ''
+        
+        # Use prefetched logs if available (from FosseContactView), otherwise query them
+        if hasattr(instance, 'prefetched_edit_logs'):
+            logs = instance.prefetched_edit_logs
+        else:
+            from .models import Log
+            logs = Log.objects.filter(
+                contact_id=instance,
+                event_type='editContact'
+            ).order_by('-created_at')[:50]  # Limit to 50 most recent logs for performance
         
         for log in logs:
             # Check for previous status - look for logs where statusName changed
@@ -643,6 +648,16 @@ class ContactSerializer(serializers.ModelSerializer):
             
             if previous_status is not None and previous_teleoperator is not None:
                 break
+        
+        # In Fosse context, if previous_status is empty, use cached default status from context
+        # This avoids N+1 queries - the default status is looked up once in the view and cached
+        if not previous_status:
+            request = self.context.get('request')
+            if request and '/fosse/' in request.path:
+                # Use cached FosseSettings from context (set in FosseContactView.list)
+                fosse_default_status_name = self.context.get('fosse_default_status_name')
+                if fosse_default_status_name:
+                    previous_status = fosse_default_status_name
         
         ret['previousStatus'] = previous_status or ''
         ret['previousTeleoperator'] = previous_teleoperator or ''

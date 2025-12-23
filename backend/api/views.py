@@ -1540,6 +1540,30 @@ class FosseContactView(generics.ListAPIView):
     serializer_class = ContactSerializer
     permission_classes = [IsAuthenticated]
     
+    def get_serializer_context(self):
+        """Override to inject cached FosseSettings into serializer context"""
+        context = super().get_serializer_context()
+        # Cache FosseSettings lookup to avoid N+1 queries in serializer
+        if not hasattr(self, '_cached_fosse_default_status'):
+            from .models import UserDetails, FosseSettings, Status
+            fosse_default_status_name = None
+            try:
+                user_details = UserDetails.objects.select_related('role').filter(django_user=self.request.user).first()
+                if user_details and user_details.role:
+                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                    if fosse_setting and fosse_setting.default_status:
+                        fosse_default_status_name = fosse_setting.default_status.name
+                    else:
+                        # Fallback to status with is_fosse_default=True
+                        default_status = Status.objects.filter(is_fosse_default=True).first()
+                        if default_status:
+                            fosse_default_status_name = default_status.name
+            except Exception:
+                pass
+            self._cached_fosse_default_status = fosse_default_status_name
+        context['fosse_default_status_name'] = self._cached_fosse_default_status
+        return context
+    
     def get_queryset(self):
         """
         Filter contacts to only show unassigned contacts (teleoperator=null AND confirmateur=null).
@@ -1581,6 +1605,7 @@ class FosseContactView(generics.ListAPIView):
         )
         
         # Prefetch related team_memberships for teleoperator's user_details
+        # CRITICAL: Prefetch logs to avoid N+1 queries in serializer
         queryset = queryset.prefetch_related(
             Prefetch(
                 'teleoperator__user_details__team_memberships',
@@ -1589,6 +1614,11 @@ class FosseContactView(generics.ListAPIView):
             Prefetch(
                 'contact_notes',
                 queryset=Note.objects.select_related('categ_id').order_by('-created_at')
+            ),
+            Prefetch(
+                'contact_logs',
+                queryset=Log.objects.filter(event_type='editContact').order_by('-created_at'),
+                to_attr='prefetched_edit_logs'
             )
         )
         
@@ -2360,8 +2390,26 @@ class FosseContactView(generics.ListAPIView):
             cloned_queryset = queryset._clone()
             self._filtered_queryset = cloned_queryset
             
+            # Cache FosseSettings lookup to avoid N+1 queries in serializer
+            from .models import UserDetails, FosseSettings, Status
+            fosse_default_status_name = None
+            try:
+                user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
+                if user_details and user_details.role:
+                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                    if fosse_setting and fosse_setting.default_status:
+                        fosse_default_status_name = fosse_setting.default_status.name
+                    else:
+                        # Fallback to status with is_fosse_default=True
+                        default_status = Status.objects.filter(is_fosse_default=True).first()
+                        if default_status:
+                            fosse_default_status_name = default_status.name
+            except Exception:
+                pass
+            
             self.pagination_class = FosseContactPagination
             
+            # Pass cached FosseSettings to serializer context
             response = super().list(request, *args, **kwargs)
             
             # Clean up after pagination
@@ -2400,7 +2448,24 @@ class FosseContactView(generics.ListAPIView):
                 # This prevents loading thousands of contacts into memory
                 queryset = queryset[:limit]
                 
-                serializer = self.get_serializer(queryset, many=True, context={'request': request})
+                # Cache FosseSettings lookup to avoid N+1 queries in serializer
+                from .models import UserDetails, FosseSettings, Status
+                fosse_default_status_name = None
+                try:
+                    user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
+                    if user_details and user_details.role:
+                        fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                        if fosse_setting and fosse_setting.default_status:
+                            fosse_default_status_name = fosse_setting.default_status.name
+                        else:
+                            # Fallback to status with is_fosse_default=True
+                            default_status = Status.objects.filter(is_fosse_default=True).first()
+                            if default_status:
+                                fosse_default_status_name = default_status.name
+                except Exception:
+                    pass
+                
+                serializer = self.get_serializer(queryset, many=True, context={'request': request, 'fosse_default_status_name': fosse_default_status_name})
                 return Response({
                     'contacts': serializer.data,
                     'total': total_count,
@@ -2423,7 +2488,25 @@ class FosseContactView(generics.ListAPIView):
         queryset = self._apply_filters_fosse(queryset, request)
         DEFAULT_LIMIT = 1000
         limited_queryset = queryset[:DEFAULT_LIMIT]
-        serializer = self.get_serializer(limited_queryset, many=True, context={'request': request})
+        
+        # Cache FosseSettings lookup to avoid N+1 queries in serializer
+        from .models import UserDetails, FosseSettings, Status
+        fosse_default_status_name = None
+        try:
+            user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
+            if user_details and user_details.role:
+                fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                if fosse_setting and fosse_setting.default_status:
+                    fosse_default_status_name = fosse_setting.default_status.name
+                else:
+                    # Fallback to status with is_fosse_default=True
+                    default_status = Status.objects.filter(is_fosse_default=True).first()
+                    if default_status:
+                        fosse_default_status_name = default_status.name
+        except Exception:
+            pass
+        
+        serializer = self.get_serializer(limited_queryset, many=True, context={'request': request, 'fosse_default_status_name': fosse_default_status_name})
         # Don't call count() on the full queryset - it's too slow. Use len() on limited queryset
         total_count = len(serializer.data)  # Approximate count
         return Response({
@@ -2907,8 +2990,13 @@ def contacts_bulk_create(request):
             except (ValueError, TypeError):
                 pass
     
-    # Check existing emails in bulk
-    existing_emails = set(Contact.objects.filter(email__in=emails_to_check).values_list('email', flat=True)) if emails_to_check else set()
+    # Pre-fetch existing contacts by email for updates (in addition to old_contact_id)
+    existing_contacts_by_email = {}
+    if emails_to_check:
+        existing_contacts_by_email_query = Contact.objects.filter(email__in=emails_to_check).exclude(email__isnull=True).exclude(email='')
+        for contact in existing_contacts_by_email_query:
+            if contact.email:
+                existing_contacts_by_email[contact.email.strip().lower()] = contact
     
     # Pre-fetch existing contacts by old_contact_id for updates
     existing_contacts_by_old_id = {}
@@ -2943,7 +3031,7 @@ def contacts_bulk_create(request):
             if old_contact_id_clean:
                 existing_contact = existing_contacts_by_old_id.get(old_contact_id_clean)
             
-            # Check email uniqueness (skip if updating existing contact)
+            # Check email - if not found by old_contact_id, check by email for updates
             email = contact_data.get('email', '').strip()
             if email and not existing_contact:
                 # First check if this email appears multiple times in the CSV batch
@@ -2951,13 +3039,15 @@ def contacts_bulk_create(request):
                     results.append({'index': idx, 'success': False, 'error': f'Email dupliqué dans le CSV: {email}'})
                     continue
                 
-                # Then check if email exists in database (only for new contacts)
-                if email in existing_emails:
-                    results.append({'index': idx, 'success': False, 'error': f'Un contact avec cet email existe déjà dans la base de données: {email}'})
-                    continue
-                
-                # Mark this email as seen in this batch
-                emails_seen_in_batch[email] = idx
+                # Check if email exists in database - if so, update that contact instead of rejecting
+                email_lower = email.lower()
+                if email_lower in existing_contacts_by_email:
+                    existing_contact = existing_contacts_by_email[email_lower]
+                    # Mark this email as seen to prevent duplicate processing
+                    emails_seen_in_batch[email] = idx
+                else:
+                    # Mark this email as seen in this batch
+                    emails_seen_in_batch[email] = idx
             
             if existing_contact:
                 # Update existing contact instead of creating new one
@@ -2976,6 +3066,10 @@ def contacts_bulk_create(request):
                 existing_contact.city = contact_data.get('city', '') or ''
                 existing_contact.nationality = contact_data.get('nationality', '') or ''
                 existing_contact.campaign = contact_data.get('campaign', '') or ''
+                
+                # Update old_contact_id if provided (useful for migration scenarios)
+                if old_contact_id_clean:
+                    existing_contact.old_contact_id = old_contact_id_clean
                 
                 # Update status
                 status_id = contact_data.get('statusId')
