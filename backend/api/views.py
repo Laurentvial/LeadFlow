@@ -1733,15 +1733,16 @@ class FosseContactView(generics.ListAPIView):
                                     q_objects.append(models.Q(civility__in=regular_values))
                                 elif column_id == 'previousStatus':
                                     # Filter by IMMEDIATE previous status (the status right before the current one)
-                                    # PERFORMANCE: Use a single efficient database query with joins
+                                    # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
                                     from .models import Log
-                                    from django.db.models import OuterRef, Exists, F, Q
+                                    from django.db.models import OuterRef, Exists, F
                                     
-                                    # Use Exists subquery to find contacts where:
+                                    # Use Exists subquery to filter contacts where:
                                     # 1. They have a log with old_value.statusName IN (filter_values)
                                     # 2. The log's new_value.statusName matches their current status.name
                                     # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
-                                    matching_contact_ids = Contact.objects.filter(
+                                    # Apply directly to queryset for better performance
+                                    previous_status_q = models.Q(
                                         Exists(
                                             Log.objects.filter(
                                                 contact_id=OuterRef('pk'),
@@ -1755,18 +1756,9 @@ class FosseContactView(generics.ListAPIView):
                                                 new_value__statusName=OuterRef('status__name')
                                             ).order_by('-created_at')[:1]
                                         )
-                                    ).values_list('id', flat=True)
+                                    )
                                     
-                                    matching_contact_ids = list(matching_contact_ids)
-                                    
-                                    if matching_contact_ids:
-                                        q_objects.append(models.Q(id__in=matching_contact_ids))
-                                    elif not has_empty:
-                                        # No matches and no empty option - exclude all (strict filter)
-                                        queryset = queryset.none()
-                                        break
-                                    # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
-                                    # The empty filter (already added below) will be applied, showing only contacts with empty previousStatus
+                                    q_objects.append(previous_status_q)
                                 elif column_id == 'previousTeleoperator':
                                     # Filter by previous teleoperator from logs - same logic as regular filter
                                     from .models import Log
@@ -2142,15 +2134,16 @@ class FosseContactView(generics.ListAPIView):
                         break
                     elif column_id == 'previousStatus':
                         # Filter by IMMEDIATE previous status (the status right before the current one)
-                        # PERFORMANCE: Use a single efficient database query with joins
+                        # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
                         from .models import Log
                         from django.db.models import OuterRef, Exists, F
                         
-                        # Use Exists subquery to find contacts where:
+                        # Use Exists subquery to filter contacts where:
                         # 1. They have a log with old_value.statusName IN (filter_values)
                         # 2. The log's new_value.statusName matches their current status.name
                         # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
-                        matching_contact_ids = Contact.objects.filter(
+                        # Apply directly to queryset for better performance
+                        previous_status_q = models.Q(
                             Exists(
                                 Log.objects.filter(
                                     contact_id=OuterRef('pk'),
@@ -2164,21 +2157,9 @@ class FosseContactView(generics.ListAPIView):
                                     new_value__statusName=OuterRef('status__name')
                                 ).order_by('-created_at')[:1]
                             )
-                        ).values_list('id', flat=True)
+                        )
                         
-                        matching_contact_ids = list(matching_contact_ids)
-                        
-                        # Match preview logic:
-                        # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
-                        # - So we need to add regular values filter, and empty filter will be combined with OR if has_empty is True
-                        if matching_contact_ids:
-                            q_objects.append(models.Q(id__in=matching_contact_ids))
-                        elif not has_empty:
-                            # No matches and no empty option - exclude all (strict filter)
-                            queryset = queryset.none()
-                            break
-                        # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
-                        # The empty filter (already added above) will be applied, showing only contacts with empty previousStatus
+                        q_objects.append(previous_status_q)
                     elif column_id == 'previousTeleoperator':
                         # Filter by previous teleoperator from logs
                         # Similar to previousStatus - find contacts with matching old_value.teleoperatorName

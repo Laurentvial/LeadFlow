@@ -377,12 +377,18 @@ class Log(models.Model):
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
     event_type = models.CharField(max_length=100, default="")  # createUser, editUser, createContact, etc.
     user_id = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='activity_logs')
-    contact_id = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='contact_logs')
-    created_at = models.DateTimeField(auto_now_add=True)
+    contact_id = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='contact_logs', db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     details = models.JSONField(default=dict, blank=True)  # IP, browser info, and other metadata
     old_value = models.JSONField(default=dict, null=True, blank=True)  # Previous state
     new_value = models.JSONField(default=dict, null=True, blank=True)  # New state
     old_logs = models.TextField(null=True, blank=True)  # Text field for old logs that are not in JSON format
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['contact_id', 'event_type', '-created_at']),  # Optimize previousStatus filter queries
+            models.Index(fields=['event_type', '-created_at']),  # Optimize event_type queries
+        ]
 
     def __str__(self):
         return f"Log {self.id} - {self.event_type} - {self.created_at}"
