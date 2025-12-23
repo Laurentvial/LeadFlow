@@ -1734,8 +1734,14 @@ class FosseContactView(generics.ListAPIView):
                                 elif column_id == 'previousStatus':
                                     # Filter by IMMEDIATE previous status (the status right before the current one)
                                     # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
-                                    from .models import Log
-                                    from django.db.models import OuterRef, Exists, F
+                                    from .models import Log, Status
+                                    from django.db.models import OuterRef, Exists, F, Subquery
+                                    
+                                    # Get status names for the contact's current status_id
+                                    # Use Subquery to get status name, then match in Exists
+                                    status_name_subquery = Status.objects.filter(
+                                        id=OuterRef('status_id')
+                                    ).values('name')[:1]
                                     
                                     # Use Exists subquery to filter contacts where:
                                     # 1. They have a log with old_value.statusName IN (filter_values)
@@ -1752,8 +1758,8 @@ class FosseContactView(generics.ListAPIView):
                                             ).exclude(
                                                 old_value__statusName=F('new_value__statusName')
                                             ).filter(
-                                                # Match log's new_status with contact's current status
-                                                new_value__statusName=OuterRef('status__name')
+                                                # Match log's new_status with contact's current status name
+                                                new_value__statusName=Subquery(status_name_subquery)
                                             ).order_by('-created_at')[:1]
                                         )
                                     )
@@ -2135,8 +2141,14 @@ class FosseContactView(generics.ListAPIView):
                     elif column_id == 'previousStatus':
                         # Filter by IMMEDIATE previous status (the status right before the current one)
                         # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
-                        from .models import Log
-                        from django.db.models import OuterRef, Exists, F
+                        from .models import Log, Status
+                        from django.db.models import OuterRef, Exists, F, Subquery
+                        
+                        # Get status names for the contact's current status_id
+                        # Use Subquery to get status name, then match in Exists
+                        status_name_subquery = Status.objects.filter(
+                            id=OuterRef('status_id')
+                        ).values('name')[:1]
                         
                         # Use Exists subquery to filter contacts where:
                         # 1. They have a log with old_value.statusName IN (filter_values)
@@ -2153,8 +2165,8 @@ class FosseContactView(generics.ListAPIView):
                                 ).exclude(
                                     old_value__statusName=F('new_value__statusName')
                                 ).filter(
-                                    # Match log's new_status with contact's current status
-                                    new_value__statusName=OuterRef('status__name')
+                                    # Match log's new_status with contact's current status name
+                                    new_value__statusName=Subquery(status_name_subquery)
                                 ).order_by('-created_at')[:1]
                             )
                         )
