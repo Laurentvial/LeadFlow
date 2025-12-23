@@ -7,7 +7,7 @@ import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
 import { Textarea } from './ui/textarea';
-import { ArrowLeft, Upload, FileSpreadsheet, Edit2, Save, X, Calendar, Plus, Trash2, CheckCircle2, AlertCircle, Loader2, Zap } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, Edit2, Save, X, Calendar, Plus, Trash2, CheckCircle2, AlertCircle, Loader2, Zap, Download } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
@@ -1841,7 +1841,7 @@ export function MigrationPage() {
     setError(null);
     setIsLoading(false);
     setProcessingProgress({ current: 0, total: 0 });
-    setMigrationResults({ success: 0, failed: 0, failureReasons: {} });
+    setMigrationResults({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {} });
     setExcludeFirstRow(true); // Reset to default
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -2746,6 +2746,144 @@ export function MigrationPage() {
                           • {reason}: {count}
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Detailed table of failed contacts */}
+                {failedRows.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm text-red-800 font-semibold">
+                        <strong>📋 Contacts non importés:</strong> {failedRows.length}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          // Export failed contacts to CSV
+                          const headers = ['Prénom', 'Nom', 'Email', 'Téléphone', 'Mobile', 'Ancien ID', 'Erreur'];
+                          const csvRows = failedRows.map(row => {
+                            const firstName = row.mappedData.firstName || '';
+                            const lastName = row.mappedData.lastName || '';
+                            const email = row.mappedData.email || '';
+                            const phone = row.mappedData.phone || '';
+                            const mobile = row.mappedData.mobile || '';
+                            const oldContactId = row.mappedData.oldContactId || '';
+                            const error = (row.errors || ['Erreur inconnue']).join('; ');
+                            
+                            return [
+                              firstName,
+                              lastName,
+                              email,
+                              phone,
+                              mobile,
+                              oldContactId,
+                              error
+                            ];
+                          });
+                          
+                          // Create CSV content
+                          const csvContent = [
+                            headers.join(','),
+                            ...csvRows.map(row => 
+                              row.map(cell => {
+                                // Escape commas and quotes in CSV
+                                const cellStr = String(cell || '');
+                                if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+                                  return `"${cellStr.replace(/"/g, '""')}"`;
+                                }
+                                return cellStr;
+                              }).join(',')
+                            )
+                          ].join('\n');
+                          
+                          // Create blob and download
+                          const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                          const link = document.createElement('a');
+                          const url = URL.createObjectURL(blob);
+                          link.setAttribute('href', url);
+                          link.setAttribute('download', `contacts_non_importes_${new Date().toISOString().split('T')[0]}.csv`);
+                          link.style.visibility = 'hidden';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          toast.success('Fichier CSV exporté avec succès');
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Download className="w-4 h-4" />
+                        Exporter en CSV
+                      </Button>
+                    </div>
+                    <div className="border rounded overflow-x-auto max-h-[600px] overflow-y-auto bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-red-50 sticky top-0">
+                          <tr>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50 sticky left-0 z-10">#</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Prénom</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Nom</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Email</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Téléphone</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Mobile</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Ancien ID</th>
+                            <th className="px-3 py-2 text-left border-b font-semibold bg-red-50">Erreur</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {failedRows.map((row, index) => {
+                            const firstName = row.mappedData.firstName || '';
+                            const lastName = row.mappedData.lastName || '';
+                            const email = row.mappedData.email || '';
+                            const phone = row.mappedData.phone || '';
+                            const mobile = row.mappedData.mobile || '';
+                            const oldContactId = row.mappedData.oldContactId || '';
+                            const errorMessages = row.errors || ['Erreur inconnue'];
+                            const errorText = errorMessages.join('; ');
+                            
+                            return (
+                              <tr key={row.id || index} className="hover:bg-red-50">
+                                <td className="px-3 py-2 border-b bg-white sticky left-0 z-10 font-medium">{index + 1}</td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={firstName}>
+                                    {firstName || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={lastName}>
+                                    {lastName || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={email}>
+                                    {email || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={phone}>
+                                    {phone || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={mobile}>
+                                    {mobile || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-xs truncate" title={oldContactId}>
+                                    {oldContactId || '-'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 border-b">
+                                  <div className="max-w-md truncate text-red-700 font-medium" title={errorText}>
+                                    {errorText}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}

@@ -507,6 +507,8 @@ export function ContactList({
   const [selectedNoteCategoryId, setSelectedNoteCategoryId] = useState<string>('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, boolean>>({});
   const [noteCategories, setNoteCategories] = useState<Array<{ id: string; name: string; orderIndex: number }>>([]);
+  const [contactNotes, setContactNotes] = useState<any[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
   
   // Check if selected status is client default
   const selectedStatusIsClientDefault = React.useMemo(() => {
@@ -1957,6 +1959,39 @@ export function ContactList({
       });
     };
   }, []);
+
+  // Load notes when status modal opens
+  useEffect(() => {
+    const loadContactNotes = async () => {
+      if (!isStatusModalOpen || !selectedContact?.id) {
+        setContactNotes([]);
+        return;
+      }
+
+      setLoadingNotes(true);
+      try {
+        const data = await apiCall(`/api/notes/?contactId=${selectedContact.id}`);
+        // Handle both paginated response (data.results) and direct array response
+        const notesArray = Array.isArray(data) ? data : (data.results || data.notes || []);
+        // Sort by created_at descending and take last 3
+        const sortedNotes = [...notesArray]
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || a.created_at).getTime();
+            const dateB = new Date(b.createdAt || b.created_at).getTime();
+            return dateB - dateA; // Descending order (most recent first)
+          })
+          .slice(0, 3);
+        setContactNotes(sortedNotes);
+      } catch (error) {
+        console.error('Error loading notes:', error);
+        setContactNotes([]);
+      } finally {
+        setLoadingNotes(false);
+      }
+    };
+
+    loadContactNotes();
+  }, [isStatusModalOpen, selectedContact?.id]);
   
   // Helper function to render cell content based on column id
   const renderCell = (contact: any, columnId: string) => {
@@ -2091,11 +2126,6 @@ export function ContactList({
           <td key={columnId}>
             {contact.updatedAt 
               ? new Date(contact.updatedAt).toLocaleString('fr-FR', {
-                  dateStyle: 'short',
-                  timeStyle: 'short'
-                })
-              : contact.lastLogDate
-              ? new Date(contact.lastLogDate).toLocaleString('fr-FR', {
                   dateStyle: 'short',
                   timeStyle: 'short'
                 })
@@ -2329,7 +2359,7 @@ export function ContactList({
                   setNotesPopoverOpen(contact.id);
                 }}
                 onMouseLeave={() => handlePopoverLeave(contact.id)}
-                style={{ zIndex: 10002 }}
+                style={{ zIndex: 10002, width: '384px', maxWidth: '384px', minWidth: '384px' }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
                   <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Notes ({displayedNotesCount})</h3>
@@ -2376,8 +2406,15 @@ export function ContactList({
                               )}
                             </span>
                           </div>
-                          <div style={{ marginTop: '4px' }}>
-                            {note.text && note.text.length > 30 ? `${note.text.substring(0, 30)}...` : note.text}
+                          <div style={{ 
+                            marginTop: '4px', 
+                            wordBreak: 'break-word', 
+                            overflowWrap: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '100%',
+                            overflow: 'hidden'
+                          }}>
+                            {note.text}
                           </div>
                         </div>
                       ))}
@@ -2439,6 +2476,10 @@ export function ContactList({
   async function handleBulkAssignTeleoperator(teleoperatorId: string) {
     if (!teleoperatorId) return;
     
+    // Update the state immediately so the Select component reflects the selection
+    // Use "none" as the state value when "none" is selected, so it shows as selected in the UI
+    setBulkTeleoperatorId(teleoperatorId);
+    
     const teleoperatorIdValue = teleoperatorId !== 'none' ? teleoperatorId : '';
     
     // Check if we're clearing teleoperator and if any contacts will become unassigned
@@ -2484,6 +2525,10 @@ export function ContactList({
 
   async function handleBulkAssignConfirmateur(confirmateurId: string) {
     if (!confirmateurId) return;
+    
+    // Update the state immediately so the Select component reflects the selection
+    // Use "none" as the state value when "none" is selected, so it shows as selected in the UI
+    setBulkConfirmateurId(confirmateurId);
     
     const confirmateurIdValue = confirmateurId !== 'none' ? confirmateurId : '';
     
@@ -3821,7 +3866,7 @@ export function ContactList({
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
-                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : 'none'} onValueChange={handleBulkAssignTeleoperator}>
+                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : undefined} onValueChange={handleBulkAssignTeleoperator}>
                         <SelectTrigger className="w-[200px]">
                           <UserCheck className="w-4 h-4 mr-2" />
                           <SelectValue placeholder="Attribuer un téléopérateur" />
@@ -3852,7 +3897,7 @@ export function ContactList({
 
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un confirmateur</Label>
-                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : 'none'} onValueChange={handleBulkAssignConfirmateur}>
+                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : undefined} onValueChange={handleBulkAssignConfirmateur}>
                         <SelectTrigger className="w-[200px]">
                           <UserCheck className="w-4 h-4 mr-2" />
                           <SelectValue placeholder="Attribuer un confirmateur" />
@@ -4070,6 +4115,7 @@ export function ContactList({
                     setStatusChangeNoteCategoryId('');
                     setStatusModalFilterType('lead');
                     setFieldErrors({});
+                    setContactNotes([]);
                     // Reset client form
                     setClientFormData({
                       platformId: '',
@@ -4386,6 +4432,66 @@ export function ContactList({
                   Une note est obligatoire pour changer le statut.
                 </p>
               </div>
+
+              {/* Last 3 Notes Section */}
+              {selectedContact?.id && (
+                <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+                  <h3 style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '12px' }}>Dernières notes</h3>
+                  {loadingNotes ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                      Chargement...
+                    </div>
+                  ) : contactNotes.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', minWidth: 0, maxWidth: '100%' }}>
+                      {contactNotes.map((note) => (
+                        <div key={note.id} style={{ fontSize: '0.875rem', color: '#374151', lineHeight: '1.6', width: '100%', minWidth: 0, maxWidth: '100%' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+                            {note.categoryName && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: '600', 
+                                color: '#3b82f6',
+                                backgroundColor: '#dbeafe',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {note.categoryName}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                              {(note.createdBy || note.userId?.username || note.user?.username) && `Par ${note.createdBy || note.userId?.username || note.user?.username}`}
+                              {(note.createdAt || note.created_at) && (
+                                <span style={{ marginLeft: '4px' }}>
+                                  {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', {
+                                    dateStyle: 'short',
+                                    timeStyle: 'short'
+                                  })}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div style={{ 
+                            marginTop: '4px', 
+                            wordBreak: 'break-word', 
+                            overflowWrap: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '100%',
+                            overflow: 'hidden'
+                          }}>
+                            {note.text}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>
+                      Aucune note
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Event fields - show when selected status has isEvent=true */}
               {selectedStatusIsEvent && (
                 <>
@@ -4474,7 +4580,8 @@ export function ContactList({
                   </div>
                 </>
               )}
-              <div className="modal-form-actions">
+
+              <div className="modal-form-actions" style={{ paddingBottom: '16px' }}>
                 <Button 
                   type="button" 
                   variant="outline" 

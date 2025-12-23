@@ -14,6 +14,7 @@ import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
+import * as XLSX from 'xlsx';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
 
@@ -101,8 +102,11 @@ export function CsvImport() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.csv')) {
-      toast.error('Veuillez sélectionner un fichier CSV');
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+    const isExcel = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
+
+    if (!isCsv && !isExcel) {
+      toast.error('Veuillez sélectionner un fichier CSV ou Excel (.xlsx, .xls)');
       return;
     }
 
@@ -118,75 +122,111 @@ export function CsvImport() {
     setError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      let headers: string[] = [];
+      let allRows: any[] = [];
 
-      const response = await apiCall('/api/contacts/csv-import-preview/', {
-        method: 'POST',
-        body: formData,
-      });
-
-      // Validate response
-      if (!response || !response.headers) {
-        throw new Error('Réponse invalide du serveur');
-      }
-
-      // Parse CSV file to get all rows
-      const text = await file.text();
-      const lines = text.split('\n').filter(line => line.trim());
-      if (lines.length === 0) {
-        throw new Error('Le fichier CSV est vide');
-      }
-      
-      // Simple CSV parser that handles quoted fields
-      const parseCSVLine = (line: string): string[] => {
-        const result: string[] = [];
-        let current = '';
-        let inQuotes = false;
+      if (isExcel) {
+        // Handle Excel file
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         
-        for (let i = 0; i < line.length; i++) {
-          const char = line[i];
-          const nextChar = line[i + 1];
-          
-          if (char === '"') {
-            if (inQuotes && nextChar === '"') {
-              current += '"';
-              i++; // Skip next quote
-            } else {
-              inQuotes = !inQuotes;
-            }
-          } else if (char === ',' && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-          } else {
-            current += char;
-          }
+        // Use the first sheet
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Convert to JSON with header row
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
+        
+        if (jsonData.length === 0) {
+          throw new Error('Le fichier Excel est vide');
         }
-        result.push(current.trim());
-        return result;
-      };
-      
-      // Use first row values as column headers for mapping
-      const firstRowValues = parseCSVLine(lines[0]);
-      const headers = firstRowValues.map((h, idx) => {
-        const cleaned = h.replace(/^"|"$/g, '').trim();
-        // If header is empty, generate a name
-        return cleaned || `Column${idx + 1}`;
-      });
+
+        // First row is headers
+        headers = jsonData[0].map((h, idx) => {
+          const cleaned = String(h || '').trim();
+          return cleaned || `Column${idx + 1}`;
+        });
+
+        // Process all rows (skip header row)
+        for (let i = 1; i < jsonData.length; i++) {
+          const values = jsonData[i];
+          const row: any = {};
+          headers.forEach((header, idx) => {
+            const value = values[idx];
+            row[header] = value !== undefined && value !== null ? String(value).trim() : '';
+          });
+          allRows.push(row);
+        }
+      } else {
+        // Handle CSV file
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await apiCall('/api/contacts/csv-import-preview/', {
+          method: 'POST',
+          body: formData,
+        });
+
+        // Validate response
+        if (!response || !response.headers) {
+          throw new Error('Réponse invalide du serveur');
+        }
+
+        // Parse CSV file to get all rows
+        const text = await file.text();
+        const lines = text.split('\n').filter(line => line.trim());
+        if (lines.length === 0) {
+          throw new Error('Le fichier CSV est vide');
+        }
+        
+        // Simple CSV parser that handles quoted fields
+        const parseCSVLine = (line: string): string[] => {
+          const result: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          
+          for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const nextChar = line[i + 1];
+            
+            if (char === '"') {
+              if (inQuotes && nextChar === '"') {
+                current += '"';
+                i++; // Skip next quote
+              } else {
+                inQuotes = !inQuotes;
+              }
+            } else if (char === ',' && !inQuotes) {
+              result.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          result.push(current.trim());
+          return result;
+        };
+        
+        // Use first row values as column headers for mapping
+        const firstRowValues = parseCSVLine(lines[0]);
+        headers = firstRowValues.map((h, idx) => {
+          const cleaned = h.replace(/^"|"$/g, '').trim();
+          // If header is empty, generate a name
+          return cleaned || `Column${idx + 1}`;
+        });
+        
+        // Process data rows (skip header row at index 0)
+        for (let i = 1; i < lines.length; i++) {
+          const values = parseCSVLine(lines[i]);
+          const row: any = {};
+          headers.forEach((header, idx) => {
+            row[header] = (values[idx] || '').replace(/^"|"$/g, '');
+          });
+          allRows.push(row);
+        }
+      }
       
       setCsvHeaders(headers);
-      
-      // Process ALL rows including the first one (no header row to skip)
-      const allRows: any[] = [];
-      
-      for (let i = 0; i < lines.length; i++) {
-        const values = parseCSVLine(lines[i]);
-        const row: any = {};
-        headers.forEach((header, idx) => {
-          row[header] = (values[idx] || '').replace(/^"|"$/g, '');
-        });
-        allRows.push(row);
-      }
       
       // Set total rows based on locally parsed data
       const actualRowCount = allRows.length;
@@ -208,8 +248,8 @@ export function CsvImport() {
       setStep('mapping');
       toast.success(`Fichier chargé: ${actualRowCount} lignes détectées`);
     } catch (error: any) {
-      console.error('Error previewing CSV:', error);
-      const errorMessage = error?.error || error?.message || 'Erreur lors de la lecture du fichier CSV';
+      console.error('Error previewing file:', error);
+      const errorMessage = error?.error || error?.message || 'Erreur lors de la lecture du fichier';
       setError(errorMessage);
       toast.error(errorMessage);
       setCsvFile(null);
@@ -411,7 +451,7 @@ export function CsvImport() {
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div>
-              <h1 className="page-title">Importer des contacts depuis CSV</h1>
+              <h1 className="page-title">Importer des contacts depuis CSV/Excel</h1>
               <p className="page-subtitle">Importez plusieurs contacts en une seule fois</p>
             </div>
           </div>
@@ -443,7 +483,7 @@ export function CsvImport() {
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div>
-              <h1 className="page-title">Importer des contacts depuis CSV</h1>
+              <h1 className="page-title">Importer des contacts depuis CSV/Excel</h1>
               <p className="page-subtitle">Importez plusieurs contacts en une seule fois</p>
             </div>
           </div>
@@ -489,9 +529,9 @@ export function CsvImport() {
       {/* Content */}
       {step === 'upload' && (
         <Card>
-          <CardHeader>
-            <CardTitle>Étape 1 : Sélectionner le fichier CSV</CardTitle>
-          </CardHeader>
+            <CardHeader>
+              <CardTitle>Étape 1 : Sélectionner le fichier CSV ou Excel</CardTitle>
+            </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="flex flex-col items-center justify-center p-12">
@@ -511,17 +551,17 @@ export function CsvImport() {
                 <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-300 ">
                   <FileSpreadsheet className="w-16 h-16 text-slate-400 mb-4" />
                   <Label htmlFor="csv-file" className="text-lg font-medium mb-2">
-                    Sélectionner un fichier CSV
+                    Sélectionner un fichier CSV ou Excel
                   </Label>
                   <p className="text-sm text-slate-500 pb-6 text-center max-w-md">
-                    Importez n'importe quel fichier CSV. Vous pourrez ensuite mapper vos colonnes aux champs du CRM.
+                    Importez n'importe quel fichier CSV ou Excel (.xlsx, .xls). Vous pourrez ensuite mapper vos colonnes aux champs du CRM.
                     Les champs requis sont: Prénom. Taille maximale: 10MB
                   </p>
                   <input
                     ref={fileInputRef}
                     id="csv-file"
                     type="file"
-                    accept=".csv"
+                    accept=".csv,.xlsx,.xls"
                     onChange={handleFileSelect}
                     className="hidden"
                     disabled={isLoading}
@@ -578,14 +618,14 @@ export function CsvImport() {
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg">Mapper vos colonnes CSV aux champs CRM</h3>
                 <p className="text-sm text-slate-600">
-                  Votre fichier CSV contient <strong>{csvHeaders.length}</strong> colonne(s). 
-                  Sélectionnez pour chaque champ du CRM la colonne correspondante dans votre fichier CSV.
+                  Votre fichier contient <strong>{csvHeaders.length}</strong> colonne(s). 
+                  Sélectionnez pour chaque champ du CRM la colonne correspondante dans votre fichier.
                   Les colonnes non mappées seront ignorées.
                 </p>
-                {csvHeaders.length === 0 && (
+                    {csvHeaders.length === 0 && (
                   <div className="p-4 bg-yellow-50 border border-yellow-200 ">
                     <p className="text-sm text-yellow-800">
-                      ⚠️ Aucune colonne détectée dans le fichier CSV. Vérifiez que votre fichier contient bien une ligne d'en-tête.
+                      ⚠️ Aucune colonne détectée dans le fichier. Vérifiez que votre fichier contient bien une ligne d'en-tête.
                     </p>
                   </div>
                 )}

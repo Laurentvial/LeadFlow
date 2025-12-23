@@ -958,11 +958,143 @@ class ContactView(generics.ListAPIView):
                             # Still apply filter to return empty result
                             q_objects.append(models.Q(source_id__in=regular_values))
                     elif column_id == 'teleoperator':
-                        q_objects.append(models.Q(teleoperator_id__in=regular_values))
+                        # Convert UserDetails IDs to Django User IDs (frontend sends UserDetails IDs)
+                        print(f"[DEBUG] ===== TELEOPERATOR FILTER START =====")
+                        print(f"[DEBUG] Teleoperator filter - regular_values: {regular_values} (type: {[type(v) for v in regular_values]})")
+                        django_user_ids = []
+                        
+                        # Try bulk lookup first for UserDetails IDs (more efficient)
+                        try:
+                            # Convert all values to strings for UserDetails lookup
+                            user_details_ids_str = [str(v) for v in regular_values]
+                            print(f"[DEBUG] Looking up UserDetails with IDs: {user_details_ids_str}")
+                            user_details_list = list(UserDetails.objects.filter(id__in=user_details_ids_str).select_related('django_user'))
+                            print(f"[DEBUG] Found {len(user_details_list)} UserDetails records")
+                            
+                            # Extract Django User IDs from found UserDetails
+                            for user_details in user_details_list:
+                                if user_details and user_details.django_user:
+                                    django_user_ids.append(user_details.django_user.id)
+                                    print(f"[DEBUG] Found UserDetails ID {user_details.id} -> Django User ID {user_details.django_user.id}")
+                            
+                            # For any values not found as UserDetails IDs, try as Django User IDs directly
+                            found_user_details_ids = {ud.id for ud in user_details_list}
+                            print(f"[DEBUG] Found UserDetails IDs: {found_user_details_ids}")
+                            for user_details_id in regular_values:
+                                if str(user_details_id) not in found_user_details_ids:
+                                    # Try as Django User ID (if numeric)
+                                    try:
+                                        int_id = int(user_details_id)
+                                        if DjangoUser.objects.filter(id=int_id).exists():
+                                            django_user_ids.append(int_id)
+                                            print(f"[DEBUG] Found Django User ID directly: {int_id}")
+                                        else:
+                                            print(f"[DEBUG] Django User ID {int_id} does not exist")
+                                    except (ValueError, TypeError) as e:
+                                        print(f"[DEBUG] Could not convert '{user_details_id}' to integer: {e}")
+                        except Exception as e:
+                            print(f"[DEBUG] Error in bulk UserDetails lookup: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            # Fallback to individual lookups
+                            for user_details_id in regular_values:
+                                try:
+                                    # Try as UserDetails ID first (string)
+                                    user_details = UserDetails.objects.filter(id=str(user_details_id)).first()
+                                    if user_details and user_details.django_user:
+                                        django_user_ids.append(user_details.django_user.id)
+                                        print(f"[DEBUG] Found UserDetails ID {user_details.id} -> Django User ID {user_details.django_user.id} (individual lookup)")
+                                    else:
+                                        # Fallback: try as Django User ID (if numeric)
+                                        try:
+                                            int_id = int(user_details_id)
+                                            if DjangoUser.objects.filter(id=int_id).exists():
+                                                django_user_ids.append(int_id)
+                                                print(f"[DEBUG] Found Django User ID directly: {int_id} (individual lookup)")
+                                        except (ValueError, TypeError):
+                                            pass
+                                except Exception as e:
+                                    print(f"[DEBUG] Error converting teleoperator UserDetails ID {user_details_id}: {e}")
+                        
+                        # Ensure all IDs are integers and remove duplicates
+                        django_user_ids = list(set([int(uid) for uid in django_user_ids if uid is not None]))
+                        
+                        if django_user_ids:
+                            q_objects.append(models.Q(teleoperator_id__in=django_user_ids))
+                            print(f"[DEBUG] Teleoperator filter SUCCESS: converted {len(regular_values)} values to {len(django_user_ids)} Django User IDs: {django_user_ids}")
+                        else:
+                            print(f"[DEBUG] WARNING: No valid teleoperator IDs found for filter values: {regular_values}")
+                            # Return empty queryset by filtering with impossible condition
+                            q_objects.append(models.Q(teleoperator_id__in=[]))
+                        print(f"[DEBUG] ===== TELEOPERATOR FILTER END =====")
                     elif column_id == 'confirmateur':
-                        q_objects.append(models.Q(confirmateur_id__in=regular_values))
+                        # Convert UserDetails IDs to Django User IDs (frontend sends UserDetails IDs)
+                        django_user_ids = []
+                        for user_details_id in regular_values:
+                            try:
+                                # Try as UserDetails ID first (string)
+                                user_details = UserDetails.objects.filter(id=str(user_details_id)).first()
+                                if user_details and user_details.django_user:
+                                    django_user_ids.append(user_details.django_user.id)
+                                else:
+                                    # Fallback: try as Django User ID (if numeric)
+                                    try:
+                                        int_id = int(user_details_id)
+                                        if DjangoUser.objects.filter(id=int_id).exists():
+                                            django_user_ids.append(int_id)
+                                    except (ValueError, TypeError):
+                                        pass
+                            except Exception as e:
+                                print(f"[DEBUG] Error converting confirmateur UserDetails ID {user_details_id}: {e}")
+                                # Fallback: try as Django User ID
+                                try:
+                                    int_id = int(user_details_id)
+                                    if DjangoUser.objects.filter(id=int_id).exists():
+                                        django_user_ids.append(int_id)
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        if django_user_ids:
+                            q_objects.append(models.Q(confirmateur_id__in=django_user_ids))
+                            print(f"[DEBUG] Confirmateur filter: converted {len(regular_values)} UserDetails IDs to {len(django_user_ids)} Django User IDs: {django_user_ids}")
+                        else:
+                            print(f"[DEBUG] WARNING: No valid confirmateur IDs found for filter values: {regular_values}")
+                            # Return empty queryset by filtering with impossible condition
+                            q_objects.append(models.Q(confirmateur_id__in=[]))
                     elif column_id == 'creator':
-                        q_objects.append(models.Q(creator_id__in=regular_values))
+                        # Convert UserDetails IDs to Django User IDs (frontend sends UserDetails IDs)
+                        django_user_ids = []
+                        for user_details_id in regular_values:
+                            try:
+                                # Try as UserDetails ID first (string)
+                                user_details = UserDetails.objects.filter(id=str(user_details_id)).first()
+                                if user_details and user_details.django_user:
+                                    django_user_ids.append(user_details.django_user.id)
+                                else:
+                                    # Fallback: try as Django User ID (if numeric)
+                                    try:
+                                        int_id = int(user_details_id)
+                                        if DjangoUser.objects.filter(id=int_id).exists():
+                                            django_user_ids.append(int_id)
+                                    except (ValueError, TypeError):
+                                        pass
+                            except Exception as e:
+                                print(f"[DEBUG] Error converting creator UserDetails ID {user_details_id}: {e}")
+                                # Fallback: try as Django User ID
+                                try:
+                                    int_id = int(user_details_id)
+                                    if DjangoUser.objects.filter(id=int_id).exists():
+                                        django_user_ids.append(int_id)
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        if django_user_ids:
+                            q_objects.append(models.Q(creator_id__in=django_user_ids))
+                            print(f"[DEBUG] Creator filter: converted {len(regular_values)} UserDetails IDs to {len(django_user_ids)} Django User IDs: {django_user_ids}")
+                        else:
+                            print(f"[DEBUG] WARNING: No valid creator IDs found for filter values: {regular_values}")
+                            # Return empty queryset by filtering with impossible condition
+                            q_objects.append(models.Q(creator_id__in=[]))
                     elif column_id == 'postalCode':
                         q_objects.append(models.Q(postal_code__in=regular_values))
                     elif column_id == 'nationality':
@@ -1514,11 +1646,6 @@ class FosseContactView(generics.ListAPIView):
                             has_empty = '__empty__' in values
                             regular_values = [v for v in values if v != '__empty__']
                             
-                            # Debug logging for forced filters
-                            if column_id in ['previousStatus', 'previousTeleoperator']:
-                                print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - values: {values}, has_empty: {has_empty}, regular_values: {regular_values}")
-                                print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - config_type: {config_type}, config_values: {config_values}")
-                            
                             # Build Q objects for filtering
                             q_objects = []
                             
@@ -1535,7 +1662,37 @@ class FosseContactView(generics.ListAPIView):
                                 elif column_id == 'source':
                                     q_objects.append(models.Q(source_id__in=regular_values))
                                 elif column_id == 'creator':
-                                    q_objects.append(models.Q(creator_id__in=regular_values))
+                                    # Convert UserDetails IDs to Django User IDs (frontend sends UserDetails IDs)
+                                    django_user_ids = []
+                                    for user_details_id in regular_values:
+                                        try:
+                                            # Try as UserDetails ID first (string)
+                                            user_details = UserDetails.objects.filter(id=str(user_details_id)).first()
+                                            if user_details and user_details.django_user:
+                                                django_user_ids.append(user_details.django_user.id)
+                                            else:
+                                                # Fallback: try as Django User ID (if numeric)
+                                                try:
+                                                    int_id = int(user_details_id)
+                                                    if DjangoUser.objects.filter(id=int_id).exists():
+                                                        django_user_ids.append(int_id)
+                                                except (ValueError, TypeError):
+                                                    pass
+                                        except Exception as e:
+                                            print(f"[DEBUG] Error converting creator UserDetails ID {user_details_id}: {e}")
+                                            # Fallback: try as Django User ID
+                                            try:
+                                                int_id = int(user_details_id)
+                                                if DjangoUser.objects.filter(id=int_id).exists():
+                                                    django_user_ids.append(int_id)
+                                            except (ValueError, TypeError):
+                                                pass
+                                    
+                                    if django_user_ids:
+                                        q_objects.append(models.Q(creator_id__in=django_user_ids))
+                                    else:
+                                        # Return empty queryset by filtering with impossible condition
+                                        q_objects.append(models.Q(creator_id__in=[]))
                                 elif column_id == 'postalCode':
                                     q_objects.append(models.Q(postal_code__in=regular_values))
                                 elif column_id == 'nationality':
@@ -1551,7 +1708,6 @@ class FosseContactView(generics.ListAPIView):
                                     from .models import Log
                                     
                                     matching_contact_ids = set()
-                                    print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - regular_values: {regular_values}")
                                     
                                     # Get all contacts with status change logs
                                     contacts_with_logs = Contact.objects.filter(
@@ -1560,8 +1716,6 @@ class FosseContactView(generics.ListAPIView):
                                     ).exclude(
                                         contact_logs__old_value__statusName=models.F('contact_logs__new_value__statusName')
                                     ).distinct()
-                                    
-                                    print(f"[FOSSE FORCED FILTER DEBUG] Found {contacts_with_logs.count()} contacts with status change logs")
                                     
                                     for contact in contacts_with_logs:
                                         # Get current status name for this contact
@@ -1594,22 +1748,15 @@ class FosseContactView(generics.ListAPIView):
                                             # Check if the immediate previous status matches any of the filter values
                                             if previous_status in regular_values:
                                                 matching_contact_ids.add(contact.id)
-                                                print(f"[FOSSE FORCED FILTER DEBUG] Contact {contact.id} - current: '{current_status_name}', previous: '{previous_status}' - MATCH")
-                                    
-                                    print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - total matching_contact_ids: {len(matching_contact_ids)}, has_empty: {has_empty}")
                                     
                                     if matching_contact_ids:
                                         q_objects.append(models.Q(id__in=matching_contact_ids))
-                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - Added Q object with {len(matching_contact_ids)} contact IDs")
                                     elif not has_empty:
                                         # No matches and no empty option - exclude all (strict filter)
-                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - No matches found and empty not selected, excluding all contacts")
                                         queryset = queryset.none()
                                         break
                                     # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
                                     # The empty filter (already added below) will be applied, showing only contacts with empty previousStatus
-                                    elif has_empty:
-                                        print(f"[FOSSE FORCED FILTER DEBUG] previousStatus filter - No matches found but empty selected, will show only empty contacts")
                                 elif column_id == 'previousTeleoperator':
                                     # Filter by previous teleoperator from logs - same logic as regular filter
                                     from .models import Log
@@ -1696,11 +1843,6 @@ class FosseContactView(generics.ListAPIView):
                             # - If regularValues.length === 0: matches = hasEmpty && !previousStatus
                             # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
                             if q_objects:
-                                if column_id in ['previousStatus', 'previousTeleoperator']:
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - Applying {len(q_objects)} Q object(s)")
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - q_objects: {q_objects}, has_empty: {has_empty}, regular_values: {regular_values}")
-                                    queryset_before = queryset.count()
-                                
                                 if len(q_objects) == 1:
                                     # Single filter - apply directly
                                     queryset = queryset.filter(q_objects[0])
@@ -1711,28 +1853,19 @@ class FosseContactView(generics.ListAPIView):
                                     for q_obj in q_objects[1:]:
                                         combined_q |= q_obj
                                     queryset = queryset.filter(combined_q)
-                                
-                                if column_id in ['previousStatus', 'previousTeleoperator']:
-                                    queryset_after = queryset.count()
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - queryset count: {queryset_before} -> {queryset_after}")
                             elif column_id in ['previousStatus', 'previousTeleoperator']:
                                 # No q_objects but we're filtering - match preview logic
-                                print(f"[FOSSE FORCED FILTER DEBUG] WARNING: {column_id} - has_empty: {has_empty}, regular_values: {regular_values}, but q_objects is empty!")
-                                
                                 # Preview logic: if regularValues.length === 0, matches = hasEmpty && !previousStatus
                                 # So if only empty is selected and no q_objects, something went wrong
                                 if not regular_values and has_empty:
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - Only empty selected but empty_q not added - this shouldn't happen")
                                     # empty_q should have been added above, but if not, exclude all to be safe
                                     queryset = queryset.none()
                                 # Preview logic: if regularValues.length > 0 and no matches, matches = false (unless hasEmpty && !previousStatus)
                                 # So if regularValues exist but no matches and hasEmpty is false, exclude all
                                 elif regular_values and not has_empty:
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - No matches found for regular_values and empty not selected, excluding all contacts")
                                     queryset = queryset.none()
                                 # If regularValues exist but no matches and hasEmpty is true, empty_q should have been added
                                 elif regular_values and has_empty:
-                                    print(f"[FOSSE FORCED FILTER DEBUG] {column_id} - No matches for regular_values but empty selected - empty_q should have been added above")
                                     # This shouldn't happen - empty_q should have been added in the has_empty block above
                                     # But if it didn't, exclude all to be safe
                                     queryset = queryset.none()
@@ -1881,10 +2014,6 @@ class FosseContactView(generics.ListAPIView):
                 regular_values = [v for v in values if v != '__empty__']
                 q_objects = []
                 
-                # Debug logging for previousStatus filter
-                if column_id == 'previousStatus':
-                    print(f"[FOSSE DEBUG] previousStatus filter - values: {values}, has_empty: {has_empty}, regular_values: {regular_values}")
-                
                 if has_empty:
                     if column_id == 'status':
                         q_objects.append(models.Q(status_id__isnull=True))
@@ -1961,7 +2090,37 @@ class FosseContactView(generics.ListAPIView):
                         queryset = queryset.none()
                         break
                     elif column_id == 'creator':
-                        q_objects.append(models.Q(creator_id__in=regular_values))
+                        # Convert UserDetails IDs to Django User IDs (frontend sends UserDetails IDs)
+                        django_user_ids = []
+                        for user_details_id in regular_values:
+                            try:
+                                # Try as UserDetails ID first (string)
+                                user_details = UserDetails.objects.filter(id=str(user_details_id)).first()
+                                if user_details and user_details.django_user:
+                                    django_user_ids.append(user_details.django_user.id)
+                                else:
+                                    # Fallback: try as Django User ID (if numeric)
+                                    try:
+                                        int_id = int(user_details_id)
+                                        if DjangoUser.objects.filter(id=int_id).exists():
+                                            django_user_ids.append(int_id)
+                                    except (ValueError, TypeError):
+                                        pass
+                            except Exception as e:
+                                print(f"[DEBUG] Error converting creator UserDetails ID {user_details_id}: {e}")
+                                # Fallback: try as Django User ID
+                                try:
+                                    int_id = int(user_details_id)
+                                    if DjangoUser.objects.filter(id=int_id).exists():
+                                        django_user_ids.append(int_id)
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        if django_user_ids:
+                            q_objects.append(models.Q(creator_id__in=django_user_ids))
+                        else:
+                            # Return empty queryset by filtering with impossible condition
+                            q_objects.append(models.Q(creator_id__in=[]))
                     elif column_id == 'postalCode':
                         q_objects.append(models.Q(postal_code__in=regular_values))
                     elif column_id == 'nationality':
@@ -2472,13 +2631,29 @@ def contact_create(request):
             return None
         from datetime import datetime
         from django.utils import timezone
+        import pytz
+        utc = pytz.UTC
+        
         # If already a datetime object, make it timezone-aware and return
         if isinstance(datetime_str, datetime):
             if timezone.is_aware(datetime_str):
                 return datetime_str
-            return timezone.make_aware(datetime_str)
+            # For naive datetime, assume UTC to avoid timezone offset issues
+            return utc.localize(datetime_str)
         datetime_str = str(datetime_str).strip()
-        # Try common datetime formats
+        
+        # Try parsing ISO format with timezone first (e.g., "2024-01-01T10:00:00Z" or "2024-01-01T10:00:00+00:00")
+        try:
+            from dateutil import parser
+            parsed = parser.parse(datetime_str)
+            if timezone.is_aware(parsed):
+                return parsed
+            # If parsed as naive, assume UTC
+            return utc.localize(parsed)
+        except (ValueError, ImportError):
+            pass
+        
+        # Try common datetime formats (assume UTC for naive datetimes)
         formats = [
             '%Y-%m-%d %H:%M:%S',
             '%Y-%m-%d %H:%M',
@@ -2496,7 +2671,8 @@ def contact_create(request):
         for fmt in formats:
             try:
                 parsed = datetime.strptime(datetime_str, fmt)
-                return timezone.make_aware(parsed)
+                # Assume UTC instead of server local timezone to avoid offset issues
+                return utc.localize(parsed)
             except ValueError:
                 continue
         return None
@@ -2632,17 +2808,34 @@ def contacts_bulk_create(request):
         """Parse datetime string to timezone-aware datetime object"""
         if not datetime_str or str(datetime_str).strip() == '':
             return None
+        import pytz
+        utc = pytz.UTC
+        
         # If already a datetime object, make it timezone-aware and return
         if isinstance(datetime_str, datetime):
             if timezone.is_aware(datetime_str):
                 return datetime_str
-            return timezone.make_aware(datetime_str)
+            # For naive datetime, assume UTC to avoid timezone offset issues
+            return utc.localize(datetime_str)
         # If date object, convert to datetime
         if isinstance(datetime_str, date):
             dt = datetime.combine(datetime_str, datetime.min.time())
-            return timezone.make_aware(dt)
+            # Assume UTC for date objects
+            return utc.localize(dt)
         datetime_str = str(datetime_str).strip()
-        # Try common datetime formats
+        
+        # Try parsing ISO format with timezone first (e.g., "2024-01-01T10:00:00Z" or "2024-01-01T10:00:00+00:00")
+        try:
+            from dateutil import parser
+            parsed = parser.parse(datetime_str)
+            if timezone.is_aware(parsed):
+                return parsed
+            # If parsed as naive, assume UTC
+            return utc.localize(parsed)
+        except (ValueError, ImportError):
+            pass
+        
+        # Try common datetime formats (assume UTC for naive datetimes)
         formats = [
             '%Y-%m-%d %H:%M:%S',
             '%Y-%m-%d %H:%M',
@@ -2660,7 +2853,8 @@ def contacts_bulk_create(request):
         for fmt in formats:
             try:
                 parsed = datetime.strptime(datetime_str, fmt)
-                return timezone.make_aware(parsed)
+                # Assume UTC instead of server local timezone to avoid offset issues
+                return utc.localize(parsed)
             except ValueError:
                 continue
         return None
@@ -2900,7 +3094,31 @@ def contacts_bulk_create(request):
                 continue  # Skip creation logic for this contact
             
             # No existing contact found, proceed with creation
-            contact_obj_data['old_contact_id'] = old_contact_id_clean
+            # Generate contact ID
+            contact_id = uuid.uuid4().hex[:12]
+            while Contact.objects.filter(id=contact_id).exists() or any(c[0].id == contact_id for c in contacts_to_create):
+                contact_id = uuid.uuid4().hex[:12]
+            
+            # Build contact data
+            contact_obj_data = {
+                'id': contact_id,
+                'civility': contact_data.get('civility', '') or '',
+                'fname': contact_data.get('firstName', '') or '',
+                'lname': contact_data.get('lastName', '') or '',
+                'phone': phone_to_int(contact_data.get('phone', '')),
+                'mobile': phone_to_int(contact_data.get('mobile', '')),
+                'email': email,
+                'birth_date': parse_date(contact_data.get('birthDate')),
+                'birth_place': contact_data.get('birthPlace', '') or '',
+                'address': contact_data.get('address', '') or '',
+                'address_complement': contact_data.get('addressComplement', '') or '',
+                'postal_code': contact_data.get('postalCode', '') or '',
+                'city': contact_data.get('city', '') or '',
+                'nationality': contact_data.get('nationality', '') or '',
+                'campaign': contact_data.get('campaign', '') or '',
+                'creator': request.user,
+                'old_contact_id': old_contact_id_clean,
+            }
             
             # Set status
             status_id = contact_data.get('statusId')
@@ -3084,50 +3302,99 @@ def contacts_bulk_create(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def csv_import_preview(request):
-    """Preview CSV file and return headers and sample rows"""
+    """Preview CSV or Excel file and return headers and sample rows"""
     if 'file' not in request.FILES:
         return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
     
-    csv_file = request.FILES['file']
+    file = request.FILES['file']
+    file_name = file.name.lower()
     
     # Check file extension
-    if not csv_file.name.endswith('.csv'):
-        return Response({'error': 'File must be a CSV file'}, status=status.HTTP_400_BAD_REQUEST)
+    is_csv = file_name.endswith('.csv')
+    is_excel = file_name.endswith('.xlsx') or file_name.endswith('.xls')
+    
+    if not is_csv and not is_excel:
+        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx, .xls)'}, status=status.HTTP_400_BAD_REQUEST)
     
     try:
-        # Read CSV file - accept any CSV format
-        file_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
-        csv_reader = csv.DictReader(io.StringIO(file_content))
-        
-        # Get headers - accept any header names
-        headers = csv_reader.fieldnames or []
-        
-        # Clean headers (remove whitespace, handle empty headers)
-        cleaned_headers = []
-        for i, header in enumerate(headers):
-            if header and header.strip():
-                cleaned_headers.append(header.strip())
-            else:
-                # If header is empty, create a placeholder
-                cleaned_headers.append(f'Colonne_{i+1}')
-        
-        # Get first 5 rows as preview
-        preview_rows = []
-        csv_reader_preview = csv.DictReader(io.StringIO(file_content))
-        for i, row in enumerate(csv_reader_preview):
-            if i >= 5:
-                break
-            preview_rows.append(row)
-        
-        # Count total rows (excluding header)
-        file_content_for_count = io.StringIO(file_content)
-        total_rows = sum(1 for _ in csv.DictReader(file_content_for_count))
-        
-        return Response({
-            'headers': cleaned_headers if cleaned_headers else headers,
-            'preview': preview_rows,
-            'totalRows': total_rows
-        }, status=status.HTTP_200_OK)
+        if is_excel:
+            # Handle Excel file
+            from openpyxl import load_workbook
+            
+            # Reset file pointer
+            file.seek(0)
+            workbook = load_workbook(file, read_only=True, data_only=True)
+            
+            # Use the first sheet
+            sheet = workbook.active
+            
+            # Get headers from first row
+            headers = []
+            if sheet.max_row > 0:
+                first_row = sheet[1]
+                for i, cell in enumerate(first_row):
+                    value = cell.value
+                    if value and str(value).strip():
+                        headers.append(str(value).strip())
+                    else:
+                        headers.append(f'Colonne_{i+1}')
+            
+            # Get first 5 rows as preview
+            preview_rows = []
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2, max_row=6, values_only=False), start=2):
+                if row_idx > 6:
+                    break
+                row_dict = {}
+                for i, cell in enumerate(row):
+                    header = headers[i] if i < len(headers) else f'Colonne_{i+1}'
+                    value = cell.value
+                    row_dict[header] = str(value) if value is not None else ''
+                preview_rows.append(row_dict)
+            
+            # Count total rows (excluding header)
+            total_rows = sheet.max_row - 1 if sheet.max_row > 1 else 0
+            
+            workbook.close()
+            
+            return Response({
+                'headers': headers,
+                'preview': preview_rows,
+                'totalRows': total_rows
+            }, status=status.HTTP_200_OK)
+        else:
+            # Read CSV file - accept any CSV format
+            file_content = file.read().decode('utf-8-sig')  # Handle BOM
+            csv_reader = csv.DictReader(io.StringIO(file_content))
+            
+            # Get headers - accept any header names
+            headers = csv_reader.fieldnames or []
+            
+            # Clean headers (remove whitespace, handle empty headers)
+            cleaned_headers = []
+            for i, header in enumerate(headers):
+                if header and header.strip():
+                    cleaned_headers.append(header.strip())
+                else:
+                    # If header is empty, create a placeholder
+                    cleaned_headers.append(f'Colonne_{i+1}')
+            
+            # Get first 5 rows as preview
+            preview_rows = []
+            csv_reader_preview = csv.DictReader(io.StringIO(file_content))
+            for i, row in enumerate(csv_reader_preview):
+                if i >= 5:
+                    break
+                preview_rows.append(row)
+            
+            # Count total rows (excluding header)
+            file_content_for_count = io.StringIO(file_content)
+            total_rows = sum(1 for _ in csv.DictReader(file_content_for_count))
+            
+            return Response({
+                'headers': cleaned_headers if cleaned_headers else headers,
+                'preview': preview_rows,
+                'totalRows': total_rows
+            }, status=status.HTTP_200_OK)
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -3136,11 +3403,19 @@ def csv_import_preview(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def csv_import_contacts(request):
-    """Import contacts from CSV with column mapping - optimized for large imports"""
+    """Import contacts from CSV or Excel with column mapping - optimized for large imports"""
     if 'file' not in request.FILES:
         return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
     
-    csv_file = request.FILES['file']
+    file = request.FILES['file']
+    file_name = file.name.lower()
+    
+    # Check file extension
+    is_csv = file_name.endswith('.csv')
+    is_excel = file_name.endswith('.xlsx') or file_name.endswith('.xls')
+    
+    if not is_csv and not is_excel:
+        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx, .xls)'}, status=status.HTTP_400_BAD_REQUEST)
     
     # Parse column mapping JSON string if it's a string
     column_mapping_str = request.data.get('columnMapping', '{}')
@@ -3179,10 +3454,57 @@ def csv_import_contacts(request):
     if not default_status_id:
         return Response({'error': 'Default status is required'}, status=status.HTTP_400_BAD_REQUEST)
     
+    workbook = None
     try:
-        # Read CSV file
-        file_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
-        csv_reader = csv.DictReader(io.StringIO(file_content))
+        # Read file based on type
+        if is_excel:
+            from openpyxl import load_workbook
+            
+            # Reset file pointer
+            file.seek(0)
+            workbook = load_workbook(file, read_only=True, data_only=True)
+            sheet = workbook.active
+            
+            # Get headers from first row
+            headers = []
+            if sheet.max_row > 0:
+                first_row = sheet[1]
+                for i, cell in enumerate(first_row):
+                    value = cell.value
+                    if value and str(value).strip():
+                        headers.append(str(value).strip())
+                    else:
+                        headers.append(f'Colonne_{i+1}')
+            
+            # Convert Excel rows to dict-like format compatible with CSV reader
+            class ExcelDictReader:
+                def __init__(self, sheet, headers):
+                    self.sheet = sheet
+                    self.headers = headers
+                    self.current_row = 2  # Start from row 2 (skip header)
+                    self.max_row = sheet.max_row
+                
+                def __iter__(self):
+                    return self
+                
+                def __next__(self):
+                    if self.current_row > self.max_row:
+                        raise StopIteration
+                    
+                    row = self.sheet[self.current_row]
+                    row_dict = {}
+                    for i, cell in enumerate(row):
+                        header = self.headers[i] if i < len(self.headers) else f'Colonne_{i+1}'
+                        value = cell.value
+                        row_dict[header] = str(value) if value is not None else ''
+                    self.current_row += 1
+                    return row_dict
+            
+            file_reader = ExcelDictReader(sheet, headers)
+        else:
+            # Read CSV file
+            file_content = file.read().decode('utf-8-sig')  # Handle BOM
+            file_reader = csv.DictReader(io.StringIO(file_content))
         
         # Get status and source objects
         status_obj = Status.objects.filter(id=default_status_id).first()
@@ -3313,7 +3635,7 @@ def csv_import_contacts(request):
         row_data_map = {}  # Map contact_id to row number and name for results
         
         # First pass: Parse all rows and collect valid contacts
-        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
+        for row_num, row in enumerate(file_reader, start=2):  # Start at 2 (row 1 is header)
             results['total'] += 1
             try:
                 # Build contact data from CSV row
@@ -3592,11 +3914,21 @@ def csv_import_contacts(request):
                 # Don't fail the import if logging fails
                 pass
         
+        # Close workbook if Excel file
+        if workbook is not None:
+            workbook.close()
+        
         return Response(results, status=status.HTTP_200_OK)
         
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
+        # Close workbook if Excel file (even on error)
+        if workbook is not None:
+            try:
+                workbook.close()
+            except:
+                pass
         return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
@@ -4993,7 +5325,7 @@ def contact_detail(request, contact_id):
                                 from django.utils import timezone
                                 contact.assigned_at = timezone.now()
                                 contact._assigned_at_was_set = True  # Mark that we set assigned_at
-                                print(f"[DEBUG] ✓✓✓ Teleoperator CHANGED from {old_teleoperator_id} to {new_teleoperator_id}")
+                                print(f"[DEBUG] ✓✓✓ Teleoperator CHANGED from {old_teleoperator_django_id} to {teleoperator_user.id}")
                                 print(f"[DEBUG] ✓✓✓ Set assigned_at to {contact.assigned_at}")
                             else:
                                 print(f"[DEBUG] ✗ Teleoperator NOT changed (same value), keeping assigned_at as {contact.assigned_at}")
@@ -5019,7 +5351,7 @@ def contact_detail(request, contact_id):
                     if teleoperator_changed:
                         contact.assigned_at = None
                         contact._assigned_at_was_set = True  # Mark that we modified assigned_at
-                        print(f"[DEBUG] ✓✓✓ Teleoperator CLEARED (was {old_teleoperator_id}), set assigned_at to None")
+                        print(f"[DEBUG] ✓✓✓ Teleoperator CLEARED (was {old_teleoperator_django_id}), set assigned_at to None")
                     else:
                         print(f"[DEBUG] ✗ Teleoperator NOT changed (already None), keeping assigned_at as {contact.assigned_at}")
                     # Clear any cached relationship

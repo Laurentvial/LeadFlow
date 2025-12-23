@@ -448,6 +448,7 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['lastName'] = instance.lname
         ret['fullName'] = f"{instance.fname} {instance.lname}".strip()
         ret['createdAt'] = instance.created_at
+        ret['updatedAt'] = instance.updated_at
         ret['source'] = instance.source.name if instance.source else ''
         ret['sourceId'] = instance.source_id if hasattr(instance, 'source_id') else (instance.source.id if instance.source else None)
         ret['statusId'] = instance.status_id if hasattr(instance, 'status_id') else (instance.status.id if instance.status else None)
