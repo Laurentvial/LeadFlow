@@ -651,6 +651,255 @@ class ContactSerializer(serializers.ModelSerializer):
         
         return ret
 
+class ContactMigrationSerializer(serializers.ModelSerializer):
+    """
+    Simplified serializer for contact migration/bulk import operations.
+    Optimized for performance and handles migration-specific needs.
+    """
+    # CamelCase field names for API compatibility
+    firstName = serializers.CharField(source='fname', required=False, allow_blank=True)
+    lastName = serializers.CharField(source='lname', required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    mobile = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    birthDate = serializers.DateField(source='birth_date', required=False, allow_null=True)
+    birthPlace = serializers.CharField(source='birth_place', required=False, allow_blank=True)
+    addressComplement = serializers.CharField(source='address_complement', required=False, allow_blank=True)
+    postalCode = serializers.CharField(source='postal_code', required=False, allow_blank=True)
+    statusId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    sourceId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    teleoperatorId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    confirmateurId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    creatorId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    platformId = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    confirmateurEmail = serializers.EmailField(source='confirmateur_email', required=False, allow_blank=True)
+    confirmateurTelephone = serializers.CharField(source='confirmateur_telephone', required=False, allow_blank=True)
+    montantEncaisse = serializers.DecimalField(source='montant_encaisse', max_digits=10, decimal_places=2, required=False, allow_null=True)
+    bonus = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    nomDeScene = serializers.CharField(source='nom_de_scene', required=False, allow_blank=True)
+    dateProTr = serializers.CharField(source='date_pro_tr', required=False, allow_blank=True)
+    oldContactId = serializers.CharField(source='old_contact_id', required=False, allow_null=True, allow_blank=True)
+    createdAt = serializers.DateTimeField(source='created_at', required=False, allow_null=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', required=False, allow_null=True)
+    assignedAt = serializers.DateTimeField(source='assigned_at', required=False, allow_null=True)
+    
+    class Meta:
+        model = Contact
+        fields = [
+            'id', 'oldContactId', 'firstName', 'lastName', 'civility', 'phone', 'mobile', 'email',
+            'birthDate', 'birthPlace', 'address', 'addressComplement', 'postalCode', 'city', 'nationality',
+            'statusId', 'sourceId', 'campaign', 'teleoperatorId', 'confirmateurId', 'creatorId',
+            'platformId', 'confirmateurEmail', 'confirmateurTelephone', 'montantEncaisse', 'bonus',
+            'paiement', 'contrat', 'nomDeScene', 'dateProTr', 'potentiel', 'produit',
+            'createdAt', 'updatedAt', 'assignedAt'
+        ]
+        extra_kwargs = {
+            'id': {'required': False},
+        }
+    
+    def validate_phone(self, value):
+        """Convert phone string to integer or None"""
+        if not value or value == '' or (isinstance(value, str) and not value.strip()):
+            return None
+        # Remove spaces and non-digit characters except + at start
+        cleaned = ''.join(str(value).split())
+        if cleaned.startswith('+'):
+            cleaned = cleaned[1:]
+        if cleaned and cleaned.isdigit():
+            try:
+                return int(cleaned)
+            except (ValueError, TypeError):
+                return None
+        return None
+    
+    def validate_mobile(self, value):
+        """Convert mobile string to integer or None"""
+        if not value or value == '' or (isinstance(value, str) and not value.strip()):
+            return None
+        # Remove spaces and non-digit characters except + at start
+        cleaned = ''.join(str(value).split())
+        if cleaned.startswith('+'):
+            cleaned = cleaned[1:]
+        if cleaned and cleaned.isdigit():
+            try:
+                return int(cleaned)
+            except (ValueError, TypeError):
+                return None
+        return None
+    
+    def validate_statusId(self, value):
+        """Validate statusId exists"""
+        if not value or value == '':
+            return None
+        from .models import Status
+        try:
+            Status.objects.get(id=value)
+            return value
+        except Status.DoesNotExist:
+            raise serializers.ValidationError(f"Status with id '{value}' does not exist.")
+    
+    def validate_sourceId(self, value):
+        """Validate sourceId exists"""
+        if not value or value == '':
+            return None
+        from .models import Source
+        try:
+            Source.objects.get(id=value)
+            return value
+        except Source.DoesNotExist:
+            raise serializers.ValidationError(f"Source with id '{value}' does not exist.")
+    
+    def validate_platformId(self, value):
+        """Validate platformId exists"""
+        if not value or value == '':
+            return None
+        from .models import Platform
+        try:
+            Platform.objects.get(id=value)
+            return value
+        except Platform.DoesNotExist:
+            raise serializers.ValidationError(f"Platform with id '{value}' does not exist.")
+    
+    def validate_teleoperatorId(self, value):
+        """Validate teleoperatorId exists (can be Django User ID or UserDetails ID)"""
+        if not value or value == '':
+            return None
+        from .models import UserDetails
+        # Try UserDetails ID first
+        try:
+            user_details = UserDetails.objects.get(id=value)
+            if user_details.django_user:
+                return user_details.django_user.id
+        except UserDetails.DoesNotExist:
+            pass
+        # Try Django User ID
+        try:
+            django_user = DjangoUser.objects.get(id=int(value))
+            return django_user.id
+        except (DjangoUser.DoesNotExist, ValueError, TypeError):
+            raise serializers.ValidationError(f"Teleoperator with id '{value}' does not exist.")
+    
+    def validate_confirmateurId(self, value):
+        """Validate confirmateurId exists (can be Django User ID or UserDetails ID)"""
+        if not value or value == '':
+            return None
+        from .models import UserDetails
+        # Try UserDetails ID first
+        try:
+            user_details = UserDetails.objects.get(id=value)
+            if user_details.django_user:
+                return user_details.django_user.id
+        except UserDetails.DoesNotExist:
+            pass
+        # Try Django User ID
+        try:
+            django_user = DjangoUser.objects.get(id=int(value))
+            return django_user.id
+        except (DjangoUser.DoesNotExist, ValueError, TypeError):
+            raise serializers.ValidationError(f"Confirmateur with id '{value}' does not exist.")
+    
+    def validate_creatorId(self, value):
+        """Validate creatorId exists (can be Django User ID or UserDetails ID)"""
+        if not value or value == '':
+            return None
+        from .models import UserDetails
+        # Try UserDetails ID first
+        try:
+            user_details = UserDetails.objects.get(id=value)
+            if user_details.django_user:
+                return user_details.django_user.id
+        except UserDetails.DoesNotExist:
+            pass
+        # Try Django User ID
+        try:
+            django_user = DjangoUser.objects.get(id=int(value))
+            return django_user.id
+        except (DjangoUser.DoesNotExist, ValueError, TypeError):
+            raise serializers.ValidationError(f"Creator with id '{value}' does not exist.")
+    
+    def create(self, validated_data):
+        """Create contact instance with proper field mapping"""
+        # Extract ForeignKey IDs
+        status_id = validated_data.pop('statusId', None)
+        source_id = validated_data.pop('sourceId', None)
+        teleoperator_id = validated_data.pop('teleoperatorId', None)
+        confirmateur_id = validated_data.pop('confirmateurId', None)
+        creator_id = validated_data.pop('creatorId', None)
+        platform_id = validated_data.pop('platformId', None)
+        
+        # Handle phone and mobile (already converted to int or None by validators)
+        phone = validated_data.pop('phone', None)
+        mobile = validated_data.pop('mobile', None)
+        
+        # Set ForeignKey relationships
+        if status_id:
+            from .models import Status
+            validated_data['status_id'] = status_id
+        if source_id:
+            from .models import Source
+            validated_data['source_id'] = source_id
+        if platform_id:
+            from .models import Platform
+            validated_data['platform_id'] = platform_id
+        if teleoperator_id:
+            validated_data['teleoperator_id'] = teleoperator_id
+        if confirmateur_id:
+            validated_data['confirmateur_id'] = confirmateur_id
+        if creator_id:
+            validated_data['creator_id'] = creator_id
+        
+        # Set phone and mobile
+        validated_data['phone'] = phone
+        validated_data['mobile'] = mobile
+        
+        # Generate ID if not provided
+        if not validated_data.get('id'):
+            import uuid
+            contact_id = uuid.uuid4().hex[:12]
+            while Contact.objects.filter(id=contact_id).exists():
+                contact_id = uuid.uuid4().hex[:12]
+            validated_data['id'] = contact_id
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update contact instance with proper field mapping"""
+        # Extract ForeignKey IDs
+        status_id = validated_data.pop('statusId', None)
+        source_id = validated_data.pop('sourceId', None)
+        teleoperator_id = validated_data.pop('teleoperatorId', None)
+        confirmateur_id = validated_data.pop('confirmateurId', None)
+        creator_id = validated_data.pop('creatorId', None)
+        platform_id = validated_data.pop('platformId', None)
+        
+        # Handle phone and mobile (already converted to int or None by validators)
+        phone = validated_data.pop('phone', None)
+        mobile = validated_data.pop('mobile', None)
+        
+        # Set ForeignKey relationships
+        if status_id is not None:
+            from .models import Status
+            validated_data['status_id'] = status_id
+        if source_id is not None:
+            from .models import Source
+            validated_data['source_id'] = source_id
+        if platform_id is not None:
+            from .models import Platform
+            validated_data['platform_id'] = platform_id
+        if teleoperator_id is not None:
+            validated_data['teleoperator_id'] = teleoperator_id
+        if confirmateur_id is not None:
+            validated_data['confirmateur_id'] = confirmateur_id
+        if creator_id is not None:
+            validated_data['creator_id'] = creator_id
+        
+        # Set phone and mobile if provided
+        if phone is not None:
+            validated_data['phone'] = phone
+        if mobile is not None:
+            validated_data['mobile'] = mobile
+        
+        return super().update(instance, validated_data)
+
 class TeamSerializer(serializers.ModelSerializer):
     class Meta:
         model = Team

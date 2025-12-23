@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -90,6 +90,8 @@ export function MigrationPage() {
   const [error, setError] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingRowData, setEditingRowData] = useState<MigratedRow | null>(null);
+  const [contactNotes, setContactNotes] = useState<any[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
   const [defaultStatusId, setDefaultStatusId] = useState('');
   const [defaultSourceId, setDefaultSourceId] = useState('');
   const [defaultTeleoperatorId, setDefaultTeleoperatorId] = useState('');
@@ -1135,7 +1137,41 @@ export function MigrationPage() {
   const handleCloseEditModal = () => {
     setShowEditModal(false);
     setEditingRowData(null);
+    setContactNotes([]);
   };
+
+  // Load notes when modal opens and contact has been saved
+  useEffect(() => {
+    const loadNotes = async () => {
+      if (!showEditModal || !editingRowData?.contactId) {
+        setContactNotes([]);
+        return;
+      }
+
+      setLoadingNotes(true);
+      try {
+        const data = await apiCall(`/api/notes/?contactId=${editingRowData.contactId}`);
+        // Handle both paginated response (data.results) and direct array response
+        const notesArray = Array.isArray(data) ? data : (data.results || data.notes || []);
+        // Sort by created_at descending and take last 3
+        const sortedNotes = [...notesArray]
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || a.created_at).getTime();
+            const dateB = new Date(b.createdAt || b.created_at).getTime();
+            return dateB - dateA; // Descending order (most recent first)
+          })
+          .slice(0, 3);
+        setContactNotes(sortedNotes);
+      } catch (error) {
+        console.error('Error loading notes:', error);
+        setContactNotes([]);
+      } finally {
+        setLoadingNotes(false);
+      }
+    };
+
+    loadNotes();
+  }, [showEditModal, editingRowData?.contactId]);
 
   const handleSaveFromModal = async () => {
     if (!editingRowData) return;
@@ -2893,6 +2929,57 @@ export function MigrationPage() {
                 </div>
               </div>
 
+              {/* Last 3 Notes Section */}
+              {editingRowData.contactId && (
+                <div className="mt-6 pt-6 border-t border-slate-200">
+                  <Label className="text-base font-semibold mb-3 block">Dernières notes</Label>
+                  {loadingNotes ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      <span className="text-sm text-slate-500">Chargement des notes...</span>
+                    </div>
+                  ) : contactNotes.length > 0 ? (
+                    <div className="space-y-3">
+                      {contactNotes.map((note) => (
+                        <div key={note.id} className="p-3 bg-slate-50 rounded border border-slate-200">
+                          <div className="mb-2">
+                            <span className="text-sm text-slate-800" style={{ wordBreak: 'break-word', overflowWrap: 'break-word', display: 'block' }}>
+                              {note.text}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <span>
+                              {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit', 
+                                minute: '2-digit'
+                              })}
+                            </span>
+                            {(note.createdBy || note.userId?.username || note.user?.username) && (
+                              <>
+                                <span className="text-slate-400">•</span>
+                                <span>
+                                  {note.createdBy || note.userId?.username || note.user?.username}
+                                </span>
+                              </>
+                            )}
+                            {note.categoryName && (
+                              <>
+                                <span className="text-slate-400">•</span>
+                                <span className="text-slate-600 font-medium">{note.categoryName}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500 text-center py-4">Aucune note pour ce contact</p>
+                  )}
+                </div>
+              )}
 
               <div className="modal-form-actions">
                 <Button type="button" variant="outline" onClick={handleCloseEditModal}>

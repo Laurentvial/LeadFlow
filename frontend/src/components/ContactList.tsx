@@ -528,6 +528,20 @@ export function ContactList({
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [noteCategories, accessibleCategoryIds]);
   
+  // Filter categories for status change modal - only show if user can create/edit/delete
+  const categoriesForStatusChange = React.useMemo(() => {
+    if (!currentUser?.permissions) return [];
+    return noteCategories.filter(cat => {
+      // Check if user has create, edit, or delete permission for this category
+      return currentUser.permissions.some((p: any) => 
+        p.component === 'note_categories' && 
+        (p.action === 'create' || p.action === 'edit' || p.action === 'delete') &&
+        p.fieldName === cat.id &&
+        !p.statusId
+      );
+    }).sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [noteCategories, currentUser?.permissions]);
+  
   // Helper function to prefill client form with contact data
   const prefillClientForm = React.useCallback((contact: any) => {
     // Prefill teleoperatorId with current user if they are a teleoperateur
@@ -550,10 +564,10 @@ export function ContactList({
       bonus: contact.bonus || '',
       paiement: contact.paiement || '',
       noteGestionnaire: '',
-      noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+      noteCategoryId: categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : ''
     });
-    setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
-  }, [currentUser, accessibleCategories]);
+    setSelectedNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
+  }, [currentUser, categoriesForStatusChange]);
   
   // Confirmation modal state for status change warning
   const [isStatusChangeConfirmOpen, setIsStatusChangeConfirmOpen] = useState(false);
@@ -2144,7 +2158,7 @@ export function ContactList({
                     setSelectedContact(freshContact);
                     setSelectedStatusId(freshContact.statusId || '');
                     setStatusChangeNote('');
-                    setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                    setStatusChangeNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
                     // Set filter type based on current status
                     const currentStatus = statuses.find(s => s.id === freshContact.statusId);
                     if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
@@ -2163,7 +2177,7 @@ export function ContactList({
                     setSelectedContact(contact);
                     setSelectedStatusId(contact.statusId || '');
                     setStatusChangeNote('');
-                    setStatusChangeNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                    setStatusChangeNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
                     // Set filter type based on current status
                     const currentStatus = statuses.find(s => s.id === contact.statusId);
                     if (currentStatus?.type === 'client' || currentStatus?.type === 'lead') {
@@ -2617,10 +2631,10 @@ export function ContactList({
 
   // Ensure first category is selected when modal opens and categories are available
   React.useEffect(() => {
-    if (isStatusModalOpen && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
-      setStatusChangeNoteCategoryId(accessibleCategories[0].id);
+    if (isStatusModalOpen && categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
+      setStatusChangeNoteCategoryId(categoriesForStatusChange[0].id);
     }
-  }, [isStatusModalOpen, accessibleCategories, statusChangeNoteCategoryId]);
+  }, [isStatusModalOpen, categoriesForStatusChange, statusChangeNoteCategoryId]);
   
   // Helper function to update form field and clear error
   const updateFormField = (fieldName: string, value: any) => {
@@ -2655,7 +2669,7 @@ export function ContactList({
     }
     
     // Validate that a category is selected if note is provided and categories are available
-    if (statusChangeNote.trim() && accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+    if (statusChangeNote.trim() && categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
       toast.error('Veuillez sélectionner une catégorie pour la note');
       return;
     }
@@ -2783,7 +2797,7 @@ export function ContactList({
       // Create note with selected category if note was provided
       if (statusChangeNote.trim()) {
         // Validate that a category is selected if categories are available
-        if (accessibleCategories.length > 0 && !statusChangeNoteCategoryId) {
+        if (categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
           toast.error('Veuillez sélectionner une catégorie pour la note');
           return;
         }
@@ -4163,9 +4177,9 @@ export function ContactList({
                         bonus: selectedContact.bonus || '',
                         paiement: selectedContact.paiement || '',
                         noteGestionnaire: '',
-                        noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                        noteCategoryId: categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : ''
                       });
-                      setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                      setSelectedNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
                     } else {
                       // Reset client form if not client default
                       setClientFormData({
@@ -4309,9 +4323,9 @@ export function ContactList({
                               bonus: selectedContact.bonus || '',
                               paiement: selectedContact.paiement || '',
                               noteGestionnaire: '',
-                              noteCategoryId: accessibleCategories.length > 0 ? accessibleCategories[0].id : ''
+                              noteCategoryId: categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : ''
                             });
-                            setSelectedNoteCategoryId(accessibleCategories.length > 0 ? accessibleCategories[0].id : '');
+                            setSelectedNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
                           }}
                           className="mt-2"
                           title={`Définir comme statut par défaut client: ${clientDefaultStatus.name}`}
@@ -4331,10 +4345,10 @@ export function ContactList({
                 <Label htmlFor="statusNote" style={fieldErrors.note ? { color: '#ef4444' } : {}}>
                   Note <span style={{ color: '#ef4444' }}>*</span>
                 </Label>
-                {/* Show category tabs if user has permission and categories are available */}
-                {accessibleCategories.length > 0 && (
+                {/* Show category tabs if user has permission to create/edit/delete categories */}
+                {categoriesForStatusChange.length > 0 && (
                   <div className="mb-2 flex gap-2">
-                    {accessibleCategories.map((category) => (
+                    {categoriesForStatusChange.map((category) => (
                       <Button
                         key={category.id}
                         type="button"

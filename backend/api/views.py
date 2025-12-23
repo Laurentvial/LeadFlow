@@ -13,7 +13,7 @@ from .models import TeamMember
 from .models import Log
 from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP
 from .serializer import (
-    UserSerializer, ContactSerializer, NoteSerializer, NoteCategorySerializer,
+    UserSerializer, ContactSerializer, ContactMigrationSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, PlatformSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
@@ -3201,10 +3201,27 @@ def csv_import_contacts(request):
         # Handle teleoperator - required field
         teleoperator_obj = None
         if default_teleoperator_id:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            teleoperator_obj = User.objects.filter(id=default_teleoperator_id).first()
-            if not teleoperator_obj:
+            try:
+                teleoperator_user = None
+                # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
+                user_details = UserDetails.objects.filter(id=str(default_teleoperator_id)).select_related('django_user').only('id', 'django_user').first()
+                if user_details and user_details.django_user:
+                    teleoperator_user = user_details.django_user
+                
+                # Fallback: Try Django User ID lookup only if UserDetails lookup failed
+                if not teleoperator_user:
+                    try:
+                        int_id = int(default_teleoperator_id)
+                        teleoperator_user = DjangoUser.objects.filter(id=int_id).only('id').first()
+                    except (ValueError, TypeError):
+                        pass
+                
+                if teleoperator_user:
+                    teleoperator_obj = teleoperator_user
+                else:
+                    return Response({'error': 'Invalid teleoperator ID'}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                print(f"[DEBUG] Error setting teleoperator during CSV import: {e}")
                 return Response({'error': 'Invalid teleoperator ID'}, status=status.HTTP_400_BAD_REQUEST)
         else:
             # If not provided, try to auto-set to current user if they have teleoperateur role
