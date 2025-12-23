@@ -1733,38 +1733,37 @@ class FosseContactView(generics.ListAPIView):
                                     q_objects.append(models.Q(civility__in=regular_values))
                                 elif column_id == 'previousStatus':
                                     # Filter by IMMEDIATE previous status (the status right before the current one)
-                                    # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
-                                    from .models import Log, Status
-                                    from django.db.models import OuterRef, Exists, F, Subquery
+                                    # PERFORMANCE: Use efficient query with Subquery annotation
+                                    from .models import Log
+                                    from django.db.models import F, OuterRef, Subquery
                                     
-                                    # Get status names for the contact's current status_id
-                                    # Use Subquery to get status name, then match in Exists
-                                    status_name_subquery = Status.objects.filter(
-                                        id=OuterRef('status_id')
-                                    ).values('name')[:1]
-                                    
-                                    # Use Exists subquery to filter contacts where:
-                                    # 1. They have a log with old_value.statusName IN (filter_values)
-                                    # 2. The log's new_value.statusName matches their current status.name
-                                    # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
-                                    # Apply directly to queryset for better performance
-                                    previous_status_q = models.Q(
-                                        Exists(
-                                            Log.objects.filter(
-                                                contact_id=OuterRef('pk'),
-                                                event_type='editContact',
-                                                old_value__statusName__in=regular_values,
-                                                new_value__statusName__isnull=False
-                                            ).exclude(
-                                                old_value__statusName=F('new_value__statusName')
-                                            ).filter(
-                                                # Match log's new_status with contact's current status name
-                                                new_value__statusName=Subquery(status_name_subquery)
-                                            ).order_by('-created_at')[:1]
-                                        )
+                                    # Get contacts where the most recent matching log's new_status matches their current status
+                                    # Use Subquery annotation to get the latest log's new_status efficiently
+                                    matching_contact_ids = list(
+                                        Contact.objects.annotate(
+                                            # Get the most recent matching log's new_status
+                                            latest_log_new_status=Subquery(
+                                                Log.objects.filter(
+                                                    contact_id=OuterRef('pk'),
+                                                    event_type='editContact',
+                                                    old_value__statusName__in=regular_values,
+                                                    new_value__statusName__isnull=False
+                                                ).exclude(
+                                                    old_value__statusName=F('new_value__statusName')
+                                                ).order_by('-created_at').values('new_value__statusName')[:1]
+                                            )
+                                        ).filter(
+                                            # Match the log's new_status with contact's current status name
+                                            latest_log_new_status=models.F('status__name')
+                                        ).values_list('id', flat=True).distinct()
                                     )
                                     
-                                    q_objects.append(previous_status_q)
+                                    if matching_contact_ids:
+                                        q_objects.append(models.Q(id__in=matching_contact_ids))
+                                    elif not has_empty:
+                                        # No matches and no empty option - exclude all (strict filter)
+                                        queryset = queryset.none()
+                                        break
                                 elif column_id == 'previousTeleoperator':
                                     # Filter by previous teleoperator from logs - same logic as regular filter
                                     from .models import Log
@@ -2140,38 +2139,42 @@ class FosseContactView(generics.ListAPIView):
                         break
                     elif column_id == 'previousStatus':
                         # Filter by IMMEDIATE previous status (the status right before the current one)
-                        # PERFORMANCE: Apply Exists filter directly to queryset instead of fetching IDs first
-                        from .models import Log, Status
-                        from django.db.models import OuterRef, Exists, F, Subquery
+                        # PERFORMANCE: Use efficient query with database joins
+                        from .models import Log
+                        from django.db.models import F, OuterRef, Subquery
                         
-                        # Get status names for the contact's current status_id
-                        # Use Subquery to get status name, then match in Exists
-                        status_name_subquery = Status.objects.filter(
-                            id=OuterRef('status_id')
-                        ).values('name')[:1]
-                        
-                        # Use Exists subquery to filter contacts where:
-                        # 1. They have a log with old_value.statusName IN (filter_values)
-                        # 2. The log's new_value.statusName matches their current status.name
-                        # 3. This is the most recent matching log (ordered by created_at DESC, limit 1)
-                        # Apply directly to queryset for better performance
-                        previous_status_q = models.Q(
-                            Exists(
-                                Log.objects.filter(
-                                    contact_id=OuterRef('pk'),
-                                    event_type='editContact',
-                                    old_value__statusName__in=regular_values,
-                                    new_value__statusName__isnull=False
-                                ).exclude(
-                                    old_value__statusName=F('new_value__statusName')
-                                ).filter(
-                                    # Match log's new_status with contact's current status name
-                                    new_value__statusName=Subquery(status_name_subquery)
-                                ).order_by('-created_at')[:1]
-                            )
+                        # Get contacts where the most recent matching log's new_status matches their current status
+                        # Use Subquery annotation to get the latest log's new_status efficiently
+                        matching_contact_ids = list(
+                            Contact.objects.annotate(
+                                # Get the most recent matching log's new_status
+                                latest_log_new_status=Subquery(
+                                    Log.objects.filter(
+                                        contact_id=OuterRef('pk'),
+                                        event_type='editContact',
+                                        old_value__statusName__in=regular_values,
+                                        new_value__statusName__isnull=False
+                                    ).exclude(
+                                        old_value__statusName=F('new_value__statusName')
+                                    ).order_by('-created_at').values('new_value__statusName')[:1]
+                                )
+                            ).filter(
+                                # Match the log's new_status with contact's current status name
+                                latest_log_new_status=models.F('status__name')
+                            ).values_list('id', flat=True).distinct()
                         )
                         
-                        q_objects.append(previous_status_q)
+                        # Match preview logic:
+                        # - If regularValues.length > 0: matches = regularValues.includes(previousStatus) || (hasEmpty && !previousStatus)
+                        # - So we need to add regular values filter, and empty filter will be combined with OR if has_empty is True
+                        if matching_contact_ids:
+                            q_objects.append(models.Q(id__in=matching_contact_ids))
+                        elif not has_empty:
+                            # No matches and no empty option - exclude all (strict filter)
+                            queryset = queryset.none()
+                            break
+                        # If has_empty is True and matching_contact_ids is empty, don't add anything for regular values
+                        # The empty filter (already added above) will be applied, showing only contacts with empty previousStatus
                     elif column_id == 'previousTeleoperator':
                         # Filter by previous teleoperator from logs
                         # Similar to previousStatus - find contacts with matching old_value.teleoperatorName
