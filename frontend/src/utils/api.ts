@@ -195,7 +195,22 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         (timeoutError as any).status = 408;
         throw timeoutError;
       }
+      // Handle network errors (connection refused, etc.)
+      if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.message.includes('ERR_CONNECTION_REFUSED'))) {
+        const networkError = new Error('Cannot connect to server. Please make sure the backend is running.');
+        (networkError as any).status = 0;
+        (networkError as any).isNetworkError = true;
+        throw networkError;
+      }
       throw error;
+    }
+    
+    // Check for network-level failures (status 0 usually means connection failed)
+    if (response.status === 0 || (!response.ok && response.type === 'error')) {
+      const networkError = new Error('Cannot connect to server. Please make sure the backend is running.');
+      (networkError as any).status = 0;
+      (networkError as any).isNetworkError = true;
+      throw networkError;
     }
 
     // If 401, try to refresh token and retry once

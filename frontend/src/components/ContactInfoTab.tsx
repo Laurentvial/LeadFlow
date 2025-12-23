@@ -2452,13 +2452,13 @@ export function ContactInfoTab({
                 {editingField === 'teleoperatorId' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Select
-                      value={fieldValue || 'none'}
+                      value={fieldValue ? String(fieldValue) : 'none'}
                       onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
                       disabled={isSaving}
                       onOpenChange={(open) => {
                         // Auto-fill with current user if they are a teleoperateur and field is empty
                         if (open && (!fieldValue || fieldValue === 'none' || fieldValue === '') && currentUser?.isTeleoperateur && currentUser?.id) {
-                          setFieldValue(currentUser.id);
+                          setFieldValue(String(currentUser.id));
                         }
                       }}
                     >
@@ -2472,7 +2472,7 @@ export function ContactInfoTab({
                           .map((user) => {
                             const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                             return (
-                              <SelectItem key={user.id} value={user.id}>
+                              <SelectItem key={user.id} value={String(user.id)}>
                                 {displayName}
                               </SelectItem>
                             );
@@ -2520,7 +2520,7 @@ export function ContactInfoTab({
                 {editingField === 'confirmateurId' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Select
-                      value={fieldValue || 'none'}
+                      value={fieldValue ? String(fieldValue) : 'none'}
                       onValueChange={(value) => setFieldValue(value === 'none' ? '' : value)}
                       disabled={isSaving}
                     >
@@ -2534,7 +2534,7 @@ export function ContactInfoTab({
                           .map((user) => {
                             const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                             return (
-                              <SelectItem key={user.id} value={user.id}>
+                              <SelectItem key={user.id} value={String(user.id)}>
                                 {displayName}
                               </SelectItem>
                             );
@@ -4510,7 +4510,7 @@ export function ContactInfoTab({
                 const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
                 // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
                 const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
-                if (!isEventStatus || !canCreatePlanning) return null;
+                if (!isEventStatus) return null;
                 
                 const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
                 const minutes = ['00', '15', '30', '45'];
@@ -4530,6 +4530,7 @@ export function ContactInfoTab({
                         value={eventDate}
                         onChange={(value) => setEventDate(value)}
                         required
+                        disabled={!canCreatePlanning || !canCreateInformationsTab}
                       />
                     </div>
                     <div className="modal-form-field">
@@ -4538,6 +4539,7 @@ export function ContactInfoTab({
                         <Select
                           value={eventHour}
                           onValueChange={(value) => setEventHour(value)}
+                          disabled={!canCreatePlanning || !canCreateInformationsTab}
                         >
                           <SelectTrigger style={{ flex: 1 }}>
                             <SelectValue placeholder="Heure" />
@@ -4557,6 +4559,7 @@ export function ContactInfoTab({
                         <Select
                           value={eventMinute}
                           onValueChange={(value) => setEventMinute(value)}
+                          disabled={!canCreatePlanning || !canCreateInformationsTab}
                         >
                           <SelectTrigger style={{ flex: 1 }}>
                             <SelectValue placeholder="Minute" />
@@ -4579,7 +4582,7 @@ export function ContactInfoTab({
                       <Select
                         value={eventTeleoperatorId || 'none'}
                         onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
-                        disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedStatusId)}
+                        disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedStatusId) || !canCreatePlanning || !canCreateInformationsTab}
                       >
                         <SelectTrigger id="eventTeleoperator">
                           <SelectValue placeholder="Sélectionner un téléopérateur" />
@@ -4705,7 +4708,7 @@ export function ContactInfoTab({
                       <div className="modal-form-field">
                         <Label htmlFor="client-teleoperator" style={fieldErrors.teleoperatorId ? { color: '#ef4444' } : {}}>Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
-                          value={clientFormData.teleoperatorId || 'none'}
+                          value={clientFormData.teleoperatorId ? String(clientFormData.teleoperatorId) : 'none'}
                           onValueChange={(value) => updateFormField('teleoperatorId', value === 'none' ? '' : value)}
                           disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedStatusId)}
                         >
@@ -4719,7 +4722,7 @@ export function ContactInfoTab({
                               .map((user) => {
                                 const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                                 return (
-                                  <SelectItem key={user.id} value={user.id}>
+                                  <SelectItem key={user.id} value={String(user.id)}>
                                     {displayName}
                                   </SelectItem>
                                 );

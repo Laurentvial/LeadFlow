@@ -440,6 +440,9 @@ class ContactSerializer(serializers.ModelSerializer):
         # Since phone and mobile are excluded from fields, super() won't try to serialize them
         # This avoids the conversion error when database has empty strings
         ret = super().to_representation(instance)
+        # Import UserDetails once at the top
+        from .models import UserDetails
+        
         # S'assurer que tous les champs sont présents et convertir en camelCase
         ret['firstName'] = instance.fname
         ret['lastName'] = instance.lname
@@ -452,26 +455,44 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['statusColor'] = instance.status.color if instance.status else ''
         ret['addressComplement'] = instance.address_complement or ''
         ret['campaign'] = instance.campaign or ''
-        ret['teleoperatorId'] = instance.teleoperator_id if hasattr(instance, 'teleoperator_id') else (instance.teleoperator.id if instance.teleoperator else None)
+        # Get UserDetails ID for teleoperator (not Django User ID)
         if instance.teleoperator:
+            try:
+                user_details = instance.teleoperator.user_details
+                ret['teleoperatorId'] = user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                ret['teleoperatorId'] = None
             first_name = getattr(instance.teleoperator, 'first_name', '') or ''
             last_name = getattr(instance.teleoperator, 'last_name', '') or ''
             ret['teleoperatorName'] = f"{first_name} {last_name}".strip()
         else:
+            ret['teleoperatorId'] = None
             ret['teleoperatorName'] = ''
-        ret['confirmateurId'] = instance.confirmateur_id if hasattr(instance, 'confirmateur_id') else (instance.confirmateur.id if instance.confirmateur else None)
+        # Get UserDetails ID for confirmateur (not Django User ID)
         if instance.confirmateur:
+            try:
+                user_details = instance.confirmateur.user_details
+                ret['confirmateurId'] = user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                ret['confirmateurId'] = None
             first_name = getattr(instance.confirmateur, 'first_name', '') or ''
             last_name = getattr(instance.confirmateur, 'last_name', '') or ''
             ret['confirmateurName'] = f"{first_name} {last_name}".strip()
         else:
+            ret['confirmateurId'] = None
             ret['confirmateurName'] = ''
-        ret['creatorId'] = instance.creator_id if hasattr(instance, 'creator_id') else (instance.creator.id if instance.creator else None)
+        # Get UserDetails ID for creator (not Django User ID)
         if instance.creator:
+            try:
+                user_details = instance.creator.user_details
+                ret['creatorId'] = user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                ret['creatorId'] = None
             first_name = getattr(instance.creator, 'first_name', '') or ''
             last_name = getattr(instance.creator, 'last_name', '') or ''
             ret['creatorName'] = f"{first_name} {last_name}".strip()
         else:
+            ret['creatorId'] = None
             ret['creatorName'] = ''
         # Phone and mobile are handled by SerializerMethodField - use the methods
         ret['phone'] = self.get_phone(instance)
@@ -815,17 +836,29 @@ class EventSerializer(serializers.ModelSerializer):
     createdBy = serializers.SerializerMethodField()
     assignedTo = serializers.SerializerMethodField()
     userId_read = serializers.SerializerMethodField()
+    clientId_read = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
-        fields = ['id', 'datetime', 'userId', 'userId_read', 'contactId', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
+        fields = ['id', 'datetime', 'userId', 'userId_read', 'contactId', 'clientId_read', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
         extra_kwargs = {
             'id': {'required': False}
         }
     
     def get_userId_read(self, obj):
-        """Get the userId as a read-only field for API responses"""
-        return obj.userId.id if obj.userId else None
+        """Get the UserDetails ID as a read-only field for API responses"""
+        if obj.userId:
+            try:
+                # Get UserDetails ID from DjangoUser via OneToOne relationship
+                user_details = obj.userId.user_details
+                return user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                return None
+        return None
+    
+    def get_clientId_read(self, obj):
+        """Get the contactId as a read-only field for API responses (alias for contactId)"""
+        return obj.contactId.id if obj.contactId else None
     
     def get_contactName(self, obj):
         if obj.contactId:
@@ -874,11 +907,30 @@ class EventSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         from django.utils import timezone
         import pytz
+        from .models import UserDetails
         ret = super().to_representation(instance)
         # Expose contactId in API response
         ret['contactId'] = instance.contactId.id if instance.contactId else None
-        # Expose userId in API response directly from instance (userId field is write_only so not in ret)
-        ret['userId'] = instance.userId.id if instance.userId else None
+        # Expose UserDetails ID in API response (not DjangoUser ID)
+        if instance.userId:
+            try:
+                user_details = instance.userId.user_details
+                ret['userId'] = user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                ret['userId'] = None
+        else:
+            ret['userId'] = None
+        # Ensure userId_read is set (should already be set by SerializerMethodField, but ensure it's correct)
+        if instance.userId:
+            try:
+                user_details = instance.userId.user_details
+                ret['userId_read'] = user_details.id if user_details else None
+            except UserDetails.DoesNotExist:
+                ret['userId_read'] = None
+        else:
+            ret['userId_read'] = None
+        # Ensure clientId_read is set (alias for contactId for frontend compatibility)
+        ret['clientId_read'] = instance.contactId.id if instance.contactId else None
         # Convertir l'UTC stocké en heure locale pour l'affichage
         if instance.datetime:
             # Le datetime stocké est déjà aware (avec timezone UTC)

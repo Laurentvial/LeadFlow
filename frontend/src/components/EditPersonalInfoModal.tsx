@@ -463,12 +463,12 @@ export function EditPersonalInfoModal({
               <div className="modal-form-field">
                 <Label htmlFor="editTeleoperatorId">Téléopérateur</Label>
                 <Select
-                  value={editPersonalInfoForm.teleoperatorId || 'none'}
+                  value={editPersonalInfoForm.teleoperatorId ? String(editPersonalInfoForm.teleoperatorId) : 'none'}
                   onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: value === 'none' ? '' : value })}
                   onOpenChange={(open) => {
                     // Auto-fill with current user if they are a teleoperateur and field is empty
                     if (open && !editPersonalInfoForm.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
-                      setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: currentUser.id });
+                      setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: String(currentUser.id) });
                     }
                   }}
                 >
@@ -477,7 +477,7 @@ export function EditPersonalInfoModal({
                     onClick={() => {
                       // Auto-fill with current user if they are a teleoperateur and field is empty
                       if (!editPersonalInfoForm.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
-                        setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: currentUser.id });
+                        setEditPersonalInfoForm({ ...editPersonalInfoForm, teleoperatorId: String(currentUser.id) });
                       }
                     }}
                   >
@@ -491,7 +491,7 @@ export function EditPersonalInfoModal({
                       users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
                         .map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
+                          <SelectItem key={user.id} value={String(user.id)}>
                             {user.firstName} {user.lastName}
                           </SelectItem>
                         ))
@@ -503,7 +503,7 @@ export function EditPersonalInfoModal({
               <div className="modal-form-field">
                 <Label htmlFor="editConfirmateurId">Confirmateur</Label>
                 <Select
-                  value={editPersonalInfoForm.confirmateurId || 'none'}
+                  value={editPersonalInfoForm.confirmateurId ? String(editPersonalInfoForm.confirmateurId) : 'none'}
                   onValueChange={(value) => setEditPersonalInfoForm({ ...editPersonalInfoForm, confirmateurId: value === 'none' ? '' : value })}
                 >
                   <SelectTrigger id="editConfirmateurId">
@@ -517,7 +517,7 @@ export function EditPersonalInfoModal({
                       users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
                         .map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
+                          <SelectItem key={user.id} value={String(user.id)}>
                             {user.firstName} {user.lastName}
                           </SelectItem>
                         ))

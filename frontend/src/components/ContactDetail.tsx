@@ -110,8 +110,13 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       
       // Load notes and events in parallel after contact is loaded (non-blocking)
       loadNotesAndEvents(1);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading contact data:', error);
+      // Don't show error toast for network errors - user likely knows backend isn't running
+      if (!error.isNetworkError) {
+        // Only show toast for actual API errors, not connection issues
+        // toast.error(error.message || 'Erreur lors du chargement du contact');
+      }
       setContact(null);
     }
   }

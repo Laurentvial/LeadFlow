@@ -3807,7 +3807,7 @@ export function ContactList({
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
-                      <Select value={bulkTeleoperatorId} onValueChange={handleBulkAssignTeleoperator}>
+                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : 'none'} onValueChange={handleBulkAssignTeleoperator}>
                         <SelectTrigger className="w-[200px]">
                           <UserCheck className="w-4 h-4 mr-2" />
                           <SelectValue placeholder="Attribuer un téléopérateur" />
@@ -3826,7 +3826,7 @@ export function ContactList({
                             teleoperateurs.map((user) => {
                               const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                               return (
-                                <SelectItem key={user.id} value={user.id}>
+                                <SelectItem key={user.id} value={String(user.id)}>
                                   {displayName}
                                 </SelectItem>
                               );
@@ -3838,7 +3838,7 @@ export function ContactList({
 
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un confirmateur</Label>
-                      <Select value={bulkConfirmateurId} onValueChange={handleBulkAssignConfirmateur}>
+                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : 'none'} onValueChange={handleBulkAssignConfirmateur}>
                         <SelectTrigger className="w-[200px]">
                           <UserCheck className="w-4 h-4 mr-2" />
                           <SelectValue placeholder="Attribuer un confirmateur" />
@@ -3857,7 +3857,7 @@ export function ContactList({
                             confirmateurs.map((user) => {
                               const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                               return (
-                                <SelectItem key={user.id} value={user.id}>
+                                <SelectItem key={user.id} value={String(user.id)}>
                                   {displayName}
                                 </SelectItem>
                               );
@@ -4373,7 +4373,7 @@ export function ContactList({
                 </p>
               </div>
               {/* Event fields - show when selected status has isEvent=true */}
-              {selectedStatusIsEvent && canCreatePlanning && (
+              {selectedStatusIsEvent && (
                 <>
                   <div className="modal-form-field">
                     <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
@@ -4388,6 +4388,7 @@ export function ContactList({
                       value={eventDate}
                       onChange={(value) => setEventDate(value)}
                       required
+                      disabled={!canCreatePlanning}
                     />
                   </div>
                   <div className="modal-form-field">
@@ -4435,9 +4436,9 @@ export function ContactList({
                   <div className="modal-form-field">
                     <Label htmlFor="eventTeleoperator">Téléopérateur</Label>
                     <Select
-                      value={eventTeleoperatorId || 'none'}
+                      value={eventTeleoperatorId ? String(eventTeleoperatorId) : 'none'}
                       onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
-                      disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
+                      disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId) || !canCreatePlanning}
                     >
                       <SelectTrigger id="eventTeleoperator">
                         <SelectValue placeholder="Sélectionner un téléopérateur" />
@@ -4449,7 +4450,7 @@ export function ContactList({
                           .map((user) => {
                             const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                             return (
-                              <SelectItem key={user.id} value={user.id}>
+                              <SelectItem key={user.id} value={String(user.id)}>
                                 {displayName}
                               </SelectItem>
                             );
@@ -4560,7 +4561,7 @@ export function ContactList({
                       <div className="modal-form-field">
                         <Label htmlFor="client-teleoperator" style={fieldErrors.teleoperatorId ? { color: '#ef4444' } : {}}>Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
-                          value={clientFormData.teleoperatorId || 'none'}
+                          value={clientFormData.teleoperatorId ? String(clientFormData.teleoperatorId) : 'none'}
                           onValueChange={(value) => updateFormField('teleoperatorId', value === 'none' ? '' : value)}
                           disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
                         >
@@ -4574,7 +4575,7 @@ export function ContactList({
                               .map((user) => {
                                 const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                                 return (
-                                  <SelectItem key={user.id} value={user.id}>
+                                  <SelectItem key={user.id} value={String(user.id)}>
                                     {displayName}
                                   </SelectItem>
                                 );
@@ -4924,7 +4925,7 @@ export function ContactList({
                       <div className="modal-form-field">
                         <Label htmlFor="client-teleoperator" style={fieldErrors.teleoperatorId ? { color: '#ef4444' } : {}}>Nom du teleoperateur <span style={{ color: '#ef4444' }}>*</span></Label>
                         <Select
-                          value={clientFormData.teleoperatorId || 'none'}
+                          value={clientFormData.teleoperatorId ? String(clientFormData.teleoperatorId) : 'none'}
                           onValueChange={(value) => updateFormField('teleoperatorId', value === 'none' ? '' : value)}
                           disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId)}
                         >
@@ -4938,7 +4939,7 @@ export function ContactList({
                               .map((user) => {
                                 const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
                                 return (
-                                  <SelectItem key={user.id} value={user.id}>
+                                  <SelectItem key={user.id} value={String(user.id)}>
                                     {displayName}
                                   </SelectItem>
                                 );

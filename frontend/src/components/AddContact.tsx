@@ -474,12 +474,12 @@ export function AddContact() {
               <div className="space-y-2">
                 <Label htmlFor="teleoperatorId">Téléopérateur</Label>
                 <Select
-                  value={formData.teleoperatorId || 'none'}
+                  value={formData.teleoperatorId ? String(formData.teleoperatorId) : 'none'}
                   onValueChange={(value) => setFormData({ ...formData, teleoperatorId: value === 'none' ? '' : value })}
                   onOpenChange={(open) => {
                     // Auto-fill with current user if they are a teleoperateur and field is empty
                     if (open && !formData.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
-                      setFormData({ ...formData, teleoperatorId: currentUser.id });
+                      setFormData({ ...formData, teleoperatorId: String(currentUser.id) });
                     }
                   }}
                 >
@@ -488,7 +488,7 @@ export function AddContact() {
                     onClick={() => {
                       // Auto-fill with current user if they are a teleoperateur and field is empty
                       if (!formData.teleoperatorId && currentUser?.isTeleoperateur && currentUser?.id) {
-                        setFormData({ ...formData, teleoperatorId: currentUser.id });
+                        setFormData({ ...formData, teleoperatorId: String(currentUser.id) });
                       }
                     }}
                   >
@@ -502,7 +502,7 @@ export function AddContact() {
                       users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
                         .map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
+                          <SelectItem key={user.id} value={String(user.id)}>
                             {user.firstName} {user.lastName}
                           </SelectItem>
                         ))
@@ -514,7 +514,7 @@ export function AddContact() {
               <div className="space-y-2">
                 <Label htmlFor="confirmateurId">Confirmateur</Label>
                 <Select
-                  value={formData.confirmateurId || 'none'}
+                  value={formData.confirmateurId ? String(formData.confirmateurId) : 'none'}
                   onValueChange={(value) => setFormData({ ...formData, confirmateurId: value === 'none' ? '' : value })}
                 >
                   <SelectTrigger id="confirmateurId">
@@ -528,7 +528,7 @@ export function AddContact() {
                       users
                         ?.filter((user) => user.id && user.id.trim() !== '' && user.isConfirmateur === true)
                         .map((user) => (
-                        <SelectItem key={user.id} value={user.id}>
+                        <SelectItem key={user.id} value={String(user.id)}>
                           {user.firstName} {user.lastName}
                         </SelectItem>
                       ))

@@ -2401,19 +2401,19 @@ def contact_create(request):
     if teleoperator_id:
         try:
             teleoperator_user = None
-            # Try Django User ID first (if it's an integer)
-            try:
-                int_id = int(teleoperator_id)
-                teleoperator_user = DjangoUser.objects.filter(id=int_id).only('id').first()
-            except (ValueError, TypeError):
-                pass
+            # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
+            from api.models import UserDetails
+            user_details = UserDetails.objects.filter(id=str(teleoperator_id)).select_related('django_user').only('id', 'django_user').first()
+            if user_details and user_details.django_user:
+                teleoperator_user = user_details.django_user
             
-            # If not found, try UserDetails ID with select_related
+            # Fallback: Try Django User ID lookup only if UserDetails lookup failed
             if not teleoperator_user:
-                from api.models import UserDetails
-                user_details = UserDetails.objects.filter(id=str(teleoperator_id)).select_related('django_user').only('id', 'django_user').first()
-                if user_details and user_details.django_user:
-                    teleoperator_user = user_details.django_user
+                try:
+                    int_id = int(teleoperator_id)
+                    teleoperator_user = DjangoUser.objects.filter(id=int_id).only('id').first()
+                except (ValueError, TypeError):
+                    pass
             
             if teleoperator_user:
                 contact_data['teleoperator'] = teleoperator_user
@@ -2429,19 +2429,19 @@ def contact_create(request):
     if confirmateur_id:
         try:
             confirmateur_user = None
-            # Try Django User ID first (if it's an integer)
-            try:
-                int_id = int(confirmateur_id)
-                confirmateur_user = DjangoUser.objects.filter(id=int_id).only('id').first()
-            except (ValueError, TypeError):
-                pass
+            # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
+            from api.models import UserDetails
+            user_details = UserDetails.objects.filter(id=str(confirmateur_id)).select_related('django_user').only('id', 'django_user').first()
+            if user_details and user_details.django_user:
+                confirmateur_user = user_details.django_user
             
-            # If not found, try UserDetails ID with select_related
+            # Fallback: Try Django User ID lookup only if UserDetails lookup failed
             if not confirmateur_user:
-                from api.models import UserDetails
-                user_details = UserDetails.objects.filter(id=str(confirmateur_id)).select_related('django_user').only('id', 'django_user').first()
-                if user_details and user_details.django_user:
-                    confirmateur_user = user_details.django_user
+                try:
+                    int_id = int(confirmateur_id)
+                    confirmateur_user = DjangoUser.objects.filter(id=int_id).only('id').first()
+                except (ValueError, TypeError):
+                    pass
             
             if confirmateur_user:
                 contact_data['confirmateur'] = confirmateur_user
@@ -4898,51 +4898,45 @@ def contact_detail(request, contact_id):
                 if teleoperator_id_raw is None or teleoperator_id_raw == '' or teleoperator_id_raw == 'none':
                     new_teleoperator_id = None
                 else:
-                    # Keep as string - could be UserDetails ID (string) or Django User ID (int as string)
-                    # We'll try both lookups in the assignment logic
+                    # Keep as string - frontend sends UserDetails IDs
                     new_teleoperator_id = str(teleoperator_id_raw).strip()
-                    # Try to convert to int for comparison purposes, but keep original for lookup
-                    try:
-                        int_value = int(new_teleoperator_id)
-                        # If it's a valid integer string, we can use it for both lookups
-                        new_teleoperator_id = int_value
-                    except (ValueError, TypeError):
-                        # Keep as string - it's likely a UserDetails ID
-                        print(f"[DEBUG] Teleoperator ID is non-numeric string (likely UserDetails ID): '{teleoperator_id_raw}'")
-                        pass
                 
-                # Get old teleoperator ID before any changes (as integer for comparison)
-                old_teleoperator_id = contact.teleoperator_id
+                # Get old teleoperator Django User ID (stored as integer in database)
+                old_teleoperator_django_id = contact.teleoperator_id
+                
+                # Get old teleoperator UserDetails ID for comparison
+                old_teleoperator_userdetails_id = None
+                if old_teleoperator_django_id:
+                    try:
+                        # Use UserDetailsModel alias to avoid scoping issues
+                        old_user_details = UserDetailsModel.objects.filter(django_user_id=old_teleoperator_django_id).first()
+                        if old_user_details:
+                            old_teleoperator_userdetails_id = old_user_details.id
+                    except Exception as e:
+                        print(f"[DEBUG] Error getting old teleoperator UserDetails ID: {e}")
                 
                 # Debug logging
                 print(f"[DEBUG] ===== Updating teleoperator for contact {contact.id} =====")
                 print(f"[DEBUG] Raw teleoperator_id from request: {teleoperator_id_raw} (type: {type(teleoperator_id_raw)})")
-                print(f"[DEBUG] Old teleoperator_id: {old_teleoperator_id} (type: {type(old_teleoperator_id)})")
-                print(f"[DEBUG] New teleoperator_id (normalized): {new_teleoperator_id} (type: {type(new_teleoperator_id)})")
+                print(f"[DEBUG] Old teleoperator_django_id: {old_teleoperator_django_id} (type: {type(old_teleoperator_django_id)})")
+                print(f"[DEBUG] Old teleoperator_userdetails_id: {old_teleoperator_userdetails_id}")
+                print(f"[DEBUG] New teleoperator_id (UserDetails ID): {new_teleoperator_id} (type: {type(new_teleoperator_id)})")
                 
                 # Teleoperator changed if:
                 # 1. Old is None and new is not None (assigning)
                 # 2. Old is not None and new is None (clearing)
                 # 3. Old and new are both not None but different (reassigning)
-                # Compare as integers for accurate comparison
-                if old_teleoperator_id is None and new_teleoperator_id is not None:
+                # Compare UserDetails IDs (strings)
+                if old_teleoperator_userdetails_id is None and new_teleoperator_id is not None:
                     teleoperator_changed = True
                     change_type = "assigning (None -> value)"
-                elif old_teleoperator_id is not None and new_teleoperator_id is None:
+                elif old_teleoperator_userdetails_id is not None and new_teleoperator_id is None:
                     teleoperator_changed = True
                     change_type = "clearing (value -> None)"
-                elif old_teleoperator_id is not None and new_teleoperator_id is not None:
-                    # Both are not None, compare as integers
-                    try:
-                        old_int = int(old_teleoperator_id)
-                        new_int = int(new_teleoperator_id)
-                        teleoperator_changed = (old_int != new_int)
-                        change_type = f"reassigning ({old_int} -> {new_int})" if teleoperator_changed else f"same value ({old_int})"
-                    except (ValueError, TypeError) as e:
-                        # Fallback to string comparison if int conversion fails
-                        teleoperator_changed = (str(old_teleoperator_id) != str(new_teleoperator_id))
-                        change_type = f"comparison fallback ({old_teleoperator_id} -> {new_teleoperator_id})"
-                        print(f"[DEBUG] Warning: Using string comparison due to conversion error: {e}")
+                elif old_teleoperator_userdetails_id is not None and new_teleoperator_id is not None:
+                    # Both are not None, compare as strings (UserDetails IDs)
+                    teleoperator_changed = (str(old_teleoperator_userdetails_id) != str(new_teleoperator_id))
+                    change_type = f"reassigning ({old_teleoperator_userdetails_id} -> {new_teleoperator_id})" if teleoperator_changed else f"same value ({old_teleoperator_userdetails_id})"
                 else:
                     # Both are None
                     teleoperator_changed = False
@@ -4952,21 +4946,28 @@ def contact_detail(request, contact_id):
                 
                 if new_teleoperator_id is not None:
                     try:
-                        # Try to find user by Django User ID first (if it's an integer)
+                        # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
                         teleoperator_user = None
-                        if isinstance(new_teleoperator_id, int):
-                            teleoperator_user = DjangoUser.objects.filter(id=new_teleoperator_id).first()
                         
-                        # If not found and ID is a string, try looking up via UserDetails
+                        # First try as UserDetails ID (string) - this is what frontend sends
+                        try:
+                            user_details = UserDetailsModel.objects.filter(id=str(new_teleoperator_id)).first()
+                            if user_details and user_details.django_user:
+                                teleoperator_user = user_details.django_user
+                                print(f"[DEBUG] Found teleoperator via UserDetails ID: {new_teleoperator_id} -> Django User ID: {teleoperator_user.id}")
+                        except Exception as e:
+                            print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        
+                        # Fallback: Try Django User ID lookup only if UserDetails lookup failed
                         if not teleoperator_user:
                             try:
-                                # Try as UserDetails ID (string) - use UserDetailsModel from function-level import
-                                user_details = UserDetailsModel.objects.filter(id=str(new_teleoperator_id)).first()
-                                if user_details and user_details.django_user:
-                                    teleoperator_user = user_details.django_user
-                                    print(f"[DEBUG] Found teleoperator via UserDetails ID: {new_teleoperator_id} -> Django User ID: {teleoperator_user.id}")
-                            except Exception as e:
-                                print(f"[DEBUG] Error looking up UserDetails: {e}")
+                                # Try as Django User ID (if it's numeric)
+                                int_id = int(new_teleoperator_id)
+                                teleoperator_user = DjangoUser.objects.filter(id=int_id).first()
+                                if teleoperator_user:
+                                    print(f"[DEBUG] Found teleoperator via Django User ID: {new_teleoperator_id}")
+                            except (ValueError, TypeError):
+                                pass
                         
                         if teleoperator_user:
                             contact.teleoperator = teleoperator_user
@@ -5020,51 +5021,45 @@ def contact_detail(request, contact_id):
                 if confirmateur_id_raw is None or confirmateur_id_raw == '' or confirmateur_id_raw == 'none':
                     new_confirmateur_id = None
                 else:
-                    # Keep as string - could be UserDetails ID (string) or Django User ID (int as string)
-                    # We'll try both lookups in the assignment logic
+                    # Keep as string - frontend sends UserDetails IDs
                     new_confirmateur_id = str(confirmateur_id_raw).strip()
-                    # Try to convert to int for comparison purposes, but keep original for lookup
-                    try:
-                        int_value = int(new_confirmateur_id)
-                        # If it's a valid integer string, we can use it for both lookups
-                        new_confirmateur_id = int_value
-                    except (ValueError, TypeError):
-                        # Keep as string - it's likely a UserDetails ID
-                        print(f"[DEBUG] Confirmateur ID is non-numeric string (likely UserDetails ID): '{confirmateur_id_raw}'")
-                        pass
                 
-                # Get old confirmateur ID before any changes (as integer for comparison)
-                old_confirmateur_id = contact.confirmateur_id
+                # Get old confirmateur Django User ID (stored as integer in database)
+                old_confirmateur_django_id = contact.confirmateur_id
+                
+                # Get old confirmateur UserDetails ID for comparison
+                old_confirmateur_userdetails_id = None
+                if old_confirmateur_django_id:
+                    try:
+                        # Use UserDetailsModel alias to avoid scoping issues
+                        old_user_details = UserDetailsModel.objects.filter(django_user_id=old_confirmateur_django_id).first()
+                        if old_user_details:
+                            old_confirmateur_userdetails_id = old_user_details.id
+                    except Exception as e:
+                        print(f"[DEBUG] Error getting old confirmateur UserDetails ID: {e}")
                 
                 # Debug logging
                 print(f"[DEBUG] ===== Updating confirmateur for contact {contact.id} =====")
                 print(f"[DEBUG] Raw confirmateur_id from request: {confirmateur_id_raw} (type: {type(confirmateur_id_raw)})")
-                print(f"[DEBUG] Old confirmateur_id: {old_confirmateur_id} (type: {type(old_confirmateur_id)})")
-                print(f"[DEBUG] New confirmateur_id (normalized): {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
+                print(f"[DEBUG] Old confirmateur_django_id: {old_confirmateur_django_id} (type: {type(old_confirmateur_django_id)})")
+                print(f"[DEBUG] Old confirmateur_userdetails_id: {old_confirmateur_userdetails_id}")
+                print(f"[DEBUG] New confirmateur_id (UserDetails ID): {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
                 
                 # Confirmateur changed if:
                 # 1. Old is None and new is not None (assigning)
                 # 2. Old is not None and new is None (clearing)
                 # 3. Old and new are both not None but different (reassigning)
-                # Compare as integers for accurate comparison
-                if old_confirmateur_id is None and new_confirmateur_id is not None:
+                # Compare UserDetails IDs (strings)
+                if old_confirmateur_userdetails_id is None and new_confirmateur_id is not None:
                     confirmateur_changed = True
                     change_type = "assigning (None -> value)"
-                elif old_confirmateur_id is not None and new_confirmateur_id is None:
+                elif old_confirmateur_userdetails_id is not None and new_confirmateur_id is None:
                     confirmateur_changed = True
                     change_type = "clearing (value -> None)"
-                elif old_confirmateur_id is not None and new_confirmateur_id is not None:
-                    # Both are not None, compare as integers
-                    try:
-                        old_int = int(old_confirmateur_id)
-                        new_int = int(new_confirmateur_id)
-                        confirmateur_changed = (old_int != new_int)
-                        change_type = f"reassigning ({old_int} -> {new_int})" if confirmateur_changed else f"same value ({old_int})"
-                    except (ValueError, TypeError) as e:
-                        # Fallback to string comparison if int conversion fails
-                        confirmateur_changed = (str(old_confirmateur_id) != str(new_confirmateur_id))
-                        change_type = f"comparison fallback ({old_confirmateur_id} -> {new_confirmateur_id})"
-                        print(f"[DEBUG] Warning: Using string comparison due to conversion error: {e}")
+                elif old_confirmateur_userdetails_id is not None and new_confirmateur_id is not None:
+                    # Both are not None, compare as strings (UserDetails IDs)
+                    confirmateur_changed = (str(old_confirmateur_userdetails_id) != str(new_confirmateur_id))
+                    change_type = f"reassigning ({old_confirmateur_userdetails_id} -> {new_confirmateur_id})" if confirmateur_changed else f"same value ({old_confirmateur_userdetails_id})"
                 else:
                     # Both are None
                     confirmateur_changed = False
@@ -5074,22 +5069,29 @@ def contact_detail(request, contact_id):
                 
                 if new_confirmateur_id is not None:
                     try:
-                        # Try to find user by Django User ID first (if it's an integer)
+                        # Prioritize UserDetails ID lookup first (since frontend sends UserDetails IDs)
                         print(f"[DEBUG] Looking up confirmateur user with ID: {new_confirmateur_id} (type: {type(new_confirmateur_id)})")
                         confirmateur_user = None
-                        if isinstance(new_confirmateur_id, int):
-                            confirmateur_user = DjangoUser.objects.filter(id=new_confirmateur_id).first()
                         
-                        # If not found and ID is a string, try looking up via UserDetails
+                        # First try as UserDetails ID (string) - this is what frontend sends
+                        try:
+                            user_details = UserDetailsModel.objects.filter(id=str(new_confirmateur_id)).first()
+                            if user_details and user_details.django_user:
+                                confirmateur_user = user_details.django_user
+                                print(f"[DEBUG] Found confirmateur via UserDetails ID: {new_confirmateur_id} -> Django User ID: {confirmateur_user.id}")
+                        except Exception as e:
+                            print(f"[DEBUG] Error looking up UserDetails: {e}")
+                        
+                        # Fallback: Try Django User ID lookup only if UserDetails lookup failed
                         if not confirmateur_user:
                             try:
-                                # Try as UserDetails ID (string) - use UserDetailsModel from function-level import
-                                user_details = UserDetailsModel.objects.filter(id=str(new_confirmateur_id)).first()
-                                if user_details and user_details.django_user:
-                                    confirmateur_user = user_details.django_user
-                                    print(f"[DEBUG] Found confirmateur via UserDetails ID: {new_confirmateur_id} -> Django User ID: {confirmateur_user.id}")
-                            except Exception as e:
-                                print(f"[DEBUG] Error looking up UserDetails: {e}")
+                                # Try as Django User ID (if it's numeric)
+                                int_id = int(new_confirmateur_id)
+                                confirmateur_user = DjangoUser.objects.filter(id=int_id).first()
+                                if confirmateur_user:
+                                    print(f"[DEBUG] Found confirmateur via Django User ID: {new_confirmateur_id}")
+                            except (ValueError, TypeError):
+                                pass
                         
                         if confirmateur_user:
                             print(f"[DEBUG] Found confirmateur user: ID={confirmateur_user.id}, Name={confirmateur_user.first_name} {confirmateur_user.last_name}")
@@ -6014,13 +6016,20 @@ def event_create(request):
                 pass
         
         # Get user if userId provided, otherwise use current user
+        # userId can be either UserDetails ID or DjangoUser ID (for backward compatibility)
         user = request.user
         user_id = request.data.get('userId')
         if user_id:
             try:
-                user = DjangoUser.objects.get(id=user_id)
-            except DjangoUser.DoesNotExist:
-                pass  # Use current user as fallback
+                # First try to get UserDetails by ID
+                user_details = UserDetails.objects.get(id=user_id)
+                user = user_details.django_user
+            except UserDetails.DoesNotExist:
+                try:
+                    # Fallback: try to get DjangoUser by ID (for backward compatibility)
+                    user = DjangoUser.objects.get(id=user_id)
+                except DjangoUser.DoesNotExist:
+                    pass  # Use current user as fallback
         
         event = serializer.save(
             id=event_id,
@@ -6083,11 +6092,20 @@ def event_update(request, event_id):
         return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
     
     # Store old values before update
+    # Get UserDetails ID for userId field
+    user_details_id = None
+    if event.userId:
+        try:
+            user_details = event.userId.user_details
+            user_details_id = user_details.id if user_details else None
+        except UserDetails.DoesNotExist:
+            pass
+    
     old_event_data = {
         'eventId': event.id,
         'datetime': event.datetime.isoformat() if event.datetime else None,
         'comment': event.comment or '',
-        'userId': event.userId.id if event.userId else None,
+        'userId': user_details_id,  # Use UserDetails ID instead of DjangoUser ID
         'userName': f"{event.userId.first_name} {event.userId.last_name}".strip() if event.userId and (event.userId.first_name or event.userId.last_name) else (event.userId.username if event.userId else None),
         'createdAt': event.created_at.isoformat() if event.created_at else None,
         'updatedAt': event.updated_at.isoformat() if event.updated_at else None,
@@ -6108,17 +6126,37 @@ def event_update(request, event_id):
             contact = None
         
         # Get user if userId provided, otherwise keep existing user
+        # userId can be either UserDetails ID or DjangoUser ID (for backward compatibility)
         user = event.userId
         user_id = request.data.get('userId')
         if user_id:
             try:
-                user = DjangoUser.objects.get(id=user_id)
-            except DjangoUser.DoesNotExist:
-                pass  # Keep existing user as fallback
+                # First try to get UserDetails by ID
+                user_details = UserDetails.objects.get(id=user_id)
+                user = user_details.django_user
+            except UserDetails.DoesNotExist:
+                try:
+                    # Fallback: try to get DjangoUser by ID (for backward compatibility)
+                    user = DjangoUser.objects.get(id=user_id)
+                except DjangoUser.DoesNotExist:
+                    pass  # Keep existing user as fallback
         
-        # Check if user assignment changed
-        old_user_id = event.userId.id if event.userId else None
-        new_user_id = user.id if user else None
+        # Check if user assignment changed (using UserDetails ID)
+        old_user_details_id = None
+        if event.userId:
+            try:
+                old_user_details = event.userId.user_details
+                old_user_details_id = old_user_details.id if old_user_details else None
+            except UserDetails.DoesNotExist:
+                pass
+        
+        new_user_details_id = None
+        if user:
+            try:
+                new_user_details = user.user_details
+                new_user_details_id = new_user_details.id if new_user_details else None
+            except UserDetails.DoesNotExist:
+                pass
         
         # Update event with new data
         event = serializer.save(contactId=contact, userId=user)
@@ -6127,7 +6165,7 @@ def event_update(request, event_id):
         event.refresh_from_db()
         
         # Send notification if user was assigned or changed
-        if event.userId and (old_user_id != new_user_id or old_user_id is None):
+        if event.userId and (old_user_details_id != new_user_details_id or old_user_details_id is None):
             send_event_notification(event, notification_type='assigned')
         
         # Create log entry for event update
