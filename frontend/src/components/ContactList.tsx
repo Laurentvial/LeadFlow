@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -23,6 +24,7 @@ import { useUser } from '../contexts/UserContext';
 import { toast } from 'sonner';
 import { formatPhoneNumber } from '../utils/phoneNumber';
 import { ACCESS_TOKEN } from '../utils/constants';
+import { handleModalOverlayClick } from '../utils/modal';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -4072,7 +4074,7 @@ export function ContactList({
       </Card>
 
       {/* Status Change Modal */}
-      {isStatusModalOpen && selectedContact && (
+      {isStatusModalOpen && selectedContact && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsStatusModalOpen(false);
           setSelectedContact(null);
@@ -5260,11 +5262,12 @@ export function ContactList({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Status Change Confirmation Modal */}
-      {isStatusChangeConfirmOpen && (
+      {isStatusChangeConfirmOpen && typeof document !== 'undefined' && createPortal(
         <div 
           className="modal-overlay" 
           onClick={(e) => {
@@ -5371,7 +5374,8 @@ export function ContactList({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

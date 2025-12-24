@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -2894,7 +2895,7 @@ export function MigrationPage() {
       )}
 
       {/* Edit Row Modal */}
-      {showEditModal && editingRowData && (
+      {showEditModal && editingRowData && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, handleCloseEditModal)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
@@ -3149,7 +3150,8 @@ export function MigrationPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
