@@ -37,6 +37,8 @@ const CRM_FIELDS = [
   { value: 'postalCode', label: 'Code postal' },
   { value: 'city', label: 'Ville' },
   { value: 'nationality', label: 'Nationalité' },
+  { value: 'dateInscription', label: 'Date d\'inscription' },
+  { value: 'autreInformations', label: 'Autre informations' },
   { value: 'campaign', label: 'Campagne' },
 ];
 

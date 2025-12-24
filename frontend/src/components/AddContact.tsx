@@ -55,6 +55,8 @@ export function AddContact() {
     addressComplement: '',
     postalCode: '',
     city: '',
+    dateInscription: '',
+    autreInformations: '',
     // Gestion
     sourceId: '',
     campaign: '',
@@ -153,6 +155,8 @@ export function AddContact() {
         addressComplement: formData.addressComplement || '',
           postalCode: formData.postalCode || '',
           city: formData.city || '',
+        dateInscription: formData.dateInscription || '',
+        autreInformations: formData.autreInformations || '',
         sourceId: formData.sourceId || '',
         campaign: formData.campaign || '',
         teleoperatorId: formData.teleoperatorId || '',
@@ -365,6 +369,29 @@ export function AddContact() {
                 />
               </div>
               </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="dateInscription">Date d'inscription</Label>
+                <Input
+                  id="dateInscription"
+                  value={formData.dateInscription}
+                  onChange={(e) => setFormData({ ...formData, dateInscription: e.target.value })}
+                  placeholder="Texte libre"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="autreInformations">Autre informations</Label>
+              <Textarea
+                id="autreInformations"
+                value={formData.autreInformations}
+                onChange={(e) => setFormData({ ...formData, autreInformations: e.target.value })}
+                placeholder="Autres informations..."
+                rows={4}
+              />
+            </div>
           </CardContent>
         </Card>
 
@@ -414,9 +441,17 @@ export function AddContact() {
                   placeholder="Paris"
                 />
               </div>
+            </div>
+          </CardContent>
+        </Card>
 
-              <div className="space-y-2">
-              </div>
+        {/* 3. Gestion */}
+        <Card>
+          <CardHeader>
+            <CardTitle>3. Gestion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             </div>
           </CardContent>
         </Card>

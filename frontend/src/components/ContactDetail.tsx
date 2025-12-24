@@ -195,7 +195,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
   }
 
   return (
-    <div className="contact-detail-container" style={{ padding: '30px' }}>
+    <div className="contact-detail-container" style={{ padding: '30px', maxWidth: '100%', width: '100%' }}>
       {/* Header */}
       {contact && (
         <div className="contact-detail-header">

@@ -388,6 +388,10 @@
 }
 
 /* Contact Detail and Add Contact Styles */
+.contact-detail-container {
+  max-width: 100%;
+  width: 100%;
+}
 
 /* Checkbox styles */
 .contact-checkbox {

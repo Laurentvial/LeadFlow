@@ -2601,7 +2601,18 @@ def contact_create(request):
     def get_date(value):
         if not value or value == '':
             return None
-        return value
+        try:
+            from datetime import datetime
+            # Handle both YYYY-MM-DD and DD/MM/YYYY formats
+            if '/' in str(value):
+                parts = str(value).split('/')
+                if len(parts) == 3:
+                    day, month, year = parts
+                    return datetime.strptime(f"{year}-{month}-{day}", "%Y-%m-%d").date()
+            # Try ISO format (YYYY-MM-DD)
+            return datetime.strptime(str(value), "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
     
     # Map frontend field names to model field names
     # Convert phone numbers to integers (remove spaces first)
@@ -2636,6 +2647,8 @@ def contact_create(request):
         'postal_code': request.data.get('postalCode', '') or '',
         'city': request.data.get('city', '') or '',
         'nationality': request.data.get('nationality', '') or '',
+        'autre_informations': request.data.get('autreInformations', '') or '',
+        'date_d_inscription': request.data.get('dateInscription', '') or '',
         'campaign': request.data.get('campaign', '') or '',
     }
     
@@ -3693,6 +3706,8 @@ def csv_import_contacts(request):
             'postalCode': 'postal_code',
             'city': 'city',
             'nationality': 'nationality',
+            'autreInformations': 'autre_informations',
+            'dateInscription': 'date_d_inscription',
             'campaign': 'campaign',
             'oldContactId': 'old_contact_id',
             'createdAt': 'created_at',
@@ -5278,6 +5293,10 @@ def contact_detail(request, contact_id):
                 contact.city = request.data.get('city', '') or ''
             if 'nationality' in request.data:
                 contact.nationality = request.data.get('nationality', '') or ''
+            if 'autreInformations' in request.data:
+                contact.autre_informations = request.data.get('autreInformations', '') or ''
+            if 'dateInscription' in request.data:
+                contact.date_d_inscription = request.data.get('dateInscription', '') or ''
             
             # Update status if provided
             if 'statusId' in request.data:

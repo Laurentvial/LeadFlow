@@ -570,6 +570,8 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['postalCode'] = ret.get('postal_code', '') or ''
         ret['city'] = ret.get('city', '') or ''
         ret['nationality'] = ret.get('nationality', '') or ''
+        ret['autreInformations'] = ret.get('autre_informations', '') or ''
+        ret['dateInscription'] = ret.get('date_d_inscription', '') or ''
         
         # Confirmateur fields
         ret['platformId'] = instance.platform_id if hasattr(instance, 'platform_id') else (instance.platform.id if instance.platform else None)

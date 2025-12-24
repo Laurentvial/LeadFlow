@@ -341,6 +341,8 @@ export function ContactList({
     'postalCode': 'postal_code',
     'city': 'city',
     'nationality': 'nationality',
+    'autreInformations': 'autre_informations',
+    'dateInscription': 'date_d_inscription',
     'campaign': 'campaign',
     'statusId': 'status',
     'sourceId': 'source',
@@ -2058,9 +2060,43 @@ export function ContactList({
       case 'civility':
         return <td key={columnId} title={contact.civility || ''}>{truncateText(contact.civility || '-')}</td>;
       case 'phone':
-        return <td key={columnId} title={formatPhoneNumber(contact.phone) || ''}>{formatPhoneNumber(contact.phone) || '-'}</td>;
+        const phoneNumber = formatPhoneNumber(contact.phone);
+        const phoneTelLink = contact.phone ? `tel:${String(contact.phone)}` : '';
+        return (
+          <td key={columnId} onClick={stopPropagation} title={phoneNumber || ''}>
+            {phoneNumber ? (
+              <a 
+                href={phoneTelLink}
+                className="contacts-name-link"
+                onClick={(e) => e.stopPropagation()}
+                style={{ textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                {phoneNumber}
+              </a>
+            ) : (
+              '-'
+            )}
+          </td>
+        );
       case 'mobile':
-        return <td key={columnId} title={formatPhoneNumber(contact.mobile) || ''}>{truncateText(formatPhoneNumber(contact.mobile) || '-')}</td>;
+        const mobileNumber = formatPhoneNumber(contact.mobile);
+        const mobileTelLink = contact.mobile ? `tel:${String(contact.mobile)}` : '';
+        return (
+          <td key={columnId} onClick={stopPropagation} title={mobileNumber || ''}>
+            {mobileNumber ? (
+              <a 
+                href={mobileTelLink}
+                className="contacts-name-link"
+                onClick={(e) => e.stopPropagation()}
+                style={{ textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                {truncateText(mobileNumber)}
+              </a>
+            ) : (
+              '-'
+            )}
+          </td>
+        );
       case 'email':
         return (
           <td key={columnId} className="contacts-table-email" onClick={stopPropagation}>
@@ -2097,6 +2133,10 @@ export function ContactList({
         return <td key={columnId} title={contact.city || ''}>{truncateText(contact.city || '-')}</td>;
       case 'nationality':
         return <td key={columnId} title={contact.nationality || ''}>{truncateText(contact.nationality || '-')}</td>;
+      case 'autreInformations':
+        return <td key={columnId} title={contact.autreInformations || ''}>{truncateText(contact.autreInformations || '-')}</td>;
+      case 'dateInscription':
+        return <td key={columnId} title={contact.dateInscription || ''}>{truncateText(contact.dateInscription || '-')}</td>;
       case 'campaign':
         return <td key={columnId} title={contact.campaign || ''}>{truncateText(contact.campaign || '-')}</td>;
       case 'createdAt':

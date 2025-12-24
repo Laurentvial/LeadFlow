@@ -97,6 +97,8 @@ const contactFields = [
   { field: 'postal_code', label: 'Code postal' },
   { field: 'city', label: 'Ville' },
   { field: 'nationality', label: 'Nationalité' },
+  { field: 'date_d_inscription', label: 'Date d\'inscription' },
+  { field: 'autre_informations', label: 'Autre informations' },
   { field: 'campaign', label: 'Campagne' },
   { field: 'status', label: 'Statut' },
   { field: 'source', label: 'Source' },

@@ -43,6 +43,8 @@ class Contact(models.Model):
     postal_code = models.CharField(max_length=20, default="", blank=True)
     city = models.CharField(max_length=100, default="", blank=True)
     nationality = models.CharField(max_length=100, default="", blank=True)
+    autre_informations = models.TextField(default="", blank=True)  # Autres informations
+    date_d_inscription = models.CharField(max_length=100, default="", blank=True)  # Date d'inscription
     
     # Relations
     status = models.ForeignKey('Status', on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')

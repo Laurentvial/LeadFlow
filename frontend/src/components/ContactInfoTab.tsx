@@ -475,6 +475,8 @@ export function ContactInfoTab({
     'postalCode': 'postal_code',
     'city': 'city',
     'nationality': 'nationality',
+    'autreInformations': 'autre_informations',
+    'dateInscription': 'date_d_inscription',
     'campaign': 'campaign',
     'statusId': 'status',
     'sourceId': 'source',
@@ -1433,7 +1435,9 @@ export function ContactInfoTab({
         'potentiel': 'potentiel',
         'produit': 'produit',
         'confirmateurEmail': 'confirmateurEmail',
-        'confirmateurTelephone': 'confirmateurTelephone'
+        'confirmateurTelephone': 'confirmateurTelephone',
+        'dateInscription': 'dateInscription',
+        'autreInformations': 'autreInformations'
       };
       
       const apiFieldName = fieldMap[fieldName];
@@ -2374,7 +2378,7 @@ export function ContactInfoTab({
       </Card>
 
       {/* Two-column layout: Left column (Information générales, Informations du contact, Adresse) | Right column (Notes) */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: '70% 30%', minWidth: 0, maxWidth: '100%' }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: '65% 35%', minWidth: 0, maxWidth: '100%' }}>
         {/* Left Column */}
         <div className="space-y-3" style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       {/* 1. Information générales */}
@@ -2573,6 +2577,72 @@ export function ContactInfoTab({
                     onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', contact.confirmateurId) : undefined}
                   >
                     {contact.confirmateurName || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('dateInscription') && (
+              <div>
+                <Label className="text-slate-600">Date d'inscription</Label>
+                {editingField === 'dateInscription' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Input
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 h-10"
+                      placeholder="Texte libre"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('dateInscription')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('dateInscription') ? 'editable' : ''}`}
+                    onClick={canEditField('dateInscription') ? () => startEditing('dateInscription', contact.dateInscription) : undefined}
+                  >
+                    {contact.dateInscription || '-'}
+                  </div>
+                )}
+              </div>
+            )}
+            {canViewField('autreInformations') && (
+              <div className="col-span-2">
+                <Label className="text-slate-600">Autre informations</Label>
+                {editingField === 'autreInformations' ? (
+                  <div className="contact-field-input-wrapper" ref={editingFieldRef}>
+                    <Textarea
+                      value={fieldValue}
+                      onChange={(e) => setFieldValue(e.target.value)}
+                      disabled={isSaving}
+                      className="flex-1 min-h-[100px]"
+                      rows={4}
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={() => saveField('autreInformations')} 
+                      disabled={isSaving}
+                      style={{ backgroundColor: '#22c55e', color: 'white' }}
+                      onMouseEnter={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#16a34a')}
+                      onMouseLeave={(e) => !isSaving && (e.currentTarget.style.backgroundColor = '#22c55e')}
+                    >
+                      Enregistrer
+                    </Button>
+                  </div>
+                ) : (
+                  <div 
+                    className={`contact-field-display ${canEditField('autreInformations') ? 'editable' : ''}`}
+                    onClick={canEditField('autreInformations') ? () => startEditing('autreInformations', contact.autreInformations) : undefined}
+                  >
+                    {contact.autreInformations || '-'}
                   </div>
                 )}
               </div>
