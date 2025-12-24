@@ -70,11 +70,11 @@ export function OTPLoginPage() {
     try {
       await verifyOTP(email, otp);
       await refreshUser();
-      toast.success('Login successful');
+      toast.success('Connexion réussie');
       navigate('/');
     } catch (err: any) {
       console.error('Verify OTP error:', err);
-      const errorMessage = err?.message || 'Invalid OTP code';
+      const errorMessage = err?.message || 'Code OTP invalide';
       setError(errorMessage);
       toast.error(errorMessage);
     } finally {
@@ -105,7 +105,7 @@ export function OTPLoginPage() {
         }, 1000);
       })
       .catch((err: any) => {
-        const errorMessage = err?.message || 'Failed to resend OTP code';
+        const errorMessage = err?.message || 'Échec du renvoi du code OTP';
         setError(errorMessage);
         toast.error(errorMessage);
       })

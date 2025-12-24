@@ -23,8 +23,8 @@ export async function signIn(username: string, password: string) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Invalid credentials' }));
-      throw new Error(error.detail || 'Invalid credentials');
+      const error = await response.json().catch(() => ({ detail: 'Identifiants invalides' }));
+      throw new Error(error.detail || 'Identifiants invalides');
     }
 
     const data = await response.json();
@@ -112,8 +112,8 @@ export async function sendOTP(email: string, password: string) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to send OTP' }));
-      throw new Error(error.error || error.detail || 'Failed to send OTP');
+      const error = await response.json().catch(() => ({ error: 'Échec de l\'envoi du code OTP' }));
+      throw new Error(error.error || error.detail || 'Échec de l\'envoi du code OTP');
     }
 
     const data = await response.json();
@@ -144,8 +144,8 @@ export async function verifyOTP(email: string, otp: string) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Invalid OTP' }));
-      throw new Error(error.error || error.detail || 'Invalid OTP');
+      const error = await response.json().catch(() => ({ error: 'Code OTP invalide' }));
+      throw new Error(error.error || error.detail || 'Code OTP invalide');
     }
 
     const data = await response.json();

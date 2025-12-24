@@ -51,15 +51,8 @@ let refreshPromise: Promise<string | null> | null = null;
 
 // Helper function to refresh access token
 export async function refreshAccessToken(): Promise<string | null> {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:50',message:'refreshAccessToken called',data:{hasRefreshToken:!!localStorage.getItem(REFRESH_TOKEN),hasOngoingRefresh:!!refreshPromise},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
-  
   // If refresh is already in progress, return the existing promise
   if (refreshPromise) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:55',message:'Reusing ongoing refresh promise',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     return refreshPromise;
   }
   
@@ -67,17 +60,11 @@ export async function refreshAccessToken(): Promise<string | null> {
   refreshPromise = (async () => {
     const refreshToken = localStorage.getItem(REFRESH_TOKEN);
     if (!refreshToken) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:68',message:'No refresh token available',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       refreshPromise = null;
       return null;
     }
 
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:74',message:'Sending refresh token request',data:{refreshTokenLength:refreshToken.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       const response = await fetch(`${apiUrl}/api/token/refresh/`, {
         method: 'POST',
         headers: {
@@ -88,36 +75,21 @@ export async function refreshAccessToken(): Promise<string | null> {
         credentials: 'include', // Include credentials if needed
       });
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:84',message:'Refresh token response received',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       if (response.ok) {
         const data = await response.json();
         if (data.access) {
           localStorage.setItem(ACCESS_TOKEN, data.access);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:90',message:'Token refresh successful',data:{newTokenLength:data.access.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
           refreshPromise = null;
           return data.access;
         }
       } else {
-        // #region agent log
         const errorText = await response.text().catch(()=>'');
-        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:95',message:'Token refresh failed',data:{status:response.status,statusText:response.statusText,errorText:errorText.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
       }
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:99',message:'Token refresh exception',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       console.error('Error refreshing token:', error);
     }
 
     // If refresh fails, clear tokens
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:105',message:'Clearing tokens after refresh failure',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     localStorage.removeItem(ACCESS_TOKEN);
     localStorage.removeItem(REFRESH_TOKEN);
     refreshPromise = null; // Clear the promise so we can retry later
@@ -191,13 +163,13 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        const timeoutError = new Error('Request timeout - please check your connection');
+        const timeoutError = new Error('Délai d\'attente dépassé - veuillez vérifier votre connexion');
         (timeoutError as any).status = 408;
         throw timeoutError;
       }
       // Handle network errors (connection refused, etc.)
       if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.message.includes('ERR_CONNECTION_REFUSED'))) {
-        const networkError = new Error('Cannot connect to server. Please make sure the backend is running.');
+        const networkError = new Error('Impossible de se connecter au serveur. Veuillez vous assurer que le backend est en cours d\'exécution.');
         (networkError as any).status = 0;
         (networkError as any).isNetworkError = true;
         throw networkError;
@@ -207,7 +179,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     
     // Check for network-level failures (status 0 usually means connection failed)
     if (response.status === 0 || (!response.ok && response.type === 'error')) {
-      const networkError = new Error('Cannot connect to server. Please make sure the backend is running.');
+      const networkError = new Error('Impossible de se connecter au serveur. Veuillez vous assurer que le backend est en cours d\'exécution.');
       (networkError as any).status = 0;
       (networkError as any).isNetworkError = true;
       throw networkError;
@@ -216,19 +188,12 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     // If 401, try to refresh token and retry once
     // BUT: Don't retry if this IS the refresh endpoint (prevents infinite loop)
     if (response.status === 401) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:202',message:'401 Unauthorized received',data:{endpoint,hasToken:!!token,isRefreshEndpoint:endpoint.includes('/token/refresh/')},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      
       // If this is the refresh endpoint itself returning 401, don't try to refresh again
       if (endpoint.includes('/token/refresh/')) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:208',message:'Refresh endpoint returned 401, clearing tokens',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         localStorage.removeItem(ACCESS_TOKEN);
         localStorage.removeItem(REFRESH_TOKEN);
-        const error = await response.json().catch(() => ({ detail: 'Refresh token expired. Please log in again.' }));
-        const errorMessage = error.detail || error.error || error.message || 'Refresh token expired. Please log in again.';
+        const error = await response.json().catch(() => ({ detail: 'Token de rafraîchissement expiré. Veuillez vous reconnecter.' }));
+        const errorMessage = error.detail || error.error || error.message || 'Token de rafraîchissement expiré. Veuillez vous reconnecter.';
         const errorObj = new Error(errorMessage);
         (errorObj as any).response = error;
         (errorObj as any).status = 401;
@@ -241,8 +206,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         if (isRedirecting) {
           window.location.href = '/login';
         }
-        const error = await response.json().catch(() => ({ detail: 'Authentication required. Please log in.' }));
-        const errorMessage = error.detail || error.error || error.message || 'Authentication required. Please log in.';
+        const error = await response.json().catch(() => ({ detail: 'Authentification requise. Veuillez vous connecter.' }));
+        const errorMessage = error.detail || error.error || error.message || 'Authentification requise. Veuillez vous connecter.';
         const errorObj = new Error(errorMessage);
         (errorObj as any).response = error;
         (errorObj as any).status = 401;
@@ -250,17 +215,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         throw errorObj;
       }
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:230',message:'Attempting token refresh after 401',data:{endpoint},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       const newToken = await refreshAccessToken();
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:241',message:'refreshAccessToken returned',data:{endpoint,newToken:newToken?`${newToken.substring(0,20)}...`:null,newTokenLength:newToken?.length||0,isTruthy:!!newToken},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       if (newToken) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:242',message:'Retrying request with new token',data:{endpoint,newTokenLength:newToken.length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         // Retry the request with the new token
         const retryHeaders: HeadersInit = {
           ...options.headers,
@@ -277,9 +233,6 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         const retryTimeoutId = setTimeout(() => retryController.abort(), retryTimeoutDuration);
         
         try {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:258',message:'Sending retry request',data:{endpoint,hasAuthHeader:!!retryHeaders['Authorization']},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
-          // #endregion
           response = await fetch(`${apiUrl}${endpoint}`, {
             ...options,
             headers: retryHeaders,
@@ -289,13 +242,10 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
             credentials: 'include', // Include credentials (cookies) if needed
           });
           clearTimeout(retryTimeoutId);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:273',message:'Retry response received',data:{endpoint,status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
-          // #endregion
         } catch (retryError: any) {
           clearTimeout(retryTimeoutId);
           if (retryError.name === 'AbortError') {
-            const timeoutError = new Error('Request timeout - please check your connection');
+            const timeoutError = new Error('Délai d\'attente dépassé - veuillez vérifier votre connexion');
             (timeoutError as any).status = 408;
             throw timeoutError;
           }
@@ -311,8 +261,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           if (isRedirecting) {
             window.location.href = '/login';
           }
-          const error = await response.json().catch(() => ({ detail: 'Authentication failed. Please log in again.' }));
-          const errorMessage = error.detail || error.error || error.message || 'Authentication failed. Please log in again.';
+          const error = await response.json().catch(() => ({ detail: 'Authentification échouée. Veuillez vous reconnecter.' }));
+          const errorMessage = error.detail || error.error || error.message || 'Authentification échouée. Veuillez vous reconnecter.';
           const errorObj = new Error(errorMessage);
           (errorObj as any).response = error;
           (errorObj as any).status = 401;
@@ -339,7 +289,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     }
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'API request failed' }));
+      const error = await response.json().catch(() => ({ detail: 'Échec de la requête API' }));
       
       // Extract error message from various Django REST Framework error formats
       let errorMessage = error.detail || error.error || error.message;
@@ -362,7 +312,7 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         }
       }
       
-      errorMessage = errorMessage || 'API request failed';
+      errorMessage = errorMessage || 'Échec de la requête API';
       const errorObj = new Error(errorMessage);
       (errorObj as any).response = error;
       (errorObj as any).status = response.status;

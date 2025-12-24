@@ -118,9 +118,6 @@ export function useWebSocket({
       };
 
       ws.onclose = (event) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/df404acc-d7d5-498c-9a75-ba374a3d17bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useWebSocket.ts:120',message:'WebSocket closed',data:{code:event.code,reason:event.reason,wasClean:event.wasClean,url},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         console.log(`[useWebSocket] 🔌 WebSocket closed: code=${event.code}, reason="${event.reason}", wasClean=${event.wasClean}`);
         setIsConnected(false);
         onClose?.();

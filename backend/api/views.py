@@ -198,25 +198,110 @@ def get_client_ip(request):
         # Get the first IP (original client) and strip whitespace
         ip = x_forwarded_for.split(',')[0].strip()
         if ip:
-            return ip
+            # Remove port if present (e.g., "192.168.1.1:12345" -> "192.168.1.1")
+            if ':' in ip and not ip.startswith('['):  # IPv6 addresses are in brackets
+                ip = ip.split(':')[0]
+            return ip.strip()
     
     # Check X-Real-IP header (used by some proxies)
     x_real_ip = request.META.get('HTTP_X_REAL_IP')
     if x_real_ip:
         ip = x_real_ip.strip()
         if ip:
-            return ip
+            # Remove port if present
+            if ':' in ip and not ip.startswith('['):
+                ip = ip.split(':')[0]
+            return ip.strip()
     
     # Check CF-Connecting-IP (Cloudflare)
     cf_connecting_ip = request.META.get('HTTP_CF_CONNECTING_IP')
     if cf_connecting_ip:
         ip = cf_connecting_ip.strip()
         if ip:
-            return ip
+            # Remove port if present
+            if ':' in ip and not ip.startswith('['):
+                ip = ip.split(':')[0]
+            return ip.strip()
     
     # Fallback to REMOTE_ADDR
     ip = request.META.get('REMOTE_ADDR', '')
+    if ip:
+        # Remove port if present
+        if ':' in ip and not ip.startswith('['):
+            ip = ip.split(':')[0]
     return ip.strip() if ip else 'Unknown'
+
+
+def normalize_ip(ip_string):
+    """Normalize IP address by removing port, whitespace, and converting to lowercase"""
+    if not ip_string:
+        return None
+    ip = ip_string.strip().lower()
+    # Remove port if present (e.g., "192.168.1.1:12345" -> "192.168.1.1")
+    # But preserve IPv6 format (e.g., "[::1]:12345" -> "::1")
+    if ':' in ip and not ip.startswith('['):
+        # IPv4 with port
+        ip = ip.split(':')[0]
+    elif ip.startswith('[') and ']:' in ip:
+        # IPv6 with port
+        ip = ip.split(']:')[0][1:]  # Remove brackets
+    return ip
+
+def is_ip_allowed(client_ip, ip_whitelist):
+    """Check if client IP is in the whitelist"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # If whitelist is empty or invalid, deny access (whitelist is enabled, so empty = deny all)
+    if not ip_whitelist or not isinstance(ip_whitelist, list) or len(ip_whitelist) == 0:
+        logger.warning(f"IP whitelist check: Whitelist is empty or invalid, denying access")
+        return False, "IP whitelist is empty"
+    
+    # If client IP is unknown or empty, deny access when whitelist is enabled
+    if not client_ip or client_ip.strip().lower() == 'unknown':
+        logger.warning(f"IP whitelist check: Client IP is unknown or empty")
+        return False, "Client IP could not be determined"
+    
+    # Normalize IPs for comparison
+    normalized_client_ip = normalize_ip(client_ip)
+    normalized_whitelist = [normalize_ip(ip) for ip in ip_whitelist if ip]
+    
+    # Remove None values from whitelist
+    normalized_whitelist = [ip for ip in normalized_whitelist if ip]
+    
+    if not normalized_client_ip:
+        logger.warning(f"IP whitelist check: Could not normalize client IP '{client_ip}'")
+        return False, f"Could not normalize client IP: {client_ip}"
+    
+    logger.info(f"IP whitelist check: Client IP='{normalized_client_ip}' (original: '{client_ip}'), Whitelist={normalized_whitelist}")
+    
+    # Check exact match first
+    if normalized_client_ip in normalized_whitelist:
+        logger.info(f"IP whitelist check: Exact match found for {normalized_client_ip}")
+        return True, None
+    
+    # Check CIDR notation (e.g., 192.168.1.0/24)
+    import ipaddress
+    try:
+        client_ip_obj = ipaddress.ip_address(normalized_client_ip)
+        for whitelist_ip in normalized_whitelist:
+            try:
+                # Try to parse as CIDR (works for both CIDR and single IPs)
+                network = ipaddress.ip_network(whitelist_ip, strict=False)
+                if client_ip_obj in network:
+                    logger.info(f"IP whitelist check: CIDR match found - {normalized_client_ip} in {whitelist_ip}")
+                    return True, None
+            except ValueError as e:
+                # Not a valid IP/CIDR format, skip
+                logger.warning(f"IP whitelist check: Invalid IP format '{whitelist_ip}': {e}")
+                continue
+    except ValueError as e:
+        # Invalid client IP format, deny access
+        logger.warning(f"IP whitelist check: Invalid client IP format '{normalized_client_ip}': {e}")
+        return False, f"Invalid client IP format: {normalized_client_ip}"
+    
+    logger.warning(f"IP whitelist check: Access denied - '{normalized_client_ip}' not in whitelist {normalized_whitelist}")
+    return False, f"IP '{normalized_client_ip}' is not in the whitelist"
 
 
 def get_browser_info(request):
@@ -6010,6 +6095,28 @@ def user_update(request, user_id):
     if 'hrex' in request.data:
         user_details.hrex = request.data.get('hrex', '').strip() or ''
     
+    # Update IP whitelist first, then enable/disable flag (order matters)
+    if 'ipWhitelist' in request.data:
+        ip_whitelist = request.data.get('ipWhitelist', [])
+        # Ensure it's a list and filter out empty strings
+        if isinstance(ip_whitelist, list):
+            cleaned_whitelist = [ip.strip() for ip in ip_whitelist if ip and ip.strip()]
+            user_details.ip_whitelist = cleaned_whitelist
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Updated IP whitelist for user {django_user.email}: {cleaned_whitelist}")
+        else:
+            user_details.ip_whitelist = []
+    
+    if 'ipWhitelistEnabled' in request.data:
+        ip_whitelist_enabled = bool(request.data.get('ipWhitelistEnabled', False))
+        user_details.ip_whitelist_enabled = ip_whitelist_enabled
+        # If enabling but no IPs provided, log a warning
+        if ip_whitelist_enabled and (not user_details.ip_whitelist or len(user_details.ip_whitelist) == 0):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"IP whitelist enabled for user {django_user.email} but no IPs in whitelist - access will be denied")
+    
     # Update team membership using TeamMember table
     if 'teamId' in request.data:
         team_id = request.data['teamId']
@@ -6035,8 +6142,13 @@ def user_update(request, user_id):
     
     user_details.save()
     
-    # Refresh user_details to get updated team membership
+    # Refresh user_details to get updated team membership and verify IP whitelist was saved
     user_details.refresh_from_db()
+    
+    # Log IP whitelist settings after save for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"User {django_user.email} updated - IP whitelist enabled: {user_details.ip_whitelist_enabled}, IP whitelist: {user_details.ip_whitelist}")
     
     # Get new value after update for logging
     new_value = get_user_data_for_log(django_user, user_details)
@@ -9300,6 +9412,23 @@ def send_otp(request):
             # Check if user is deleted
             if user_details.deleted_at:
                 return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
+            # Check if user is active
+            if not user_details.active:
+                return Response({'error': 'This account has been disabled. Please contact your administrator.'}, status=status.HTTP_403_FORBIDDEN)
+            # Check IP whitelist if enabled
+            if user_details.ip_whitelist_enabled:
+                client_ip = get_client_ip(request)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"IP whitelist check for user {user.email}: enabled={user_details.ip_whitelist_enabled}, whitelist={user_details.ip_whitelist}, client_ip={client_ip}")
+                is_allowed, error_msg = is_ip_allowed(client_ip, user_details.ip_whitelist)
+                if not is_allowed:
+                    error_message = f"Access denied. Your IP address ({client_ip}) is not authorized."
+                    if error_msg:
+                        error_message += f" {error_msg}"
+                    logger.warning(f"IP whitelist check FAILED for user {user.email}: client_ip={client_ip} not in whitelist={user_details.ip_whitelist}")
+                    return Response({'error': error_message}, status=status.HTTP_403_FORBIDDEN)
+                logger.info(f"IP whitelist check PASSED for user {user.email}: client_ip={client_ip}")
         except UserDetails.DoesNotExist:
             # If UserDetails doesn't exist, default to require_otp = False
             require_otp = False
@@ -9452,11 +9581,27 @@ def verify_otp(request):
             except DjangoUser.DoesNotExist:
                 return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
             
-            # Check if user is deleted
+            # Check if user is deleted or disabled
             try:
                 user_details = UserDetails.objects.get(django_user=user)
                 if user_details.deleted_at:
                     return Response({'error': 'This account has been deleted.'}, status=status.HTTP_403_FORBIDDEN)
+                if not user_details.active:
+                    return Response({'error': 'This account has been disabled. Please contact your administrator.'}, status=status.HTTP_403_FORBIDDEN)
+                # Check IP whitelist if enabled
+                if user_details.ip_whitelist_enabled:
+                    client_ip = get_client_ip(request)
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"IP whitelist check for user {user.email} (verify_otp): enabled={user_details.ip_whitelist_enabled}, whitelist={user_details.ip_whitelist}, client_ip={client_ip}")
+                    is_allowed, error_msg = is_ip_allowed(client_ip, user_details.ip_whitelist)
+                    if not is_allowed:
+                        error_message = f"Access denied. Your IP address ({client_ip}) is not authorized."
+                        if error_msg:
+                            error_message += f" {error_msg}"
+                        logger.warning(f"IP whitelist check FAILED for user {user.email} (verify_otp): client_ip={client_ip} not in whitelist={user_details.ip_whitelist}")
+                        return Response({'error': error_message}, status=status.HTTP_403_FORBIDDEN)
+                    logger.info(f"IP whitelist check PASSED for user {user.email} (verify_otp): client_ip={client_ip}")
             except UserDetails.DoesNotExist:
                 # UserDetails doesn't exist, allow login (might be a new user)
                 pass
@@ -9499,11 +9644,11 @@ def health_check(request):
     """Health check endpoint for API."""
     return Response({"status": "healthy", "service": "backend"}, status=status.HTTP_200_OK)
 
-# Custom token serializer to check if user is deleted
+# Custom token serializer to check if user is deleted or disabled
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        # Check if user is deleted
+        # Check if user is deleted or disabled
         try:
             user_details = UserDetails.objects.get(django_user=self.user)
             if user_details.deleted_at:
@@ -9512,6 +9657,43 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     'This account has been deleted.',
                     code='user_deleted'
                 )
+            if not user_details.active:
+                from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                raise AuthenticationFailed(
+                    'This account has been disabled. Please contact your administrator.',
+                    code='user_disabled'
+                )
+            # Check IP whitelist if enabled
+            if user_details.ip_whitelist_enabled:
+                # Get request from context
+                request = self.context.get('request')
+                if request:
+                    client_ip = get_client_ip(request)
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"IP whitelist check for user {self.user.email} (token): enabled={user_details.ip_whitelist_enabled}, whitelist={user_details.ip_whitelist}, client_ip={client_ip}")
+                    is_allowed, error_msg = is_ip_allowed(client_ip, user_details.ip_whitelist)
+                    if not is_allowed:
+                        error_message = f"Access denied. Your IP address ({client_ip}) is not authorized."
+                        if error_msg:
+                            error_message += f" {error_msg}"
+                        logger.warning(f"IP whitelist check FAILED for user {self.user.email} (token): client_ip={client_ip} not in whitelist={user_details.ip_whitelist}")
+                        from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                        raise AuthenticationFailed(
+                            error_message,
+                            code='ip_not_authorized'
+                        )
+                    logger.info(f"IP whitelist check PASSED for user {self.user.email} (token): client_ip={client_ip}")
+                else:
+                    # If no request context, deny access when IP whitelist is enabled
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"IP whitelist check FAILED for user {self.user.email} (token): No request context available")
+                    from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                    raise AuthenticationFailed(
+                        'Access denied. Your IP address is not authorized.',
+                        code='ip_not_authorized'
+                    )
         except UserDetails.DoesNotExist:
             # UserDetails doesn't exist, allow login (might be a new user)
             pass

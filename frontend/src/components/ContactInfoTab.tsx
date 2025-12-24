@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
@@ -1519,8 +1520,8 @@ export function ContactInfoTab({
   async function handleUpdateStatus() {
     if (!contact) return;
     
-    // Validate note is always required
-    if (!statusChangeNote.trim()) {
+    // Validate note is required only if permission requires it
+    if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
       setFieldErrors(prev => ({ ...prev, note: true }));
       toast.error('Veuillez saisir une note pour changer le statut');
       setIsSavingClientForm(false);
@@ -3880,7 +3881,7 @@ export function ContactInfoTab({
       </div>
 
       {/* Create Appointment Modal */}
-      {isAppointmentModalOpen && (
+      {isAppointmentModalOpen && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           // If modal was opened from status change, cancel the status change
           if (isEventModalFromStatus && pendingStatusChange) {
@@ -3998,11 +3999,12 @@ export function ContactInfoTab({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Edit Appointment Modal */}
-      {isEditAppointmentModalOpen && editingAppointment && (
+      {isEditAppointmentModalOpen && editingAppointment && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
           setIsEditAppointmentModalOpen(false);
           setEditingAppointment(null);
@@ -4134,7 +4136,8 @@ export function ContactInfoTab({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Status Change Modal */}
@@ -4475,7 +4478,7 @@ export function ContactInfoTab({
               </div>
               <div className="modal-form-field">
                 <Label htmlFor="statusNote" style={fieldErrors.note ? { color: '#ef4444' } : {}}>
-                  Note <span style={{ color: '#ef4444' }}>*</span>
+                  Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
                 </Label>
                 {/* Show category tabs if user has permission to create/edit/delete categories */}
                 {categoriesForStatusChange.length > 0 && (
@@ -4498,7 +4501,7 @@ export function ContactInfoTab({
                 )}
                 <Textarea
                   id="statusNote"
-                  placeholder="Saisissez une note expliquant le changement de statut..."
+                  placeholder={requiresNoteForStatusChange ? "Saisissez une note expliquant le changement de statut..." : "Saisissez une note expliquant le changement de statut (optionnel)..."}
                   value={statusChangeNote}
                   onChange={(e) => {
                     setStatusChangeNote(e.target.value);
@@ -4512,11 +4515,13 @@ export function ContactInfoTab({
                   }}
                   rows={4}
                   className={`resize-none ${fieldErrors.note ? 'border-red-500' : ''}`}
-                  required
+                  required={requiresNoteForStatusChange}
                 />
-                <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                  Une note est obligatoire pour changer le statut.
-                </p>
+                {requiresNoteForStatusChange && (
+                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                    Une note est obligatoire pour changer le statut.
+                  </p>
+                )}
               </div>
               {/* Event fields - show when selected status has isEvent=true */}
               {(() => {
@@ -4664,7 +4669,7 @@ export function ContactInfoTab({
                     onClick={handleUpdateStatus}
                     disabled={
                       isSavingClientForm ||
-                      !statusChangeNote.trim() ||
+                      (requiresNoteForStatusChange && !statusChangeNote.trim()) ||
                       ((() => {
                         // Use String() to ensure consistent type comparison
                         const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));

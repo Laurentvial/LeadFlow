@@ -933,13 +933,21 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     mobile = serializers.SerializerMethodField()
     hrex = serializers.CharField(required=False, allow_blank=True, max_length=7)
     requireOtp = serializers.BooleanField(source='require_otp', read_only=True)
+    ipWhitelistEnabled = serializers.BooleanField(source='ip_whitelist_enabled', required=False)
+    ipWhitelist = serializers.ListField(
+        child=serializers.CharField(),
+        source='ip_whitelist',
+        required=False,
+        allow_empty=True
+    )
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
     class Meta:
         model = UserDetails
         fields = [
             'id', 'firstName', 'lastName', 'username', 'email',
-            'role', 'phone', 'mobile', 'teamId', 'active', 'hrex', 'requireOtp', 'createdAt'
+            'role', 'phone', 'mobile', 'teamId', 'active', 'hrex', 'requireOtp', 
+            'ipWhitelistEnabled', 'ipWhitelist', 'createdAt'
         ]
         read_only_fields = ['id']
 

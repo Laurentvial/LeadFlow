@@ -135,6 +135,8 @@ class UserDetails(models.Model):
     hrex = models.CharField(max_length=7, default="", blank=True)  # Hex color code (e.g., #FF5733)
     active = models.BooleanField(null=False, default=True)
     require_otp = models.BooleanField(null=False, default=False)  # Force OTP login for this user
+    ip_whitelist_enabled = models.BooleanField(null=False, default=False)  # Enable IP whitelist checking
+    ip_whitelist = models.JSONField(default=list, blank=True)  # List of allowed IP addresses
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
@@ -265,7 +266,7 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       </Card>
 
       {/* Modal for log details */}
-      {isModalOpen && selectedLog && (
+      {isModalOpen && selectedLog && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, handleCloseModal)}>
           <div className="modal-content contact-tab-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -387,7 +388,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
