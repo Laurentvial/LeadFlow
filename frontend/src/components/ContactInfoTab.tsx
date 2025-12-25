@@ -1075,6 +1075,24 @@ export function ContactInfoTab({
     return categories.filter(cat => accessibleCategoryIds.includes(cat.id))
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [categories, accessibleCategoryIds]);
+
+  // Calculate note counts for each accessible category
+  const categoryCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    
+    accessibleCategories.forEach(category => {
+      counts[category.id] = localNotes.filter(note => {
+        // Only count notes that belong to this category
+        if (note.categId !== category.id) {
+          return false;
+        }
+        // Only count notes user has view permission for
+        return accessibleCategoryIds.includes(note.categId);
+      }).length;
+    });
+    
+    return counts;
+  }, [localNotes, accessibleCategories, accessibleCategoryIds]);
   
   // Filter categories for status change modal - only show if user can create/edit/delete
   const categoriesForStatusChange = React.useMemo(() => {
@@ -2378,7 +2396,7 @@ export function ContactInfoTab({
       </Card>
 
       {/* Two-column layout: Left column (Information générales, Informations du contact, Adresse) | Right column (Notes) */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: '65% 35%', minWidth: 0, maxWidth: '100%' }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: '55% 45%', minWidth: 0, maxWidth: '100%' }}>
         {/* Left Column */}
         <div className="space-y-3" style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       {/* 1. Information générales */}
@@ -3817,6 +3835,9 @@ export function ContactInfoTab({
                         {accessibleCategories.map((category) => (
                           <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1 flex-1">
                             {category.name}
+                            <span className="ml-1.5 px-1 py-0.5 text-[10px] font-medium bg-slate-200 text-slate-700 rounded-full">
+                              {categoryCounts[category.id] || 0}
+                            </span>
                           </TabsTrigger>
                         ))}
                       </TabsList>
