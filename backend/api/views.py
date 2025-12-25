@@ -4070,6 +4070,437 @@ def csv_import_contacts(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def contacts_integration_update(request):
+    """Update existing contacts with timestamp fields from CSV using old_contact_id mapping"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    
+    # Parse column mapping JSON string if it's a string
+    column_mapping_str = request.data.get('columnMapping', '{}')
+    if isinstance(column_mapping_str, str):
+        import json
+        try:
+            column_mapping = json.loads(column_mapping_str)
+        except json.JSONDecodeError:
+            column_mapping = {}
+    else:
+        column_mapping = column_mapping_str or {}
+    
+    # Parse value mappings (teleoperatorMapping, confirmateurMapping, sourceMapping)
+    teleoperator_mapping_str = request.data.get('teleoperatorMapping', '{}')
+    if isinstance(teleoperator_mapping_str, str):
+        import json
+        try:
+            teleoperator_mapping = json.loads(teleoperator_mapping_str)
+        except json.JSONDecodeError:
+            teleoperator_mapping = {}
+    else:
+        teleoperator_mapping = teleoperator_mapping_str or {}
+    
+    confirmateur_mapping_str = request.data.get('confirmateurMapping', '{}')
+    if isinstance(confirmateur_mapping_str, str):
+        import json
+        try:
+            confirmateur_mapping = json.loads(confirmateur_mapping_str)
+        except json.JSONDecodeError:
+            confirmateur_mapping = {}
+    else:
+        confirmateur_mapping = confirmateur_mapping_str or {}
+    
+    source_mapping_str = request.data.get('sourceMapping', '{}')
+    if isinstance(source_mapping_str, str):
+        import json
+        try:
+            source_mapping = json.loads(source_mapping_str)
+        except json.JSONDecodeError:
+            source_mapping = {}
+    else:
+        source_mapping = source_mapping_str or {}
+    
+    # Validate required mappings - oldContactId is required
+    if 'oldContactId' not in column_mapping or not column_mapping['oldContactId']:
+        return Response({
+            'error': 'oldContactId column mapping is required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        import csv
+        import io
+        from datetime import datetime
+        from django.utils import timezone
+        import pytz
+        
+        # Read CSV file
+        csv_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(csv_content))
+        
+        # Helper function to parse datetime
+        def parse_datetime(datetime_str):
+            """Parse datetime string to timezone-aware datetime object"""
+            if not datetime_str or str(datetime_str).strip() == '':
+                return None
+            utc = pytz.UTC
+            
+            # If already a datetime object, make it timezone-aware and return
+            if isinstance(datetime_str, datetime):
+                if timezone.is_aware(datetime_str):
+                    return datetime_str
+                return utc.localize(datetime_str)
+            datetime_str = str(datetime_str).strip()
+            
+            # Try parsing ISO format with timezone first
+            try:
+                from dateutil import parser
+                parsed = parser.parse(datetime_str)
+                if timezone.is_aware(parsed):
+                    return parsed
+                return utc.localize(parsed)
+            except (ValueError, ImportError):
+                pass
+            
+            # Try common datetime formats (assume UTC for naive datetimes)
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M',
+                '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y %H:%M',
+                '%d/%m/%Y',
+                '%m/%d/%Y %H:%M:%S',
+                '%m/%d/%Y %H:%M',
+                '%m/%d/%Y',
+            ]
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(datetime_str, fmt)
+                    return utc.localize(parsed)
+                except ValueError:
+                    continue
+            return None
+        
+        # Pre-load all contacts with old_contact_id into a dictionary for fast lookup
+        contacts_by_old_id = {}
+        contacts_with_old_id = Contact.objects.filter(old_contact_id__isnull=False).exclude(old_contact_id='')
+        for contact in contacts_with_old_id:
+            old_id_key = str(contact.old_contact_id).strip()
+            contacts_by_old_id[old_id_key] = contact
+        
+        # Pre-load users and sources for efficient lookup
+        from api.models import UserDetails, Source
+        users_by_userdetails_id = {}
+        users_by_django_id = {}
+        sources_by_id = {}
+        
+        # Load all UserDetails with their Django users
+        user_details_list = UserDetails.objects.select_related('django_user').all()
+        for user_detail in user_details_list:
+            if user_detail.id:
+                users_by_userdetails_id[str(user_detail.id).strip()] = user_detail.django_user
+            if user_detail.django_user_id:
+                users_by_django_id[user_detail.django_user_id] = user_detail.django_user
+        
+        # Load all sources
+        sources_list = Source.objects.all()
+        for source in sources_list:
+            if source.id:
+                sources_by_id[str(source.id).strip()] = source
+        
+        results = {
+            'success': [],
+            'errors': [],
+            'total': 0,
+            'updated': 0,
+            'failed': 0
+        }
+        
+        # Process CSV rows
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
+            results['total'] += 1
+            try:
+                # Get old_contact_id from CSV
+                old_contact_id_col = column_mapping.get('oldContactId', '')
+                if not old_contact_id_col:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'oldContactId column not mapped'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Try exact match first, then case-insensitive match
+                old_contact_id_value = None
+                if old_contact_id_col in row:
+                    old_contact_id_value = row[old_contact_id_col]
+                else:
+                    # Try case-insensitive match
+                    for key in row.keys():
+                        if key and key.strip().lower() == old_contact_id_col.strip().lower():
+                            old_contact_id_value = row[key]
+                            break
+                
+                if not old_contact_id_value or not old_contact_id_value.strip():
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'oldContactId is empty'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                old_contact_id_value = str(old_contact_id_value).strip()
+                
+                # Find contact by old_contact_id
+                contact = contacts_by_old_id.get(old_contact_id_value)
+                if not contact:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Contact not found with old_contact_id: {old_contact_id_value}'
+                    })
+                    results['failed'] += 1
+                    continue
+                
+                # Helper function to get CSV value
+                def get_csv_value(column_name):
+                    if not column_name:
+                        return None
+                    if column_name in row:
+                        return row[column_name]
+                    # Try case-insensitive match
+                    for key in row.keys():
+                        if key and key.strip().lower() == column_name.strip().lower():
+                            return row[key]
+                    return None
+                
+                # Parse timestamp fields and other fields
+                update_fields = {}
+                contact_updates = {}  # For ForeignKey fields that need object assignment
+                
+                # Handle created_at
+                if 'createdAt' in column_mapping and column_mapping['createdAt']:
+                    created_at_value = get_csv_value(column_mapping['createdAt'])
+                    if created_at_value and str(created_at_value).strip():
+                        parsed_dt = parse_datetime(created_at_value)
+                        if parsed_dt:
+                            update_fields['created_at'] = parsed_dt
+                        else:
+                            # Log parsing error but don't fail
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Could not parse created_at value: {created_at_value}'
+                            })
+                
+                # Handle updated_at
+                if 'updatedAt' in column_mapping and column_mapping['updatedAt']:
+                    updated_at_value = get_csv_value(column_mapping['updatedAt'])
+                    if updated_at_value and str(updated_at_value).strip():
+                        parsed_dt = parse_datetime(updated_at_value)
+                        if parsed_dt:
+                            update_fields['updated_at'] = parsed_dt
+                        else:
+                            # Log parsing error but don't fail
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Could not parse updated_at value: {updated_at_value}'
+                            })
+                
+                # Handle assigned_at
+                if 'assignedAt' in column_mapping and column_mapping['assignedAt']:
+                    assigned_at_value = get_csv_value(column_mapping['assignedAt'])
+                    if assigned_at_value and str(assigned_at_value).strip():
+                        parsed_dt = parse_datetime(assigned_at_value)
+                        if parsed_dt:
+                            update_fields['assigned_at'] = parsed_dt
+                        else:
+                            # Log parsing error but don't fail
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Could not parse assigned_at value: {assigned_at_value}'
+                            })
+                
+                # Handle teleoperatorId
+                if 'teleoperatorId' in column_mapping and column_mapping['teleoperatorId']:
+                    teleoperator_value = get_csv_value(column_mapping['teleoperatorId'])
+                    if teleoperator_value and teleoperator_value.strip():
+                        teleoperator_value_str = str(teleoperator_value).strip()
+                        
+                        # Check if there's a mapping for this CSV value
+                        mapped_teleoperator_id = teleoperator_mapping.get(teleoperator_value_str)
+                        if mapped_teleoperator_id:
+                            teleoperator_id = str(mapped_teleoperator_id).strip()
+                        else:
+                            # Use CSV value directly (might be an ID)
+                            teleoperator_id = teleoperator_value_str
+                        
+                        # Try UserDetails ID first, then Django User ID
+                        teleoperator_user = users_by_userdetails_id.get(teleoperator_id)
+                        if not teleoperator_user:
+                            try:
+                                django_id = int(teleoperator_id)
+                                teleoperator_user = users_by_django_id.get(django_id)
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if teleoperator_user:
+                            contact_updates['teleoperator'] = teleoperator_user
+                        else:
+                            # Log warning but don't fail - allow other fields to update
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Teleoperator not found with ID: {teleoperator_id} (field skipped)'
+                            })
+                    elif teleoperator_value is not None and teleoperator_value.strip() == '':
+                        # Empty string means clear the teleoperator
+                        contact_updates['teleoperator'] = None
+                
+                # Handle confirmateurId
+                if 'confirmateurId' in column_mapping and column_mapping['confirmateurId']:
+                    confirmateur_value = get_csv_value(column_mapping['confirmateurId'])
+                    if confirmateur_value and confirmateur_value.strip():
+                        confirmateur_value_str = str(confirmateur_value).strip()
+                        
+                        # Check if there's a mapping for this CSV value
+                        mapped_confirmateur_id = confirmateur_mapping.get(confirmateur_value_str)
+                        if mapped_confirmateur_id:
+                            confirmateur_id = str(mapped_confirmateur_id).strip()
+                        else:
+                            # Use CSV value directly (might be an ID)
+                            confirmateur_id = confirmateur_value_str
+                        
+                        # Try UserDetails ID first, then Django User ID
+                        confirmateur_user = users_by_userdetails_id.get(confirmateur_id)
+                        if not confirmateur_user:
+                            try:
+                                django_id = int(confirmateur_id)
+                                confirmateur_user = users_by_django_id.get(django_id)
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if confirmateur_user:
+                            contact_updates['confirmateur'] = confirmateur_user
+                        else:
+                            # Log warning but don't fail - allow other fields to update
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Confirmateur not found with ID: {confirmateur_id} (field skipped)'
+                            })
+                    elif confirmateur_value is not None and confirmateur_value.strip() == '':
+                        # Empty string means clear the confirmateur
+                        contact_updates['confirmateur'] = None
+                
+                # Handle sourceId
+                if 'sourceId' in column_mapping and column_mapping['sourceId']:
+                    source_value = get_csv_value(column_mapping['sourceId'])
+                    if source_value and source_value.strip():
+                        source_value_str = str(source_value).strip()
+                        
+                        # Check if there's a mapping for this CSV value
+                        mapped_source_id = source_mapping.get(source_value_str)
+                        if mapped_source_id:
+                            source_id = str(mapped_source_id).strip()
+                        else:
+                            # Use CSV value directly (might be an ID)
+                            source_id = source_value_str
+                        
+                        source_obj = sources_by_id.get(source_id)
+                        
+                        if source_obj:
+                            contact_updates['source'] = source_obj
+                        else:
+                            # Log warning but don't fail - allow other fields to update
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Source not found with ID: {source_id} (field skipped)'
+                            })
+                    elif source_value is not None and source_value.strip() == '':
+                        # Empty string means clear the source
+                        contact_updates['source'] = None
+                
+                # Update contact if we have fields to update
+                if update_fields or contact_updates:
+                    # Prepare all fields for database update
+                    # We need to update ForeignKey fields by their ID, not the object
+                    db_update_fields = {}
+                    
+                    # Add timestamp fields
+                    if update_fields:
+                        db_update_fields.update(update_fields)
+                    
+                    # Convert ForeignKey objects to IDs for database update
+                    if contact_updates:
+                        if 'teleoperator' in contact_updates:
+                            # teleoperator is a DjangoUser object, so .id gives us the Django User ID (integer)
+                            db_update_fields['teleoperator_id'] = contact_updates['teleoperator'].id if contact_updates['teleoperator'] else None
+                        if 'confirmateur' in contact_updates:
+                            # confirmateur is a DjangoUser object, so .id gives us the Django User ID (integer)
+                            db_update_fields['confirmateur_id'] = contact_updates['confirmateur'].id if contact_updates['confirmateur'] else None
+                        if 'source' in contact_updates:
+                            # source is a Source object, so .id gives us the Source ID (string)
+                            db_update_fields['source_id'] = contact_updates['source'].id if contact_updates['source'] else None
+                    
+                    # Use direct database update to bypass auto_now and auto_now_add
+                    # This ensures our CSV values are preserved
+                    # Note: .update() bypasses Django's save() method, so auto_now and auto_now_add are ignored
+                    if db_update_fields:
+                        try:
+                            # Use update() which bypasses auto_now and auto_now_add
+                            rows_updated = Contact.objects.filter(id=contact.id).update(**db_update_fields)
+                            if rows_updated == 0:
+                                results['errors'].append({
+                                    'row': row_num,
+                                    'error': f'Contact update failed - no rows updated'
+                                })
+                                results['failed'] += 1
+                                continue
+                            contact.refresh_from_db()
+                        except Exception as update_error:
+                            import traceback
+                            error_details = traceback.format_exc()
+                            results['errors'].append({
+                                'row': row_num,
+                                'error': f'Error updating contact: {str(update_error)}',
+                                'details': error_details
+                            })
+                            results['failed'] += 1
+                            continue
+                    
+                    updated_field_names = list(update_fields.keys()) + list(contact_updates.keys())
+                    results['success'].append({
+                        'row': row_num,
+                        'contactId': contact.id,
+                        'oldContactId': old_contact_id_value,
+                        'updatedFields': updated_field_names
+                    })
+                    results['updated'] += 1
+                else:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'No fields provided to update'
+                    })
+                    results['failed'] += 1
+                    
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                results['errors'].append({
+                    'row': row_num,
+                    'error': str(e),
+                    'details': error_details
+                })
+                results['failed'] += 1
+        
+        return Response(results, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def csv_import_notes(request):
     """Import notes from CSV with column mapping - optimized for large imports"""
     if 'file' not in request.FILES:

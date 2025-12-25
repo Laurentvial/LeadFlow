@@ -14,6 +14,7 @@ import { MigrationPage } from './components/MigrationPage';
 import { NotesMigrationPage } from './components/NotesMigrationPage';
 import { LogsMigrationPage } from './components/LogsMigrationPage';
 import { EventsMigrationPage } from './components/EventsMigrationPage';
+import { ContactIntegrationPage } from './components/ContactIntegrationPage';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
@@ -180,6 +181,15 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <EventsMigrationPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/integration" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <ContactIntegrationPage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

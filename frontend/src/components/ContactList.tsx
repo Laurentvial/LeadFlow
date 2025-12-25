@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -474,6 +474,8 @@ export function ContactList({
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
   const [bulkConfirmateurId, setBulkConfirmateurId] = useState('');
+  const [bulkStatusId, setBulkStatusId] = useState('');
+  const [isBulkStatusChanging, setIsBulkStatusChanging] = useState(false);
   const [lastOpenedContactId, setLastOpenedContactId] = useState<string | null>(null);
   
   // Modals state
@@ -1780,6 +1782,7 @@ export function ContactList({
     setShowBulkActions(false);
     setBulkTeleoperatorId('');
     setBulkConfirmateurId('');
+    setBulkStatusId('');
   }
 
   const allSelected = displayedContacts.length > 0 && selectedContacts.size === displayedContacts.length;
@@ -2623,6 +2626,105 @@ export function ContactList({
     }
   }
 
+  async function handleBulkStatusChange(statusId: string) {
+    if (!statusId || statusId === 'none') {
+      setBulkStatusId('');
+      return;
+    }
+    
+    // Update the state immediately so the Select component reflects the selection
+    setBulkStatusId(statusId);
+    
+    // Check permissions for all selected contacts
+    const selectedContactIds = Array.from(selectedContacts);
+    const contactsToUpdate = contacts.filter(c => selectedContactIds.includes(c.id));
+    
+    const normalizedStatusId = String(statusId).trim();
+    
+    // Check if user has VIEW permission for the new status
+    // For contacts in fosse, check fosse status permissions; otherwise check regular status permissions
+    const contactsInFosse = contactsToUpdate.filter(c => isContactInFosse(c));
+    const contactsNotInFosse = contactsToUpdate.filter(c => !isContactInFosse(c));
+    
+    // Check permissions for each group
+    if (contactsInFosse.length > 0) {
+      // User needs fosse permission for contacts in fosse
+      if (!fosseStatusViewPermissions.has(normalizedStatusId)) {
+        toast.error('Vous n\'avez pas la permission d\'assigner ce statut aux contacts en fosse');
+        setBulkStatusId('');
+        return;
+      }
+    }
+    
+    if (contactsNotInFosse.length > 0) {
+      // User needs regular permission for contacts not in fosse
+      if (!statusViewPermissions.has(normalizedStatusId)) {
+        toast.error('Vous n\'avez pas la permission d\'assigner ce statut');
+        setBulkStatusId('');
+        return;
+      }
+    }
+    
+    // Check if user has EDIT permission for current status of each contact
+    const contactsWithoutPermission: any[] = [];
+    for (const contact of contactsToUpdate) {
+      if (contact.statusId && !canEditContact(contact)) {
+        contactsWithoutPermission.push(contact);
+      }
+    }
+    
+    if (contactsWithoutPermission.length > 0) {
+      toast.error(`${contactsWithoutPermission.length} contact(s) ne peuvent pas être modifiés (permissions insuffisantes)`);
+      setBulkStatusId('');
+      return;
+    }
+    
+    // Proceed with the bulk status change
+    await executeBulkStatusChange(statusId);
+  }
+
+  async function executeBulkStatusChange(statusId: string) {
+    setIsBulkStatusChanging(true);
+    try {
+      const selectedContactIds = Array.from(selectedContacts);
+      const statusIdValue = statusId !== 'none' ? statusId : '';
+      
+      const promises = selectedContactIds.map(async (contactId) => {
+        try {
+          await apiCall(`/api/contacts/${contactId}/`, {
+            method: 'PATCH',
+            body: JSON.stringify({ statusId: statusIdValue || null })
+          });
+          return { success: true, contactId };
+        } catch (error: any) {
+          console.error(`Error updating status for contact ${contactId}:`, error);
+          return { success: false, contactId, error: error?.response?.error || error?.message };
+        }
+      });
+      
+      const results = await Promise.all(promises);
+      const successCount = results.filter(r => r.success).length;
+      const failureCount = results.filter(r => !r.success).length;
+      
+      if (failureCount > 0) {
+        toast.warning(`${successCount} contact(s) mis à jour, ${failureCount} erreur(s)`);
+      } else {
+        toast.success(`${successCount} contact(s) mis à jour avec succès`);
+      }
+      
+      handleClearSelection();
+      setBulkStatusId('');
+      // Small delay to ensure backend transaction is committed, then reload data
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadData();
+    } catch (error: any) {
+      console.error('Error changing status:', error);
+      const errorMessage = error?.response?.error || error?.message || 'Erreur lors du changement de statut';
+      toast.error(errorMessage);
+    } finally {
+      setIsBulkStatusChanging(false);
+    }
+  }
 
   async function handleBulkDelete() {
     if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedContacts.size} contact(s) ? Cette action est irréversible.`)) return;
@@ -3978,6 +4080,47 @@ export function ContactList({
                                 </SelectItem>
                               );
                             })
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="contacts-bulk-action-select">
+                      <Label className="sr-only">Changer le statut</Label>
+                      <Select value={bulkStatusId ? String(bulkStatusId) : undefined} onValueChange={handleBulkStatusChange} disabled={isBulkStatusChanging}>
+                        <SelectTrigger className="w-[200px]" disabled={isBulkStatusChanging}>
+                          {isBulkStatusChanging ? (
+                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Tag className="w-4 h-4 mr-2" />
+                          )}
+                          <SelectValue placeholder={isBulkStatusChanging ? "Changement en cours..." : "Changer le statut"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun statut</SelectItem>
+                          {statuses.length === 0 ? (
+                            <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                          ) : (
+                            statuses
+                              .filter((status) => {
+                                if (!status.id || status.id.trim() === '') return false;
+                                const normalizedStatusId = String(status.id).trim();
+                                // Check if user has view permission on this status (either regular or fosse)
+                                return statusViewPermissions.has(normalizedStatusId) || fosseStatusViewPermissions.has(normalizedStatusId);
+                              })
+                              .map((status) => (
+                                <SelectItem key={status.id} value={String(status.id)}>
+                                  <span 
+                                    className="inline-block px-2 py-1 rounded text-sm"
+                                    style={{
+                                      backgroundColor: status.color || '#e5e7eb',
+                                      color: status.color ? '#000000' : '#374151'
+                                    }}
+                                  >
+                                    {status.name}
+                                  </span>
+                                </SelectItem>
+                              ))
                           )}
                         </SelectContent>
                       </Select>

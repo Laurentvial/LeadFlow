@@ -1018,24 +1018,12 @@ export function MigrationPage() {
           } else if (field === 'confirmateurId') {
             if (value && value.toString().trim()) {
               const valueStr = value.toString().trim();
-              // First check confirmateur mapping
+              // Only use confirmateur mapping - no fallback to old CRM logic
               if (confirmateurMapping[valueStr]) {
                 value = confirmateurMapping[valueStr];
               } else {
-                // Try to find by name or ID
-                const confirmateur = confirmateurs.find(c => {
-                  const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                  return fullName.toLowerCase() === valueStr.toLowerCase().trim() ||
-                         c.username?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
-                         c.email?.toLowerCase().trim() === valueStr.toLowerCase().trim() ||
-                         c.id === valueStr;
-                });
-                if (confirmateur) {
-                  value = confirmateur.id;
-                } else {
-                  // If not found, keep the value as is (might be an ID already)
-                  value = valueStr;
-                }
+                // If not mapped, use value as-is (might be an ID already)
+                value = valueStr;
               }
             } else {
               // Empty value, set to null
