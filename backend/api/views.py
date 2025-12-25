@@ -9663,6 +9663,29 @@ def health_check(request):
     """Health check endpoint for API."""
     return Response({"status": "healthy", "service": "backend"}, status=status.HTTP_200_OK)
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def api_root(request):
+    """API root endpoint - returns API information."""
+    return Response({
+        "message": "LeadFlow API is running",
+        "status": "ok",
+        "version": "1.0",
+        "endpoints": {
+            "health": "/api/health/",
+            "token": "/api/token/",
+            "contacts": "/api/contacts/",
+            "users": "/api/users/",
+            "teams": "/api/teams/",
+            "events": "/api/events/",
+            "notes": "/api/notes/",
+            "logs": "/api/logs/",
+            "documents": "/api/documents/",
+            "chat": "/api/chat/",
+            "notifications": "/api/notifications/",
+        }
+    }, status=status.HTTP_200_OK)
+
 # Custom token serializer to check if user is deleted or disabled
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
