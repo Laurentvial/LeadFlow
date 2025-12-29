@@ -1878,16 +1878,26 @@ class MessageSerializer(serializers.ModelSerializer):
 
 class ChatRoomSerializer(serializers.ModelSerializer):
     participants = serializers.SerializerMethodField()
+    participantsList = serializers.SerializerMethodField()
     lastMessage = serializers.SerializerMethodField()
     unreadCount = serializers.SerializerMethodField()
     otherParticipant = serializers.SerializerMethodField()
+    isGroup = serializers.SerializerMethodField()
+    name = serializers.SerializerMethodField()  # Make name a method field to handle missing column gracefully
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
     
     class Meta:
         model = ChatRoom
-        fields = ['id', 'participants', 'otherParticipant', 'lastMessage', 'unreadCount', 'createdAt', 'updatedAt']
+        fields = ['id', 'name', 'participants', 'participantsList', 'otherParticipant', 'isGroup', 'lastMessage', 'unreadCount', 'createdAt', 'updatedAt']
         read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def get_name(self, obj):
+        """Get name field, handling case where column doesn't exist yet"""
+        try:
+            return obj.name if hasattr(obj, 'name') else None
+        except (AttributeError, Exception):
+            return None
     
     def get_participants(self, obj):
         """Get list of participant IDs - use prefetched data if available"""
@@ -1897,8 +1907,39 @@ class ChatRoomSerializer(serializers.ModelSerializer):
         # Fallback to query if not prefetched
         return [user.id for user in obj.participants.all()]
     
+    def get_participantsList(self, obj):
+        """Get full list of participants with details - use prefetched data if available"""
+        request = self.context.get('request')
+        # Use prefetched participants if available
+        if hasattr(obj, '_prefetched_objects_cache') and 'participants' in obj._prefetched_objects_cache:
+            participants = obj._prefetched_objects_cache['participants']
+        else:
+            participants = obj.participants.all()
+        
+        result = []
+        for user in participants:
+            first_name = user.first_name or ''
+            last_name = user.last_name or ''
+            name = f"{first_name} {last_name}".strip() if (first_name or last_name) else user.username
+            result.append({
+                'id': user.id,
+                'username': user.username,
+                'name': name,
+                'email': user.email or ''
+            })
+        return result
+    
+    def get_isGroup(self, obj):
+        """Check if this is a group chat (more than 2 participants)"""
+        # Use prefetched participants if available
+        if hasattr(obj, '_prefetched_objects_cache') and 'participants' in obj._prefetched_objects_cache:
+            participant_count = len(obj._prefetched_objects_cache['participants'])
+        else:
+            participant_count = obj.participants.count()
+        return participant_count > 2
+    
     def get_otherParticipant(self, obj):
-        """Get the other participant (not the current user) - use prefetched data if available"""
+        """Get the other participant (not the current user) - returns None for group chats"""
         request = self.context.get('request')
         if request and request.user:
             # Use prefetched participants if available
@@ -1907,8 +1948,13 @@ class ChatRoomSerializer(serializers.ModelSerializer):
             else:
                 participants = obj.participants.all()
             
-            # Find other participant (not current user)
-            for user in participants:
+            # For group chats (more than 2 participants), return None
+            participant_list = list(participants)
+            if len(participant_list) > 2:
+                return None
+            
+            # Find other participant (not current user) for 1-on-1 chats
+            for user in participant_list:
                 if user.id != request.user.id:
                     first_name = user.first_name or ''
                     last_name = user.last_name or ''
@@ -1957,11 +2003,14 @@ class ChatRoomSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['participants'] = self.get_participants(instance)
+        ret['participantsList'] = self.get_participantsList(instance)
+        ret['isGroup'] = self.get_isGroup(instance)
         ret['otherParticipant'] = self.get_otherParticipant(instance)
         ret['lastMessage'] = self.get_lastMessage(instance)
         ret['unreadCount'] = self.get_unreadCount(instance)
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
+        # Name field is handled by get_name method
         return ret
 
 class NotificationSerializer(serializers.ModelSerializer):

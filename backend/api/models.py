@@ -555,6 +555,7 @@ class EmailSignature(models.Model):
 class ChatRoom(models.Model):
     """Chat rooms for conversations between users"""
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    name = models.CharField(max_length=200, blank=True, null=True)  # Optional name for group chats
     participants = models.ManyToManyField(DjangoUser, related_name='chat_rooms')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

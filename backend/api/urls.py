@@ -122,6 +122,7 @@ urlpatterns = [
     # Chat endpoints
     path('chat/rooms/', api_views.chat_rooms, name='chat-rooms'),
     path('chat/rooms/<str:chat_room_id>/', api_views.chat_room_detail, name='chat-room-detail'),
+    path('chat/rooms/<str:chat_room_id>/update/', api_views.update_chat_room, name='update-chat-room'),
     path('chat/rooms/<str:chat_room_id>/messages/', api_views.chat_messages, name='chat-messages'),
     path('chat/rooms/<str:chat_room_id>/read/', api_views.mark_messages_read, name='mark-messages-read'),
     path('chat/users/', api_views.chat_users, name='chat-users'),

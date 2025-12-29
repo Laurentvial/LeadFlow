@@ -14,7 +14,8 @@ import {
   Send, 
   Search,
   UserPlus,
-  X
+  X,
+  Check
 } from 'lucide-react';
 import {
   Select,
@@ -39,7 +40,15 @@ interface Message {
 
 interface ChatRoom {
   id: string;
+  name?: string;
   participants: number[];
+  participantsList?: Array<{
+    id: number;
+    username: string;
+    name: string;
+    email: string;
+  }>;
+  isGroup?: boolean;
   otherParticipant?: {
     id: number;
     username: string;
@@ -72,7 +81,8 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
   const [messageInput, setMessageInput] = useState('');
   const [users, setUsers] = useState<User[]>([]);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
+  const [groupChatName, setGroupChatName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -451,22 +461,30 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
 
   // Create new chat room
   const createChatRoom = async () => {
-    if (!selectedUserId) {
-      toast.error('Veuillez sélectionner un utilisateur');
+    if (selectedUserIds.length === 0) {
+      toast.error('Veuillez sélectionner au moins un utilisateur');
       return;
     }
 
     try {
+      const requestBody: any = { participants: selectedUserIds };
+      
+      // Add name if it's a group chat (more than 1 selected user) and name is provided
+      if (selectedUserIds.length > 1 && groupChatName.trim()) {
+        requestBody.name = groupChatName.trim();
+      }
+      
       const newRoom = await apiCall('/api/chat/rooms/', {
         method: 'POST',
-        body: JSON.stringify({ participants: [parseInt(selectedUserId)] }),
+        body: JSON.stringify(requestBody),
       });
 
       setChatRooms(prev => [newRoom, ...prev]);
       setSelectedRoom(newRoom);
       setMessages([]);
       setIsNewChatOpen(false);
-      setSelectedUserId('');
+      setSelectedUserIds([]);
+      setGroupChatName('');
       
       // Reset pagination state for new room
       setMessagesOffset(0);
@@ -480,6 +498,17 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
       console.error('Error creating chat room:', error);
       toast.error('Erreur lors de la création de la conversation');
     }
+  };
+  
+  // Toggle user selection for group chat
+  const toggleUserSelection = (userId: number) => {
+    setSelectedUserIds(prev => {
+      if (prev.includes(userId)) {
+        return prev.filter(id => id !== userId);
+      } else {
+        return [...prev, userId];
+      }
+    });
   };
 
   // Handle room selection
@@ -675,13 +704,47 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
   const filteredRooms = chatRooms.filter(room => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
+    
+    // Search in group chat name
+    if (room.isGroup && room.name?.toLowerCase().includes(query)) {
+      return true;
+    }
+    
+    // Search in participant names (for both 1-on-1 and group chats)
     const participantName = room.otherParticipant?.name?.toLowerCase() || '';
     const participantUsername = room.otherParticipant?.username?.toLowerCase() || '';
+    
+    // Search in all participants for group chats
+    if (room.isGroup && room.participantsList) {
+      const participantMatches = room.participantsList.some(p => 
+        p.name.toLowerCase().includes(query) || 
+        p.username.toLowerCase().includes(query)
+      );
+      if (participantMatches) return true;
+    }
+    
     const lastMessageContent = room.lastMessage?.content?.toLowerCase() || '';
     return participantName.includes(query) || 
            participantUsername.includes(query) || 
            lastMessageContent.includes(query);
   });
+  
+  // Get display name for a chat room
+  const getRoomDisplayName = (room: ChatRoom) => {
+    if (room.isGroup) {
+      return room.name || room.participantsList?.map(p => p.name || p.username).join(', ') || 'Groupe';
+    }
+    return room.otherParticipant?.name || room.otherParticipant?.username || 'Utilisateur';
+  };
+  
+  // Get display info for a chat room
+  const getRoomDisplayInfo = (room: ChatRoom) => {
+    if (room.isGroup) {
+      const participantCount = room.participantsList?.length || 0;
+      return `${participantCount} participant${participantCount > 1 ? 's' : ''}`;
+    }
+    return room.otherParticipant?.email || '';
+  };
 
   // Format time
   const formatTime = (dateString: string) => {
@@ -764,16 +827,18 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
                     <div className="chat-room-avatar">
                       <Avatar>
                         <AvatarFallback>
-                          {room.otherParticipant 
-                            ? getInitials(room.otherParticipant.name || room.otherParticipant.username)
-                            : '?'}
+                          {room.isGroup 
+                            ? 'G'
+                            : room.otherParticipant 
+                              ? getInitials(room.otherParticipant.name || room.otherParticipant.username)
+                              : '?'}
                         </AvatarFallback>
                       </Avatar>
                     </div>
                     <div className="chat-room-content">
                       <div className="chat-room-header">
                         <span className="chat-room-name">
-                          {room.otherParticipant?.name || room.otherParticipant?.username || 'Utilisateur'}
+                          {getRoomDisplayName(room)}
                         </span>
                         {room.unreadCount > 0 && (
                           <Badge variant="default" className="chat-room-unread-badge">
@@ -781,6 +846,11 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
                           </Badge>
                         )}
                       </div>
+                      {room.isGroup && (
+                        <p className="chat-room-preview" style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
+                          {getRoomDisplayInfo(room)}
+                        </p>
+                      )}
                       {room.lastMessage && (
                         <>
                           <p className="chat-room-preview">
@@ -815,18 +885,20 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
                 <div className="chat-header-avatar">
                   <Avatar>
                     <AvatarFallback>
-                      {selectedRoom.otherParticipant 
-                        ? getInitials(selectedRoom.otherParticipant.name || selectedRoom.otherParticipant.username)
-                        : '?'}
+                      {selectedRoom.isGroup 
+                        ? 'G'
+                        : selectedRoom.otherParticipant 
+                          ? getInitials(selectedRoom.otherParticipant.name || selectedRoom.otherParticipant.username)
+                          : '?'}
                     </AvatarFallback>
                   </Avatar>
                 </div>
                 <div className="chat-header-info">
                   <h3>
-                    {selectedRoom.otherParticipant?.name || selectedRoom.otherParticipant?.username || 'Utilisateur'}
+                    {getRoomDisplayName(selectedRoom)}
                   </h3>
                   <p>
-                    {selectedRoom.otherParticipant?.email}
+                    {getRoomDisplayInfo(selectedRoom)}
                   </p>
                 </div>
               </div>
@@ -927,21 +999,59 @@ function ChatContent({ selectedRoom, setSelectedRoom }: { selectedRoom: ChatRoom
             </div>
             <div className="modal-form">
               <div className="modal-form-field">
-                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sélectionner un utilisateur" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users.map(user => (
-                      <SelectItem key={user.id} value={String(user.id)}>
-                        {user.name || user.username}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <label style={{ marginBottom: '8px', display: 'block', fontWeight: '500' }}>
+                  Sélectionner des utilisateurs {selectedUserIds.length > 1 && '(Groupe)'}
+                </label>
+                <div style={{ 
+                  maxHeight: '200px', 
+                  overflowY: 'auto'
+                }}>
+                  {users.filter(user => {
+                    const currentUserId = currentUser?.djangoUserId ?? currentUser?.id;
+                    return user.id !== currentUserId;
+                  }).map(user => {
+                    const isSelected = selectedUserIds.includes(user.id);
+                    return (
+                      <div
+                        key={user.id}
+                        onClick={() => toggleUserSelection(user.id)}
+                        style={{
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          backgroundColor: isSelected ? '#e0f2fe' : 'transparent',
+                          marginBottom: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between'
+                        }}
+                      >
+                        <span>{user.name || user.username}</span>
+                        {isSelected && (
+                          <Check className="h-4 w-4" style={{ color: '#3b82f6', flexShrink: 0 }} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+              {selectedUserIds.length > 1 && (
+                <div className="modal-form-field">
+                  <label style={{ marginBottom: '8px', display: 'block', fontWeight: '500' }}>
+                    Nom du groupe (optionnel)
+                  </label>
+                  <Input
+                    placeholder="Nom du groupe"
+                    value={groupChatName}
+                    onChange={(e) => setGroupChatName(e.target.value)}
+                  />
+                </div>
+              )}
               <div className="modal-form-actions">
-                <Button variant="outline" onClick={() => setIsNewChatOpen(false)}>
+                <Button variant="outline" onClick={() => {
+                  setIsNewChatOpen(false);
+                  setSelectedUserIds([]);
+                  setGroupChatName('');
+                }}>
                   Annuler
                 </Button>
                 <Button onClick={createChatRoom}>

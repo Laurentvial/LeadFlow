@@ -455,65 +455,10 @@ export function CsvImport() {
     setStep('importing');
 
     try {
-      // Check for duplicates within CSV based on email mapping
-      let fileToImport = csvFile;
-      let duplicatesRemoved = 0;
-
-      if (columnMapping.email && csvData.length > 0) {
-        const emailColumn = columnMapping.email;
-        const seenEmails = new Map<string, number>(); // email -> first occurrence index
-        const duplicateIndices = new Set<number>();
-        
-        // Find duplicates
-        csvData.forEach((row, index) => {
-          const email = (row[emailColumn] || '').trim().toLowerCase();
-          if (email) {
-            if (seenEmails.has(email)) {
-              duplicateIndices.add(index);
-              duplicatesRemoved++;
-            } else {
-              seenEmails.set(email, index);
-            }
-          }
-        });
-
-        // If duplicates found, create a filtered CSV file
-        if (duplicatesRemoved > 0) {
-          const filteredData = csvData.filter((_, index) => !duplicateIndices.has(index));
-          
-          // Reconstruct CSV from filtered data
-          const csvLines: string[] = [];
-          
-          // Add header row
-          csvLines.push(csvHeaders.map(header => {
-            const value = header.includes(',') || header.includes('"') ? `"${header.replace(/"/g, '""')}"` : header;
-            return value;
-          }).join(','));
-          
-          // Add filtered data rows
-          filteredData.forEach(row => {
-            const values = csvHeaders.map(header => {
-              const value = (row[header] || '').toString();
-              // Escape quotes and wrap in quotes if contains comma, quote, or newline
-              if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-                return `"${value.replace(/"/g, '""')}"`;
-              }
-              return value;
-            });
-            csvLines.push(values.join(','));
-          });
-          
-          // Create new Blob with filtered CSV
-          const csvContent = csvLines.join('\n');
-          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-          fileToImport = new File([blob], csvFile.name, { type: 'text/csv' });
-          
-          toast.info(`${duplicatesRemoved} doublon(s) détecté(s) et supprimé(s) dans le fichier CSV`);
-        }
-      }
-
+      // Duplicates will be tracked by the backend but still inserted
+      // No need to filter them here - backend will handle duplicate detection and reporting
       const formData = new FormData();
-      formData.append('file', fileToImport);
+      formData.append('file', csvFile);
       formData.append('columnMapping', JSON.stringify(columnMapping));
       formData.append('defaultStatusId', defaultStatusId);
       formData.append('includeFirstRow', includeFirstRow ? 'true' : 'false');
@@ -540,6 +485,9 @@ export function CsvImport() {
       
       if (response.imported > 0) {
         toast.success(`${response.imported} contact(s) importé(s) avec succès`);
+      }
+      if (response.duplicates && response.duplicates.length > 0) {
+        toast.warning(`${response.duplicates.length} doublon(s) détecté(s) mais importé(s) quand même`);
       }
       if (response.failed > 0) {
         toast.error(`${response.failed} contact(s) n'ont pas pu être importé(s)`);
@@ -1266,7 +1214,7 @@ export function CsvImport() {
               <CardTitle>Résultats de l'importation</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <Card>
                   <CardContent className="pt-6">
                     <div className="text-center">
@@ -1286,12 +1234,54 @@ export function CsvImport() {
                 <Card>
                   <CardContent className="pt-6">
                     <div className="text-center">
+                      <p className="text-3xl font-bold text-yellow-600">{importResults.duplicates?.length || 0}</p>
+                      <p className="text-sm text-slate-500">Doublons</p>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-center">
                       <p className="text-3xl font-bold text-red-600">{importResults.failed}</p>
                       <p className="text-sm text-slate-500">Échoués</p>
                     </div>
                   </CardContent>
                 </Card>
               </div>
+
+              {importResults.duplicates && importResults.duplicates.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-yellow-600 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Doublons détectés ({importResults.duplicates.length})
+                  </h4>
+                  <p className="text-sm text-slate-600">
+                    Les contacts suivants ont été importés malgré la détection de doublons (email existant ou répété dans le CSV).
+                  </p>
+                  <div className="max-h-64 overflow-y-auto border ">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Ligne</th>
+                          <th className="px-3 py-2 text-left">Email</th>
+                          <th className="px-3 py-2 text-left">Contact</th>
+                          <th className="px-3 py-2 text-left">Raison</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importResults.duplicates.map((duplicate: any, idx: number) => (
+                          <tr key={idx} className="border-b">
+                            <td className="px-3 py-2">{duplicate.row}</td>
+                            <td className="px-3 py-2">{duplicate.email}</td>
+                            <td className="px-3 py-2">{duplicate.data?.firstName} {duplicate.data?.lastName}</td>
+                            <td className="px-3 py-2 text-yellow-700">{duplicate.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {importResults.errors.length > 0 && (
                 <div className="space-y-2">

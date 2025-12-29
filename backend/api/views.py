@@ -3125,21 +3125,38 @@ def contacts_bulk_create(request):
             
             # Check email - if not found by old_contact_id, check by email for updates
             email = contact_data.get('email', '').strip()
+            is_duplicate = False
+            duplicate_reason = None
+            
             if email and not existing_contact:
-                # First check if this email appears multiple times in the CSV batch
-                if email in emails_seen_in_batch:
-                    results.append({'index': idx, 'success': False, 'error': f'Email dupliqué dans le CSV: {email}'})
-                    continue
-                
-                # Check if email exists in database - if so, update that contact instead of rejecting
                 email_lower = email.lower()
+                
+                # Check if email exists in database - if so, update that contact instead of creating new one
                 if email_lower in existing_contacts_by_email:
                     existing_contact = existing_contacts_by_email[email_lower]
-                    # Mark this email as seen to prevent duplicate processing
-                    emails_seen_in_batch[email] = idx
+                    is_duplicate = True
+                    duplicate_reason = f'L\'email {email} existe déjà dans la base de données'
+                    # Still mark as seen in batch to detect CSV duplicates
+                    if email_lower in emails_seen_in_batch:
+                        duplicate_reason += f' et apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
+                    else:
+                        emails_seen_in_batch[email_lower] = idx
                 else:
-                    # Mark this email as seen in this batch
-                    emails_seen_in_batch[email] = idx
+                    # Check if this email appears multiple times in the CSV batch
+                    if email_lower in emails_seen_in_batch:
+                        is_duplicate = True
+                        duplicate_reason = f'L\'email {email} apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
+                    else:
+                        # Mark this email as seen in this batch
+                        emails_seen_in_batch[email_lower] = idx
+            elif email and existing_contact:
+                # Contact found by old_contact_id, but also check if email is duplicate
+                email_lower = email.lower()
+                if email_lower in emails_seen_in_batch:
+                    is_duplicate = True
+                    duplicate_reason = f'L\'email {email} apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
+                else:
+                    emails_seen_in_batch[email_lower] = idx
             
             if existing_contact:
                 # Update existing contact instead of creating new one
@@ -3239,7 +3256,11 @@ def contacts_bulk_create(request):
                         existing_contact.assigned_at = parsed_dt
                 
                 contacts_to_update.append(existing_contact)
-                results.append({'index': idx, 'success': True, 'contactId': existing_contact.id, 'updated': True})
+                result_entry = {'index': idx, 'success': True, 'contactId': existing_contact.id, 'updated': True}
+                if is_duplicate:
+                    result_entry['duplicate'] = True
+                    result_entry['duplicateReason'] = duplicate_reason
+                results.append(result_entry)
                 continue  # Skip creation logic for this contact
             
             # No existing contact found, proceed with creation
@@ -3337,7 +3358,11 @@ def contacts_bulk_create(request):
                 contact_obj_data['confirmateur_telephone'] = contact_data.get('confirmateurTelephone', '').strip()
             
             contacts_to_create.append((Contact(**contact_obj_data), contact_data))
-            results.append({'index': idx, 'success': True, 'contactId': contact_id})
+            result_entry = {'index': idx, 'success': True, 'contactId': contact_id}
+            if is_duplicate:
+                result_entry['duplicate'] = True
+                result_entry['duplicateReason'] = duplicate_reason
+            results.append(result_entry)
             
         except Exception as e:
             import traceback
@@ -3981,6 +4006,7 @@ def csv_import_contacts(request):
         results = {
             'success': [],
             'errors': [],
+            'duplicates': [],
             'total': 0,
             'imported': 0,
             'failed': 0
@@ -4304,29 +4330,48 @@ def csv_import_contacts(request):
                 })
                 results['failed'] += 1
         
-        # Bulk check for duplicate emails
+        # Bulk check for duplicate emails - track but don't remove
         emails_to_check = [row_data['email'] for row_data in row_data_map.values() if row_data['email']]
+        emails_seen_in_batch = {}  # Track emails within the CSV batch
         if emails_to_check:
-            existing_emails = set(
-                Contact.objects.filter(email__in=emails_to_check).values_list('email', flat=True)
-            )
+            # Get existing emails and normalize to lowercase for comparison
+            existing_emails_lower = set()
+            existing_contacts_query = Contact.objects.filter(email__in=emails_to_check).exclude(email__isnull=True).exclude(email='')
+            for contact in existing_contacts_query:
+                if contact.email:
+                    existing_emails_lower.add(contact.email.lower())
             
-            # Remove contacts with duplicate emails
-            contacts_to_remove = []
+            # Track duplicates but don't remove them - they will still be inserted
             for contact in contacts_to_create:
                 email = row_data_map[contact.id]['email']
-                if email and email in existing_emails:
-                    row_num = row_data_map[contact.id]['row']
-                    results['errors'].append({
-                        'row': row_num,
-                        'error': f'Email {email} already exists',
-                        'data': {'firstName': contact.fname, 'lastName': contact.lname}
-                    })
-                    results['failed'] += 1
-                    contacts_to_remove.append(contact.id)
-                    del row_data_map[contact.id]
-            
-            contacts_to_create = [c for c in contacts_to_create if c.id not in contacts_to_remove]
+                if email:
+                    email_lower = email.lower()
+                    is_duplicate = False
+                    duplicate_reason = None
+                    
+                    # Check if email exists in database (case-insensitive)
+                    if email_lower in existing_emails_lower:
+                        is_duplicate = True
+                        duplicate_reason = f'L\'email {email} existe déjà dans la base de données'
+                    
+                    # Check if email appears multiple times in this CSV batch
+                    if email_lower in emails_seen_in_batch:
+                        is_duplicate = True
+                        if duplicate_reason:
+                            duplicate_reason += f' et apparaît plusieurs fois dans le CSV (ligne {emails_seen_in_batch[email_lower]})'
+                        else:
+                            duplicate_reason = f'L\'email {email} apparaît plusieurs fois dans le CSV (première occurrence à la ligne {emails_seen_in_batch[email_lower]})'
+                    else:
+                        emails_seen_in_batch[email_lower] = row_data_map[contact.id]['row']
+                    
+                    if is_duplicate:
+                        row_num = row_data_map[contact.id]['row']
+                        results['duplicates'].append({
+                            'row': row_num,
+                            'email': email,
+                            'reason': duplicate_reason,
+                            'data': {'firstName': contact.fname, 'lastName': contact.lname}
+                        })
         
         # Bulk create contacts in batches
         from django.db import transaction, IntegrityError
@@ -10095,11 +10140,13 @@ def chat_rooms(request):
         
         try:
             # Get total count for pagination info (optimized query)
-            total_count = ChatRoom.objects.filter(participants=request.user).distinct().count()
+            # Use values('id') to avoid selecting name field which may not exist yet
+            total_count = ChatRoom.objects.filter(participants=request.user).values('id').distinct().count()
             
             # Get chat rooms ordered by updated_at descending (most recent first)
             # Use prefetch_related to avoid N+1 queries for participants and messages
             from django.db.models import Prefetch
+            from django.db import ProgrammingError
             
             # Prefetch messages with sender to avoid N+1 queries
             # Order by created_at descending for efficient lastMessage retrieval
@@ -10108,9 +10155,11 @@ def chat_rooms(request):
                 queryset=Message.objects.select_related('sender').order_by('-created_at')
             )
             
+            # Get chat rooms - defer name field to avoid selecting it if column doesn't exist
+            # The serializer handles missing name column gracefully via SerializerMethodField
             chat_rooms = ChatRoom.objects.filter(
                 participants=request.user
-            ).distinct().prefetch_related(
+            ).distinct().defer('name').prefetch_related(
                 'participants',
                 messages_prefetch
             ).order_by('-updated_at')[offset:offset + limit]
@@ -10118,8 +10167,25 @@ def chat_rooms(request):
             serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
             
             # Return chat rooms with pagination metadata
+            # Catch ProgrammingError in case name column doesn't exist and defer didn't work
+            try:
+                serializer_data = serializer.data
+            except ProgrammingError as pe:
+                if 'name' in str(pe).lower() or 'api_chatroom.name' in str(pe):
+                    # Name column doesn't exist - recreate queryset without it
+                    chat_rooms = ChatRoom.objects.filter(
+                        participants=request.user
+                    ).distinct().only('id', 'created_at', 'updated_at').prefetch_related(
+                        'participants',
+                        messages_prefetch
+                    ).order_by('-updated_at')[offset:offset + limit]
+                    serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
+                    serializer_data = serializer.data
+                else:
+                    raise
+            
             return Response({
-                'chatRooms': serializer.data,
+                'chatRooms': serializer_data,
                 'hasMore': offset + limit < total_count,
                 'total': total_count,
                 'offset': offset,
@@ -10156,26 +10222,40 @@ def chat_rooms(request):
     elif request.method == 'POST':
         # Create a new chat room
         participant_ids = request.data.get('participants', [])
+        name = request.data.get('name', '').strip()  # Optional name for group chats
         
         # Ensure current user is included
         if request.user.id not in participant_ids:
             participant_ids.append(request.user.id)
         
-        # Check if a chat room already exists with these exact participants
-        existing_rooms = ChatRoom.objects.filter(participants__in=[request.user.id]).distinct()
-        for room in existing_rooms:
-            room_participant_ids = set(room.participants.values_list('id', flat=True))
-            if room_participant_ids == set(participant_ids):
-                # Room already exists, return it
-                serializer = ChatRoomSerializer(room, context={'request': request})
-                return Response(serializer.data, status=status.HTTP_200_OK)
+        # Remove duplicates
+        participant_ids = list(set(participant_ids))
+        
+        # Only check for existing rooms if it's a 1-on-1 chat (2 participants)
+        # Group chats can have multiple rooms with same participants
+        if len(participant_ids) == 2:
+            from django.db import ProgrammingError
+            try:
+                existing_rooms = ChatRoom.objects.filter(participants__in=[request.user.id]).distinct()
+            except ProgrammingError:
+                # Fallback if name column doesn't exist - use values to exclude it
+                existing_room_ids = ChatRoom.objects.filter(participants__in=[request.user.id]).values_list('id', flat=True).distinct()
+                existing_rooms = ChatRoom.objects.filter(id__in=existing_room_ids)
+            
+            for room in existing_rooms:
+                room_participant_ids = set(room.participants.values_list('id', flat=True))
+                if room_participant_ids == set(participant_ids):
+                    # Room already exists, return it
+                    serializer = ChatRoomSerializer(room, context={'request': request})
+                    return Response(serializer.data, status=status.HTTP_200_OK)
         
         # Create new chat room
         chat_room_id = uuid.uuid4().hex[:12]
         while ChatRoom.objects.filter(id=chat_room_id).exists():
             chat_room_id = uuid.uuid4().hex[:12]
         
-        chat_room = ChatRoom.objects.create(id=chat_room_id)
+        # Create chat room with optional name
+        chat_room = ChatRoom.objects.create(id=chat_room_id, name=name if name else None)
         
         # Add participants
         for participant_id in participant_ids:
@@ -10364,6 +10444,66 @@ def chat_messages(request, chat_room_id):
             serializer = MessageSerializer(message)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
             
+    except ChatRoom.DoesNotExist:
+        return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_chat_room(request, chat_room_id):
+    """Update chat room name or add/remove participants"""
+    try:
+        chat_room = ChatRoom.objects.get(id=chat_room_id)
+        
+        # Check if user is a participant
+        if request.user not in chat_room.participants.all():
+            return Response({'error': 'Unauthorized access'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Update name if provided
+        if 'name' in request.data:
+            chat_room.name = request.data.get('name', '').strip() or None
+            chat_room.save()
+        
+        # Add participants if provided
+        if 'add_participants' in request.data:
+            participant_ids = request.data.get('add_participants', [])
+            for participant_id in participant_ids:
+                try:
+                    participant = DjangoUser.objects.get(id=participant_id)
+                    if participant not in chat_room.participants.all():
+                        chat_room.participants.add(participant)
+                except DjangoUser.DoesNotExist:
+                    continue
+            chat_room.save()  # Update timestamp
+        
+        # Remove participants if provided
+        if 'remove_participants' in request.data:
+            participant_ids = request.data.get('remove_participants', [])
+            # Get initial participant count before removals
+            initial_participant_count = chat_room.participants.count()
+            
+            for participant_id in participant_ids:
+                try:
+                    participant = DjangoUser.objects.get(id=participant_id)
+                    # Get current count before this removal
+                    current_count = chat_room.participants.count()
+                    
+                    # Don't allow removing if it would leave less than 1 participant
+                    if current_count <= 1:
+                        continue
+                    
+                    # Allow removing other participants if there are more than 1 total
+                    if participant.id != request.user.id:
+                        chat_room.participants.remove(participant)
+                    # Allow current user to leave if there are other participants
+                    elif participant.id == request.user.id and current_count > 1:
+                        chat_room.participants.remove(participant)
+                except DjangoUser.DoesNotExist:
+                    continue
+            chat_room.save()  # Update timestamp
+        
+        serializer = ChatRoomSerializer(chat_room, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
     except ChatRoom.DoesNotExist:
         return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -10719,6 +10859,10 @@ def delete_all_contacts(request):
 @permission_classes([AllowAny])
 def send_otp(request):
     """Send OTP code to user's email using Resend API after password verification"""
+    # Close old connections at the start
+    from django.db import close_old_connections, OperationalError
+    close_old_connections()
+    
     try:
         email = request.data.get('email', '').strip().lower()
         password = request.data.get('password', '')
@@ -10739,9 +10883,28 @@ def send_otp(request):
         
         # Check if user exists with this email
         try:
+            # Close old connections before database query
+            from django.db import close_old_connections
+            close_old_connections()
+            
             user = DjangoUser.objects.get(email=email)
+            
+            # Close connections after query
+            close_old_connections()
         except DjangoUser.DoesNotExist:
+            # Close connections even on error
+            from django.db import close_old_connections
+            close_old_connections()
             return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception as e:
+            # Close connections on any error
+            from django.db import close_old_connections
+            close_old_connections()
+            # Re-raise if it's a connection error, otherwise handle normally
+            from django.db import OperationalError
+            if isinstance(e, OperationalError):
+                return Response({'error': 'Database connection error. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            raise
         
         # Verify password
         from django.contrib.auth import authenticate
@@ -10869,8 +11032,14 @@ def send_otp(request):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
+            # Close connections on error
+            close_old_connections()
+            
             # Delete OTP record if email sending fails
-            otp.delete()
+            try:
+                otp.delete()
+            except:
+                pass
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to send OTP email: {str(e)}")
@@ -10879,7 +11048,19 @@ def send_otp(request):
                 'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
+    except OperationalError as e:
+        # Close connections on database error
+        close_old_connections()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Database connection error in send_otp: {str(e)}")
+        return Response({
+            'error': 'Database connection error. Please try again in a moment.',
+            'detail': 'The database is temporarily unavailable. Please wait a few seconds and try again.'
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception as e:
+        # Close connections on any error
+        close_old_connections()
         import logging
         import traceback
         logger = logging.getLogger(__name__)
@@ -10889,6 +11070,9 @@ def send_otp(request):
             'error': 'Internal server error',
             'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        # Always close connections at the end
+        close_old_connections()
 
 @api_view(['POST'])
 @permission_classes([AllowAny])

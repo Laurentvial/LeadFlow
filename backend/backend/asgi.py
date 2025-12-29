@@ -29,12 +29,29 @@ class DatabaseConnectionMiddleware:
         # Close old connections before processing request
         close_old_connections()
         
+        # Also explicitly close all connections
+        from django.db import connections
+        for conn in connections.all():
+            try:
+                if conn.connection is not None:
+                    conn.close()
+            except:
+                pass
+        
         try:
             # Process the request
             await self.app(scope, receive, send)
         finally:
             # Always close connections after request completes
             close_old_connections()
+            
+            # Explicitly close all connections
+            for conn in connections.all():
+                try:
+                    if conn.connection is not None:
+                        conn.close()
+                except:
+                    pass
 
 
 # Wrap Django ASGI app with connection cleanup middleware

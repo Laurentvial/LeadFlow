@@ -16,6 +16,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def connect(self):
         """Handle WebSocket connection"""
+        # Close old connections at the start
+        from django.db import close_old_connections
+        close_old_connections()
+        
         import logging
         logger = logging.getLogger(__name__)
         
@@ -27,6 +31,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         
         if not token:
             logger.warning("[NotificationConsumer] No token provided, closing connection")
+            close_old_connections()
             await self.close()
             return
         
@@ -41,11 +46,13 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             
             if not user_id:
                 logger.warning("[NotificationConsumer] No user_id in token, closing connection")
+                close_old_connections()
                 await self.close()
                 return
             
             # Get user
             self.user = await database_sync_to_async(DjangoUser.objects.get)(id=user_id)
+            close_old_connections()  # Close after database query
             self.user_id = user_id
             
             logger.info(f"[NotificationConsumer] User found: {self.user.username}")
@@ -89,6 +96,11 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             unread_count = await database_sync_to_async(
                 Notification.objects.filter(user=self.user, is_read=False).count
             )()
+            
+            # Close database connections after database operations
+            from django.db import close_old_connections
+            close_old_connections()
+            
             await self.send(text_data=json.dumps({
                 'type': 'connection_established',
                 'unread_count': unread_count
@@ -97,22 +109,30 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             
         except (InvalidToken, TokenError) as e:
             logger.error(f"[NotificationConsumer] Token error: {str(e)}")
+            close_old_connections()
             await self.close()
         except DjangoUser.DoesNotExist as e:
             logger.error(f"[NotificationConsumer] User not found: {e}")
+            close_old_connections()
             await self.close()
         except asyncio.CancelledError:
             # Connection was cancelled, this is normal when client disconnects
             logger.debug("[NotificationConsumer] Connection cancelled")
+            close_old_connections()
             await self.close()
         except Exception as e:
             logger.error(f"[NotificationConsumer] Unexpected error: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
+            close_old_connections()
             await self.close()
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
+        # Close database connections when WebSocket disconnects
+        from django.db import close_old_connections
+        close_old_connections()
+        
         if hasattr(self, 'group_name'):
             await self.channel_layer.group_discard(
                 self.group_name,
@@ -123,6 +143,15 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 self.chat_message_group,
                 self.channel_name
             )
+        
+        # Ensure connections are closed
+        close_old_connections()
+        from django.db import connections
+        for conn in connections.all():
+            try:
+                conn.close()
+            except:
+                pass
     
     async def receive(self, text_data):
         """Handle messages received from WebSocket"""
@@ -149,6 +178,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                         'type': 'unread_count_updated',
                         'unread_count': unread_count
                     }))
+                    
+                    # Close database connections after database operations
+                    from django.db import close_old_connections
+                    close_old_connections()
             
             elif message_type == 'mark_all_read':
                 # Mark all notifications as read
@@ -215,6 +248,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     async def connect(self):
         """Handle WebSocket connection"""
+        # Close old connections at the start
+        from django.db import close_old_connections
+        close_old_connections()
+        
         self.room_id = self.scope['url_route']['kwargs']['room_id']
         self.room_group_name = f'chat_{self.room_id}'
         
@@ -222,6 +259,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         token = self.scope.get('query_string', b'').decode('utf-8').split('token=')[-1].split('&')[0]
         
         if not token:
+            close_old_connections()
             await self.close()
             return
         
@@ -232,16 +270,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             user_id = decoded_data.get('user_id')
             
             if not user_id:
+                close_old_connections()
                 await self.close()
                 return
             
             self.user = await database_sync_to_async(DjangoUser.objects.get)(id=user_id)
+            close_old_connections()  # Close after database query
             
             # Check if user is participant of the chat room
             chat_room = await database_sync_to_async(ChatRoom.objects.get)(id=self.room_id)
             participants = await database_sync_to_async(list)(chat_room.participants.all())
+            close_old_connections()  # Close after database query
             
             if self.user not in participants:
+                close_old_connections()
                 await self.close()
                 return
             
@@ -265,6 +307,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 chat_room=chat_room
             ).exclude(sender=self.user).update)(is_read=True)
             
+            # Close database connections after database operations
+            from django.db import close_old_connections
+            close_old_connections()
+            
         except asyncio.CancelledError:
             # Connection was cancelled, this is normal when client disconnects
             import logging
@@ -272,10 +318,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
             logger.debug("[ChatConsumer] Connection cancelled")
             await self.close()
         except (InvalidToken, TokenError, DjangoUser.DoesNotExist, ChatRoom.DoesNotExist) as e:
+            close_old_connections()
             await self.close()
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
+        # Close database connections when WebSocket disconnects
+        from django.db import close_old_connections
+        close_old_connections()
+        
         if hasattr(self, 'room_group_name'):
             await self.channel_layer.group_discard(
                 self.room_group_name,
@@ -286,6 +337,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.active_chat_group,
                 self.channel_name
             )
+        
+        # Ensure connections are closed
+        close_old_connections()
     
     async def receive(self, text_data):
         """Handle messages received from WebSocket"""
@@ -315,6 +369,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 # Update chat room timestamp
                 await database_sync_to_async(chat_room.save)()
                 
+                # Close database connections after database operations
+                from django.db import close_old_connections
+                close_old_connections()
+                
                 # Serialize message
                 message_data = {
                     'id': message.id,
@@ -338,6 +396,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 
                 # Create notifications for other participants
                 await self.create_notifications_for_participants(chat_room, message)
+                
+                # Close database connections after all database operations
+                from django.db import close_old_connections
+                close_old_connections()
             
             elif message_type == 'typing':
                 # Broadcast typing indicator
@@ -352,6 +414,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
             
             elif message_type == 'mark_read':
+                # Close database connections before mark_read operation
+                from django.db import close_old_connections
+                close_old_connections()
                 # Mark messages as read
                 chat_room = await database_sync_to_async(ChatRoom.objects.get)(id=self.room_id)
                 await database_sync_to_async(
@@ -369,6 +434,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         'user_id': self.user.id
                     }
                 )
+                
+                # Close database connections after database operations
+                from django.db import close_old_connections
+                close_old_connections()
                 
         except json.JSONDecodeError:
             pass
@@ -406,6 +475,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         channel_layer = get_channel_layer()
         
         participants = await database_sync_to_async(list)(chat_room.participants.all())
+        
+        # Close connection after fetching participants
+        from django.db import close_old_connections
+        close_old_connections()
         
         for participant in participants:
             if participant.id != self.user.id:
