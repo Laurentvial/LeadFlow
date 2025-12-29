@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search, BarChart3, Filter } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, X, Send, Search, BarChart3, Filter } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { useUser } from '../contexts/UserContext';
@@ -43,6 +43,8 @@ export function PlanningAdministrateur() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
+  const [prefilledDateTime, setPrefilledDateTime] = useState<{ date: Date; hour: number } | null>(null);
+  const prefilledDateTimeRef = useRef<{ date: Date; hour: number } | null>(null);
   const [graphData, setGraphData] = useState<any[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
@@ -88,17 +90,39 @@ export function PlanningAdministrateur() {
   const [filterContactSearchQuery, setFilterContactSearchQuery] = useState('');
   const [filterContactSearchFocused, setFilterContactSearchFocused] = useState(false);
   const [filterContactSearchResults, setFilterContactSearchResults] = useState<any[]>([]);
+  const [filterContactStatusType, setFilterContactStatusType] = useState<string>('all'); // 'all', 'lead', 'client'
   const [filterRole, setFilterRole] = useState<string>('');
 
-  // Initialize userId with current user and today's date when modal opens
+  // Initialize userId with current user and date/time when modal opens
   useEffect(() => {
     if (isModalOpen) {
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+      let dateToUse: Date;
+      let hourToUse: number;
+      
+      // Check both state and ref for prefilled data
+      const prefilled = prefilledDateTime || prefilledDateTimeRef.current;
+      if (prefilled) {
+        // Use prefilled date and hour from hour row click
+        dateToUse = prefilled.date;
+        hourToUse = prefilled.hour;
+        // Clear after use
+        setPrefilledDateTime(null);
+        prefilledDateTimeRef.current = null;
+      } else {
+        // Default to today and 9:00
+        dateToUse = new Date();
+        hourToUse = 9;
+      }
+      
+      const dateStr = formatDateLocal(dateToUse); // Format: YYYY-MM-DD
+      const hourStr = hourToUse.toString().padStart(2, '0');
+      
       setFormData(prev => ({ 
         ...prev, 
         userId: currentUser?.id || prev.userId,
-        date: todayStr // Always set to today when modal opens
+        date: dateStr,
+        hour: hourStr,
+        minute: '00'
       }));
     }
   }, [isModalOpen, currentUser]);
@@ -345,7 +369,12 @@ export function PlanningAdministrateur() {
     }
 
     try {
-      const response = await apiCall(`/api/contacts/?all_contacts=true&search=${encodeURIComponent(query.trim())}&page_size=50`);
+      let url = `/api/contacts/?all_contacts=true&search=${encodeURIComponent(query.trim())}&page_size=50`;
+      // Add status type filter if set and we're filtering
+      if (isFilter && filterContactStatusType && filterContactStatusType !== 'all') {
+        url += `&status_type=${filterContactStatusType}`;
+      }
+      const response = await apiCall(url);
       const searchResults = response?.contacts || response || [];
       
       if (isEdit) {
@@ -456,7 +485,7 @@ export function PlanningAdministrateur() {
         clearTimeout(filterContactSearchTimeoutRef.current);
       }
     };
-  }, [filterContactSearchQuery, filterContactSearchFocused]);
+  }, [filterContactSearchQuery, filterContactSearchFocused, filterContactStatusType]);
 
   async function handleLoadMoreUpcoming() {
     const nextPage = upcomingEventsPage + 1;
@@ -488,6 +517,7 @@ export function PlanningAdministrateur() {
       });
       
       setIsModalOpen(false);
+      setPrefilledDateTime(null);
       setFormData({ date: '', hour: '09', minute: '00', clientId: '', userId: currentUser?.id || '' });
       setClientSearchQuery('');
       setClientSearchFocused(false);
@@ -510,7 +540,7 @@ export function PlanningAdministrateur() {
     setHoveredEvent(null);
     
     const eventDate = new Date(event.datetime);
-    const dateStr = eventDate.toISOString().split('T')[0];
+    const dateStr = formatDateLocal(eventDate);
     const hour = eventDate.getHours().toString().padStart(2, '0');
     const minute = eventDate.getMinutes().toString().padStart(2, '0');
     
@@ -622,11 +652,16 @@ export function PlanningAdministrateur() {
     0
   ).getDate();
 
-  const firstDayOfMonth = new Date(
+  // Calculate first day of month, adjusting for Monday-Sunday ordering
+  // getDay() returns: 0=Sunday, 1=Monday, 2=Tuesday, ..., 6=Saturday
+  // We need: 0=Monday, 1=Tuesday, ..., 6=Sunday
+  const firstDayOfMonthRaw = new Date(
     selectedDate.getFullYear(),
     selectedDate.getMonth(),
     1
   ).getDay();
+  // Convert: Sunday (0) → 6, Monday (1) → 0, Tuesday (2) → 1, etc.
+  const firstDayOfMonth = firstDayOfMonthRaw === 0 ? 6 : firstDayOfMonthRaw - 1;
 
   const monthNames = [
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -758,6 +793,21 @@ export function PlanningAdministrateur() {
     return userId ? String(userId) : null;
   };
 
+  // Normalize date to midnight local time
+  function normalizeDate(date: Date): Date {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    return normalized;
+  }
+
+  // Format date to YYYY-MM-DD string using local timezone
+  function formatDateLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   // Handle event hover
   const handleEventMouseEnter = (event: any, e: React.MouseEvent) => {
     // Don't show hover if a click just happened (within 200ms)
@@ -806,15 +856,7 @@ export function PlanningAdministrateur() {
   // Apply filters to events
   function applyFilters(events: any[]): any[] {
     return events.filter(event => {
-      // Filter by user
-      if (filterUserId) {
-        const eventUserId = getEventUserId(event);
-        if (String(eventUserId) !== String(filterUserId)) {
-          return false;
-        }
-      }
-      
-      // Filter by contact
+      // Filter by contact (contact search is already filtered by status type)
       if (filterContactId) {
         const eventContactId = event.clientId_read || event.contactId;
         if (String(eventContactId) !== String(filterContactId)) {
@@ -852,29 +894,42 @@ export function PlanningAdministrateur() {
         }
       }
       
+      // Filter by user
+      if (filterUserId) {
+        const eventUserId = getEventUserId(event);
+        if (String(eventUserId) !== String(filterUserId)) {
+          return false;
+        }
+      }
+      
       return true;
     });
   }
 
   function getEventsForDay(day: number) {
-    const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
+    const dateStr = formatDateLocal(date);
     const allEvents = [...upcomingEvents, ...pastEvents];
     let filtered = allEvents.filter(event => {
       if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-      return eventDate === dateStr;
+      const eventDate = new Date(event.datetime);
+      const eventDateStr = formatDateLocal(eventDate);
+      return eventDateStr === dateStr;
     });
     return applyFilters(filtered);
   }
 
   // Get events for a specific date
   function getEventsForDate(date: Date) {
-    const dateStr = date.toISOString().split('T')[0];
+    // Normalize date to midnight local time for consistent comparison
+    const normalizedDate = normalizeDate(date);
+    const dateStr = formatDateLocal(normalizedDate);
     const allEvents = [...upcomingEvents, ...pastEvents];
     let filtered = allEvents.filter(event => {
       if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-      return eventDate === dateStr;
+      const eventDate = new Date(event.datetime);
+      const eventDateStr = formatDateLocal(eventDate);
+      return eventDateStr === dateStr;
     });
     return applyFilters(filtered);
   }
@@ -889,17 +944,20 @@ export function PlanningAdministrateur() {
     });
   }
 
-  // Get week days (Sunday to Saturday)
+  // Get week days (Monday to Sunday)
   function getWeekDays(): Date[] {
     const startOfWeek = new Date(selectedDate);
     const day = startOfWeek.getDay();
-    const diff = startOfWeek.getDate() - day; // Get Sunday of the week
-    const sunday = new Date(startOfWeek.setDate(diff));
+    // Convert Sunday (0) to 7, then subtract 1 to get days from Monday (1) to Sunday (0)
+    // This gives us: Monday=0, Tuesday=1, ..., Sunday=6
+    const daysFromMonday = day === 0 ? 6 : day - 1;
+    const diff = startOfWeek.getDate() - daysFromMonday; // Get Monday of the week
+    const monday = new Date(startOfWeek.setDate(diff));
     
     const weekDays: Date[] = [];
     for (let i = 0; i < 7; i++) {
-      const date = new Date(sunday);
-      date.setDate(sunday.getDate() + i);
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + i);
       weekDays.push(date);
     }
     return weekDays;
@@ -1099,29 +1157,7 @@ export function PlanningAdministrateur() {
           
           {isFilterSidebarOpen && (
             <div className="planning-filter-content">
-              <div className="planning-filter-section">
-                <Label>Utilisateur</Label>
-                <Select
-                  value={filterUserId || 'all'}
-                  onValueChange={(value) => setFilterUserId(value === 'all' ? '' : value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Tous les utilisateurs" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tous les utilisateurs</SelectItem>
-                    {users.map((user) => {
-                      const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                      return (
-                        <SelectItem key={user.id} value={String(user.id)}>
-                          {displayName}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-
+              {/* Contact Search - First */}
               <div className="planning-filter-section">
                 <Label>Contact</Label>
                 <div className="relative">
@@ -1142,7 +1178,7 @@ export function PlanningAdministrateur() {
                     />
                   </div>
                   {filterContactSearchFocused && filterContactSearchQuery && (
-                    <div className="absolute z-[99999] w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                    <div className="absolute z-[999999] w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto" style={{ zIndex: 999999 }}>
                       {filterContactSearchResults.length > 0 ? (
                         <div className="p-1">
                           {filterContactSearchResults.map((client) => (
@@ -1162,8 +1198,16 @@ export function PlanningAdministrateur() {
                                 });
                               }}
                             >
-                              {client.fname} {client.lname}
-                              {client.email && <span className="text-muted-foreground ml-2">({client.email})</span>}
+                              <div className="flex flex-col min-w-0">
+                                <div className="truncate">
+                                  {client.fname} {client.lname}
+                                </div>
+                                {client.email && (
+                                  <div className="text-muted-foreground text-xs truncate mt-0.5">
+                                    {client.email}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1196,11 +1240,40 @@ export function PlanningAdministrateur() {
                 )}
               </div>
 
+              {/* Contact Status Type Filter - Second */}
+              <div className="planning-filter-section">
+                <Label>Type de contact</Label>
+                <Select
+                  value={filterContactStatusType}
+                  onValueChange={(value) => {
+                    setFilterContactStatusType(value);
+                    // Clear contact selection when changing status type
+                    setFilterContactId('');
+                    setFilterContactSearchQuery('');
+                    setFilterContactSearchResults([]);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous les types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous</SelectItem>
+                    <SelectItem value="lead">Lead</SelectItem>
+                    <SelectItem value="client">Client</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Role Filter - Third */}
               <div className="planning-filter-section">
                 <Label>Par rôle</Label>
                 <Select
                   value={filterRole || 'all'}
-                  onValueChange={(value) => setFilterRole(value === 'all' ? '' : value)}
+                  onValueChange={(value) => {
+                    setFilterRole(value === 'all' ? '' : value);
+                    // Clear user filter when role changes
+                    setFilterUserId('');
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Tous les rôles" />
@@ -1217,6 +1290,44 @@ export function PlanningAdministrateur() {
                 </Select>
               </div>
 
+              {/* User Filter - Fourth, filtered by role */}
+              <div className="planning-filter-section">
+                <Label>Utilisateur</Label>
+                <Select
+                  value={filterUserId || 'all'}
+                  onValueChange={(value) => setFilterUserId(value === 'all' ? '' : value)}
+                  disabled={filterRole === 'none'}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={filterRole === 'none' ? 'Non applicable' : filterRole ? 'Utilisateurs avec ce rôle' : 'Tous les utilisateurs'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{filterRole ? 'Tous les utilisateurs avec ce rôle' : 'Tous les utilisateurs'}</SelectItem>
+                    {users
+                      .filter((user) => {
+                        // If role filter is set, only show users with that role
+                        if (filterRole && filterRole !== 'none') {
+                          return String(user.role) === String(filterRole);
+                        }
+                        // If filtering for "none" (unassigned), don't show user filter
+                        if (filterRole === 'none') {
+                          return false;
+                        }
+                        // No role filter, show all users
+                        return true;
+                      })
+                      .map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={String(user.id)}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="planning-filter-section">
                 <Button
                   variant="outline"
@@ -1224,6 +1335,7 @@ export function PlanningAdministrateur() {
                     setFilterUserId('');
                     setFilterContactId('');
                     setFilterContactSearchQuery('');
+                    setFilterContactStatusType('all');
                     setFilterRole('');
                   }}
                   className="w-full"
@@ -1250,7 +1362,10 @@ export function PlanningAdministrateur() {
                 <BarChart3 className="planning-icon planning-icon-with-margin" />
                 Statistiques
               </Button>
-              <Button type="button" onClick={() => setIsModalOpen(true)}>
+              <Button type="button" onClick={() => {
+                setPrefilledDateTime(null); // Clear any prefilled data
+                setIsModalOpen(true);
+              }}>
                 <Plus className="planning-icon planning-icon-with-margin" />
                 Ajouter un rendez-vous
               </Button>
@@ -1261,6 +1376,7 @@ export function PlanningAdministrateur() {
         {isModalOpen && (
           <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
             setIsModalOpen(false);
+            setPrefilledDateTime(null);
             setClientSearchQuery('');
             setClientSearchFocused(false);
           })}>
@@ -1274,6 +1390,7 @@ export function PlanningAdministrateur() {
                   className="modal-close"
                   onClick={() => {
                     setIsModalOpen(false);
+                    setPrefilledDateTime(null);
                     setClientSearchQuery('');
                     setClientSearchFocused(false);
                   }}
@@ -1429,6 +1546,7 @@ export function PlanningAdministrateur() {
                 <div className="modal-form-actions">
                   <Button type="button" variant="outline" onClick={() => {
                     setIsModalOpen(false);
+                    setPrefilledDateTime(null);
                     setClientSearchQuery('');
                     setClientSearchFocused(false);
                   }}>
@@ -1833,7 +1951,7 @@ export function PlanningAdministrateur() {
           <CardContent>
             {view === 'month' && (
               <div className="planning-calendar-grid">
-                {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'].map((day) => (
+                {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day) => (
                   <div key={day} className="planning-weekday">
                     {day}
                   </div>
@@ -1856,8 +1974,11 @@ export function PlanningAdministrateur() {
                       key={day}
                       className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
                       onClick={() => {
-                        // Toggle selection: if same day clicked, deselect; otherwise select new day
-                        setSelectedDay(isSelected ? null : day);
+                        // Redirect to day view for the clicked day
+                        const clickedDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
+                        setSelectedDate(clickedDate);
+                        setView('day');
+                        setSelectedDay(null);
                       }}
                       style={{ cursor: 'pointer' }}
                     >
@@ -1893,7 +2014,8 @@ export function PlanningAdministrateur() {
                                 backgroundColor: lightColor,
                                 color: userColor,
                                 borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
-                                paddingLeft: '0.5rem'
+                                paddingLeft: '0.5rem',
+                                position: 'relative'
                               }}
                             >
                               <div className="planning-event-time">
@@ -1949,14 +2071,16 @@ export function PlanningAdministrateur() {
                         key={index}
                         className={`planning-week-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
                         onClick={() => {
+                          // Redirect to day view for the clicked day
                           setSelectedDate(date);
-                          setSelectedDay(date.getDate());
+                          setView('day');
+                          setSelectedDay(null);
                         }}
                         style={{ cursor: 'pointer' }}
                       >
                         <div className="planning-week-day-header">
                           <div className="planning-week-day-name">
-                            {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'][date.getDay()]}
+                            {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'][(date.getDay() + 6) % 7]}
                           </div>
                           <div className="planning-week-day-number">{date.getDate()}</div>
                         </div>
@@ -1980,7 +2104,8 @@ export function PlanningAdministrateur() {
                                   backgroundColor: lightColor,
                                   color: userColor,
                                   borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
-                                  paddingLeft: '0.5rem'
+                                  paddingLeft: '0.5rem',
+                                  position: 'relative'
                                 }}
                               >
                                 <div className="planning-event-time">
@@ -1995,6 +2120,25 @@ export function PlanningAdministrateur() {
                                     <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
                                     <span>{getUserName(eventUserId)}</span>
                                   </div>
+                                )}
+                                {canDelete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteEvent(event.id);
+                                    }}
+                                    style={{ 
+                                      padding: '2px 4px',
+                                      fontSize: '0.7rem',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                      color: '#dc2626'
+                                    }}
+                                  >
+                                    Supprimer
+                                  </Button>
                                 )}
                               </div>
                             );
@@ -2021,12 +2165,35 @@ export function PlanningAdministrateur() {
                       <div
                         key={hour}
                         data-hour={hour}
-                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''}`}
+                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''} ${canCreate ? 'planning-day-hour-clickable' : ''}`}
+                        onClick={canCreate ? (e) => {
+                          // Only open modal if clicking on the hour row itself or empty space, not on an event
+                          const target = e.target as HTMLElement;
+                          const isEventClick = target.closest('.planning-day-event');
+                          
+                          // Don't open modal if clicking on an event
+                          if (!isEventClick) {
+                            // Use the selectedDate from day view and the hour from the clicked row
+                            const dateToPrefill = normalizeDate(new Date(selectedDate));
+                            const prefilledData = { date: dateToPrefill, hour };
+                            // Set both state and ref to ensure it's available when modal opens
+                            setPrefilledDateTime(prefilledData);
+                            prefilledDateTimeRef.current = prefilledData;
+                            setIsModalOpen(true);
+                          }
+                        } : undefined}
+                        style={canCreate ? { cursor: 'pointer' } : undefined}
                       >
                         <div className="planning-day-hour-label">
                           {hour.toString().padStart(2, '0')}:00
                         </div>
-                        <div className="planning-day-hour-content">
+                        <div className="planning-day-hour-content" onClick={(e) => {
+                          // Stop propagation if clicking on events to prevent opening modal
+                          const target = e.target as HTMLElement;
+                          if (target.closest('.planning-day-event')) {
+                            e.stopPropagation();
+                          }
+                        }}>
                           {hourEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -2083,7 +2250,8 @@ export function PlanningAdministrateur() {
                                 style={{ 
                                   cursor: canEdit ? 'pointer' : 'default',
                                   backgroundColor: hoverColor,
-                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                  position: 'relative'
                                 }}
                               >
                                 <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
@@ -2096,16 +2264,33 @@ export function PlanningAdministrateur() {
                                       {hasContactName && (
                                         <div className="planning-day-event-client">{contactName}</div>
                                       )}
-                                      {eventUserId ? (
-                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
-                                          <User className="w-3 h-3" style={{ flexShrink: 0 }} />
-                                          <span>{getUserName(eventUserId)}</span>
-                                        </div>
-                                      ) : (
-                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', marginTop: hasContactName ? '6px' : '0', fontStyle: 'italic' }}>
-                                          Non assigné
-                                        </div>
-                                      )}
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: hasContactName ? '6px' : '0' }}>
+                                        {eventUserId ? (
+                                          <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
+                                            <User className="w-3 h-3" style={{ flexShrink: 0 }} />
+                                            <span>{getUserName(eventUserId)}</span>
+                                          </div>
+                                        ) : (
+                                          <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                                            Non assigné
+                                          </div>
+                                        )}
+                                        {canDelete && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteEvent(event.id);
+                                            }}
+                                            className="h-auto p-0 text-red-600 hover:opacity-70 hover:bg-transparent cursor-pointer"
+                                            title="Supprimer"
+                                            style={{ fontSize: '12px' }}
+                                          >
+                                            Supprimer
+                                          </Button>
+                                        )}
+                                      </div>
                                     </>
                                   );
                                 })()}

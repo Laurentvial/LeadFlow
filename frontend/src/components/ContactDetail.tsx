@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { ContactInfoTab } from './ContactInfoTab';
 import { ContactHistoryTab } from './ContactHistoryTab';
 import { ContactDocumentsTab } from './ContactDocumentsTab';
+import { ContactTransactionsTab } from './ContactTransactionsTab';
 import { useUser } from '../contexts/UserContext';
 import '../styles/Contacts.css';
 import '../styles/PlanningCalendar.css';
@@ -77,13 +78,31 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
     return hasTabPermission;
   }, [currentUser?.permissions]);
 
+  const canViewTransactionsTab = useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    // Check if user has permission to view transactions tab
+    const hasTabPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view' && 
+      p.fieldName === 'transactions' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to visible
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasTabPermission;
+  }, [currentUser?.permissions]);
+
   // Determine default tab based on available permissions
   const defaultTab = useMemo(() => {
     if (canViewInformationsTab) return 'info';
     if (canViewDocumentsTab) return 'documents';
     if (canViewHistoriqueTab) return 'history';
+    if (canViewTransactionsTab) return 'transactions';
     return 'info'; // Fallback
-  }, [canViewInformationsTab, canViewDocumentsTab, canViewHistoriqueTab]);
+  }, [canViewInformationsTab, canViewDocumentsTab, canViewHistoriqueTab, canViewTransactionsTab]);
 
   useEffect(() => {
     loadContactData();
@@ -210,7 +229,7 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
       )}
 
       {/* Contact Details Tabs */}
-      {(canViewInformationsTab || canViewDocumentsTab || canViewHistoriqueTab) && (
+      {(canViewInformationsTab || canViewDocumentsTab || canViewHistoriqueTab || canViewTransactionsTab) && (
         <Tabs defaultValue={defaultTab} className="space-y-3">
           <TabsList>
             {canViewInformationsTab && (
@@ -221,6 +240,9 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
             )}
             {canViewHistoriqueTab && (
               <TabsTrigger value="history">Historique</TabsTrigger>
+            )}
+            {canViewTransactionsTab && (
+              <TabsTrigger value="transactions">Transactions</TabsTrigger>
             )}
           </TabsList>
 
@@ -255,6 +277,13 @@ export function ContactDetail({ contactId, onBack }: ContactDetailProps) {
           {canViewHistoriqueTab && (
             <TabsContent value="history">
               <ContactHistoryTab contactId={contactId} />
+            </TabsContent>
+          )}
+
+          {/* Transactions Tab */}
+          {canViewTransactionsTab && (
+            <TabsContent value="transactions">
+              <ContactTransactionsTab contactId={contactId} />
             </TabsContent>
           )}
         </Tabs>

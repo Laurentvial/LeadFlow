@@ -20,6 +20,7 @@ import Settings from './components/Settings';
 import Mails from './components/Mails';
 import Chat from './components/Chat';
 import FosseConfiguration from './Pages/FosseConfiguration';
+import { Transactions } from './components/Transactions';
 import { UserProvider } from './contexts/UserContext';
 import { UnreadMessagesProvider } from './contexts/UnreadMessagesContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -224,6 +225,15 @@ function App() {
                             <Layout>
                                 <Chat />
                             </Layout>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/transactions" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="transactions" action="view">
+                                <Layout>
+                                    <Transactions />
+                                </Layout>
+                            </PermissionProtectedRoute>
                         </ProtectedRoute>
                     } />
                     <Route path="*" element={

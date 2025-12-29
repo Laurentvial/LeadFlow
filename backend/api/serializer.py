@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, Transaction, RIB
 from django.db import transaction
 import uuid
 
@@ -2070,16 +2070,118 @@ class FosseSettingsSerializer(serializers.ModelSerializer):
         ret['createdAt'] = instance.created_at
         ret['updatedAt'] = instance.updated_at
         return ret
+
+class TransactionSerializer(serializers.ModelSerializer):
+    contactId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    ribId = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    ribText = serializers.SerializerMethodField()
+    createdBy = serializers.SerializerMethodField()
+    contactName = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Transaction
+        fields = ['id', 'contactId', 'type', 'status', 'payment_type', 'ribId', 'ribText', 'rib', 'amount', 'date', 'comment', 'created_by', 'createdBy', 'contactName', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'id': {'required': False},
+            'created_by': {'read_only': True},
+            'payment_type': {'required': False, 'allow_blank': True},
+            'rib': {'read_only': True}
+        }
+    
+    def get_createdBy(self, obj):
+        """Get the creator's name"""
+        if obj.created_by:
+            first_name = obj.created_by.first_name or ''
+            last_name = obj.created_by.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.created_by.username or ''
+        return ''
+    
+    def get_contactName(self, obj):
+        if obj.contact:
+            name = f"{obj.contact.fname or ''} {obj.contact.lname or ''}".strip()
+            return name if name else None
+        return None
+    
+    def get_ribText(self, obj):
+        """Get the RIB text"""
+        if obj.rib:
+            return obj.rib.rib_text or ''
+        return None
+    
+    def create(self, validated_data):
+        """Create transaction instance, removing contactId and ribId from validated_data"""
+        # Remove contactId and ribId from validated_data as they're not model fields
+        validated_data.pop('contactId', None)
+        validated_data.pop('ribId', None)
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update transaction instance, removing contactId and ribId from validated_data"""
+        # Remove contactId and ribId from validated_data as they're not model fields
+        validated_data.pop('contactId', None)
+        validated_data.pop('ribId', None)
+        # Handle empty string for payment_type - convert to empty string explicitly
+        if 'payment_type' in validated_data and validated_data['payment_type'] == '':
+            validated_data['payment_type'] = ''
+        return super().update(instance, validated_data)
+    
+    def to_internal_value(self, data):
+        # Handle datetime as local time (naive) without timezone conversion
+        if 'date' in data:
+            from django.utils.dateparse import parse_datetime
+            from django.utils import timezone
+            import pytz
+            datetime_str = data['date']
+            parsed = parse_datetime(datetime_str)
+            if parsed and timezone.is_naive(parsed):
+                # Convert local time to UTC for storage
+                local_tz = pytz.timezone('Europe/Paris')
+                local_dt = local_tz.localize(parsed)
+                data = data.copy()
+                data['date'] = local_dt.astimezone(pytz.UTC).isoformat()
+        # Ensure payment_type is preserved even if empty string
+        if 'payment_type' in data:
+            data = data.copy()
+            # Keep empty string as is, don't let DRF filter it out
+            if data['payment_type'] == '':
+                data['payment_type'] = ''
+        return super().to_internal_value(data)
     
     def to_representation(self, instance):
+        from django.utils import timezone
+        import pytz
         ret = super().to_representation(instance)
-        ret['roleId'] = instance.role.id
-        ret['roleName'] = instance.role.name
-        ret['forcedColumns'] = instance.forced_columns if instance.forced_columns else []
-        ret['forcedFilters'] = instance.forced_filters if instance.forced_filters else {}
-        ret['defaultOrder'] = instance.default_order if instance.default_order else 'default'
-        ret['defaultStatusId'] = instance.default_status.id if instance.default_status else None
-        ret['createdAt'] = instance.created_at
-        ret['updatedAt'] = instance.updated_at
+        # Expose contactId in API response
+        ret['contactId'] = instance.contact.id if instance.contact else None
+        # Expose ribId in API response
+        ret['ribId'] = instance.rib.id if instance.rib else None
+        # Convert date back to local timezone for display
+        if instance.date:
+            utc_dt = timezone.make_aware(instance.date, timezone.utc) if timezone.is_naive(instance.date) else instance.date
+            local_tz = pytz.timezone('Europe/Paris')
+            local_dt = utc_dt.astimezone(local_tz)
+            ret['date'] = local_dt.replace(tzinfo=None).isoformat()
         return ret
 
+class RIBSerializer(serializers.ModelSerializer):
+    createdBy = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = RIB
+        fields = ['id', 'rib_text', 'created_by', 'createdBy', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'id': {'required': False},
+            'created_by': {'read_only': True}
+        }
+    
+    def get_createdBy(self, obj):
+        """Get the creator's name"""
+        if obj.created_by:
+            first_name = obj.created_by.first_name or ''
+            last_name = obj.created_by.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.created_by.username or ''
+        return ''

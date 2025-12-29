@@ -306,6 +306,10 @@ html {
     --color-blue-600: oklch(.546 .245 262.881);
     --color-blue-700: oklch(.488 .243 264.376);
     --color-blue-800: oklch(.424 .199 265.638);
+    --color-orange-200: oklch(0.7 0.1801 64.06);
+    --color-orange-50: oklch(0.9485 0.0715 64.06);
+    --color-orange-800: oklch(0.6658 0.1574 58.32);
+
     --color-indigo-600: oklch(.511 .262 276.966);
     --color-purple-600: oklch(.558 .288 302.321);
     --color-pink-600: oklch(.592 .249 .584);
@@ -1267,6 +1271,14 @@ html {
     border-color: var(--color-blue-600);
   }
 
+  .border-orange-200 {
+    border-color: var(--color-orange-200);
+  }
+
+  .border-orange-600 {
+    border-color: var(--color-orange-200);
+  }
+
   .border-input {
     border-color: var(--input);
   }
@@ -1307,6 +1319,12 @@ html {
 
   .bg-blue-100 {
     background-color: var(--color-blue-100);
+  }
+
+
+  .bg-orange-50 {
+    background-color: var(--color-orange-50);
+
   }
 
   .bg-border {
@@ -1564,6 +1582,10 @@ html {
 
   .text-blue-800 {
     color: var(--color-blue-800);
+  }
+
+  .text-orange-800 {
+    color: var(--color-orange-800);
   }
 
   .text-card-foreground {

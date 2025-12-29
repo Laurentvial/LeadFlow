@@ -36,6 +36,7 @@ const componentNameMap: Record<string, string> = {
   'contact_tabs': 'Fiche contact',
   notifications: 'Notifications (Paramètres)',
   mails: 'Mails',
+  transactions: 'Transactions',
   other: 'Autres permissions',
 };
 
@@ -409,6 +410,7 @@ export function PermissionsTab() {
     'contact_tabs',
     'notifications',
     'mails',
+    'transactions',
     'other',
   ];
 
@@ -1081,7 +1083,7 @@ export function PermissionsTab() {
           let categoryId: string | null = null;
           
           // Check if it's a category permission (format: ...-category-categoryId)
-          // This also handles contact_tabs tabs (informations, documents, historique)
+          // This also handles contact_tabs tabs (informations, documents, historique, transactions)
           if (rest.length >= 2 && rest[0] === 'category') {
             categoryId = rest.slice(1).join('-'); // Join in case categoryId has hyphens
           } else if (rest.length > 0) {
@@ -1193,7 +1195,7 @@ export function PermissionsTab() {
             let key: string;
             
             // Check if it's a category permission
-            // This also handles contact_tabs tabs (informations, documents, historique)
+            // This also handles contact_tabs tabs (informations, documents, historique, transactions)
             if (rest.length >= 2 && rest[0] === 'category') {
               const categoryId = rest.slice(1).join('-');
               key = `${component}-${action}-category-${categoryId}`;
@@ -1210,7 +1212,7 @@ export function PermissionsTab() {
               let categoryId: string | null = null;
               
               // Check if it's a category permission
-              // This also handles contact_tabs tabs (informations, documents, historique)
+              // This also handles contact_tabs tabs (informations, documents, historique, transactions)
               if (rest.length >= 2 && rest[0] === 'category') {
                 categoryId = rest.slice(1).join('-');
               } else if (rest.length > 0) {
@@ -2521,7 +2523,7 @@ export function PermissionsTab() {
                             <td 
                               className={`p-3 font-medium ${canEditPermissions ? 'cursor-pointer hover:text-blue-600' : 'cursor-default'}`}
                               onClick={canEditPermissions ? () => {
-                                const tabs = ['informations', 'documents', 'historique'];
+                                const tabs = ['informations', 'documents', 'historique', 'transactions'];
                                 const actions: Array<'view' | 'create' | 'edit' | 'delete'> = ['view', 'create', 'edit', 'delete'];
                                 tabs.forEach(tab => {
                                   actions.forEach(action => {
@@ -2536,7 +2538,7 @@ export function PermissionsTab() {
                             <th 
                               className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
                               onClick={canEditPermissions ? () => {
-                                const tabs = ['informations', 'documents', 'historique'];
+                                const tabs = ['informations', 'documents', 'historique', 'transactions'];
                                 tabs.forEach(tab => {
                                   togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact', 'view', null, tab);
                                 });
@@ -2548,7 +2550,7 @@ export function PermissionsTab() {
                             <th 
                               className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
                               onClick={canEditPermissions ? () => {
-                                const tabs = ['informations', 'documents', 'historique'];
+                                const tabs = ['informations', 'documents', 'historique', 'transactions'];
                                 tabs.forEach(tab => {
                                   togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact', 'create', null, tab);
                                 });
@@ -2560,7 +2562,7 @@ export function PermissionsTab() {
                             <th 
                               className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
                               onClick={canEditPermissions ? () => {
-                                const tabs = ['informations', 'documents', 'historique'];
+                                const tabs = ['informations', 'documents', 'historique', 'transactions'];
                                 tabs.forEach(tab => {
                                   togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact', 'edit', null, tab);
                                 });
@@ -2572,7 +2574,7 @@ export function PermissionsTab() {
                             <th 
                               className={`text-center p-3 font-semibold ${canEditPermissions ? 'cursor-pointer hover:bg-slate-200 transition-colors' : 'cursor-not-allowed opacity-50'}`}
                               onClick={canEditPermissions ? () => {
-                                const tabs = ['informations', 'documents', 'historique'];
+                                const tabs = ['informations', 'documents', 'historique', 'transactions'];
                                 tabs.forEach(tab => {
                                   togglePendingPermission(selectedRoleForPermissions.id, 'Fiche contact', 'delete', null, tab);
                                 });
@@ -2587,7 +2589,8 @@ export function PermissionsTab() {
                           {[
                             { tab: 'informations', label: 'Informations' },
                             { tab: 'documents', label: 'Documents' },
-                            { tab: 'historique', label: 'Historique' }
+                            { tab: 'historique', label: 'Historique' },
+                            { tab: 'transactions', label: 'Transactions' }
                           ].map((tabInfo) => {
                             const viewPermissionId = getPermissionId('contact_tabs', 'view', null, tabInfo.tab);
                             const createPermissionId = getPermissionId('contact_tabs', 'create', null, tabInfo.tab);

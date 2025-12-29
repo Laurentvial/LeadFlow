@@ -11,13 +11,13 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP
+from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP, Transaction, RIB
 from .serializer import (
     UserSerializer, ContactSerializer, ContactMigrationSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, PlatformSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
-    NotificationPreferenceSerializer, FosseSettingsSerializer
+    NotificationPreferenceSerializer, FosseSettingsSerializer, TransactionSerializer, RIBSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -5975,6 +5975,27 @@ def contact_detail(request, contact_id):
                             # Clear any cached relationship
                             if hasattr(contact, '_confirmateur_cache'):
                                 delattr(contact, '_confirmateur_cache')
+                            
+                            # Automation: If confirmateur was null and we're assigning one,
+                            # assign all upcoming events to this confirmateur
+                            # Check old_confirmateur_django_id directly (database value) to ensure it was null
+                            if old_confirmateur_django_id is None:
+                                try:
+                                    # Import timezone locally to avoid scoping conflict with line 5884
+                                    from django.utils import timezone as tz
+                                    now = tz.now()
+                                    # Get all upcoming events for this contact using explicit ID lookup
+                                    # Use datetime__gt to match event_list behavior (future events)
+                                    upcoming_events = Event.objects.filter(
+                                        contactId__id=contact.id,
+                                        datetime__gt=now
+                                    )
+                                    
+                                    # Update all upcoming events to assign them to the confirmateur
+                                    upcoming_events.update(userId=confirmateur_user)
+                                except Exception:
+                                    # Silently fail - don't break the contact update
+                                    pass
                         else:
                             # Don't clear the confirmateur if user not found - return error instead
                             return Response(
@@ -7111,6 +7132,434 @@ def event_delete(request, event_id):
     else:
         print(f"[EVENT LOG] No contact for event {event.id}, skipping log creation")
     
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+# Transactions endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def transaction_list(request):
+    user = request.user
+    
+    # Allow filtering by contactId if provided as query parameter
+    contact_id = request.query_params.get('contactId', None)
+    
+    # Check if pagination is requested
+    requested_page = request.query_params.get('page')
+    requested_page_size = request.query_params.get('page_size')
+    
+    if contact_id:
+        # Check if user has permission to access this contact
+        try:
+            contact = Contact.objects.get(id=contact_id)
+        except Contact.DoesNotExist:
+            return Response(
+                {'error': 'Contact non trouvé'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify user has access to this contact based on data_access permissions
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                
+                has_access = False
+                
+                if data_access == 'all':
+                    # User has access to all contacts
+                    has_access = True
+                elif data_access == 'team_only':
+                    # Check if user has access (either assigned to them or from their team)
+                    team_member = user_details.team_memberships.first()
+                    if team_member:
+                        team = team_member.team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Allow if user is assigned OR if contact's assignees are in the same team
+                        if (contact.teleoperator == user or contact.confirmateur == user or contact.creator == user or
+                            (contact.teleoperator and contact.teleoperator.id in team_user_ids) or
+                            (contact.confirmateur and contact.confirmateur.id in team_user_ids) or
+                            (contact.creator and contact.creator.id in team_user_ids)):
+                            has_access = True
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        if contact.teleoperator == user or contact.confirmateur == user or contact.creator == user:
+                            has_access = True
+                else:  # own_only
+                    # Check if user is assigned to this contact
+                    is_teleoperateur = user_details.role.is_teleoperateur
+                    is_confirmateur = user_details.role.is_confirmateur
+                    
+                    if is_teleoperateur and is_confirmateur:
+                        # User is both: allow if user is teleoperator OR confirmateur
+                        if contact.teleoperator == user or contact.confirmateur == user:
+                            has_access = True
+                    elif is_teleoperateur:
+                        # User is only teleoperateur: allow only if user is teleoperator
+                        if contact.teleoperator == user:
+                            has_access = True
+                    elif is_confirmateur:
+                        # User is only confirmateur: allow only if user is confirmateur
+                        if contact.confirmateur == user:
+                            has_access = True
+                    else:
+                        # Default behavior: allow if user is teleoperator, confirmateur, or creator
+                        if contact.teleoperator == user or contact.confirmateur == user or contact.creator == user:
+                            has_access = True
+                
+                if not has_access:
+                    return Response(
+                        {'error': 'Vous n\'avez pas accès à ce contact'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                # User has no role, deny access (safety default)
+                return Response(
+                    {'error': 'Vous n\'avez pas accès à ce contact'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except UserDetails.DoesNotExist:
+            # If user has no UserDetails, deny access (safety default)
+            return Response(
+                {'error': 'Vous n\'avez pas accès à ce contact'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # User has permission, return transactions for this contact with pagination support
+        transactions = Transaction.objects.filter(contact_id=contact_id).select_related('contact', 'created_by').order_by('-date', '-created_at')
+        
+        # Apply pagination if requested
+        if requested_page or requested_page_size:
+            from rest_framework.pagination import PageNumberPagination
+            
+            page_size = int(requested_page_size) if requested_page_size else 20
+            page = int(requested_page) if requested_page else 1
+            
+            if page_size > 100:
+                page_size = 100
+            if page_size < 1:
+                page_size = 20
+            
+            def create_transaction_pagination(page_size_val):
+                class TransactionPagination(PageNumberPagination):
+                    page_size = page_size_val
+                    page_size_query_param = 'page_size'
+                    max_page_size = 100
+                return TransactionPagination
+            
+            TransactionPagination = create_transaction_pagination(page_size)
+            paginator = TransactionPagination()
+            paginated_transactions = paginator.paginate_queryset(transactions, request)
+            
+            serializer = TransactionSerializer(paginated_transactions, many=True)
+            
+            return Response({
+                'transactions': serializer.data,
+                'total': paginator.page.paginator.count,
+                'next': paginator.get_next_link(),
+                'previous': paginator.get_previous_link(),
+                'page': page,
+                'page_size': page_size,
+                'has_next': paginator.page.has_next(),
+                'has_previous': paginator.page.has_previous()
+            })
+        else:
+            serializer = TransactionSerializer(transactions, many=True)
+            return Response({'transactions': serializer.data})
+    else:
+        # Filter transactions based on user's role data_access level
+        # Transactions are filtered based on the contacts the user can access
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                
+                if data_access == 'all':
+                    # User has access to all contacts, so show all transactions
+                    transactions = Transaction.objects.all().select_related('contact', 'created_by')
+                elif data_access == 'team_only':
+                    # Get user's team members
+                    team_member = user_details.team_memberships.first()
+                    if team_member:
+                        team = team_member.team
+                        # Get all users in the same team
+                        team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                        # Get contacts accessible to the user or their team
+                        accessible_contact_ids = Contact.objects.filter(
+                            models.Q(teleoperator=user) |
+                            models.Q(confirmateur=user) |
+                            models.Q(creator=user) |
+                            models.Q(teleoperator__id__in=team_user_ids) |
+                            models.Q(confirmateur__id__in=team_user_ids) |
+                            models.Q(creator__id__in=team_user_ids)
+                        ).values_list('id', flat=True)
+                        # Return transactions for accessible contacts
+                        transactions = Transaction.objects.filter(
+                            contact__id__in=accessible_contact_ids
+                        ).select_related('contact', 'created_by')
+                    else:
+                        # User has no team, fall back to own_only behavior
+                        is_teleoperateur = user_details.role.is_teleoperateur
+                        is_confirmateur = user_details.role.is_confirmateur
+                        
+                        if is_teleoperateur and is_confirmateur:
+                            accessible_contact_ids = Contact.objects.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user)
+                            ).values_list('id', flat=True)
+                        elif is_teleoperateur:
+                            accessible_contact_ids = Contact.objects.filter(teleoperator=user).values_list('id', flat=True)
+                        elif is_confirmateur:
+                            accessible_contact_ids = Contact.objects.filter(confirmateur=user).values_list('id', flat=True)
+                        else:
+                            accessible_contact_ids = Contact.objects.filter(
+                                models.Q(teleoperator=user) |
+                                models.Q(confirmateur=user) |
+                                models.Q(creator=user)
+                            ).values_list('id', flat=True)
+                        transactions = Transaction.objects.filter(
+                            contact__id__in=accessible_contact_ids
+                        ).select_related('contact', 'created_by')
+                else:  # own_only
+                    # Show transactions where the contact is assigned to the user (teleoperateur or confirmateur)
+                    accessible_contact_ids = Contact.objects.filter(
+                        models.Q(teleoperator=user) |
+                        models.Q(confirmateur=user)
+                    ).values_list('id', flat=True)
+                    
+                    transactions = Transaction.objects.filter(
+                        contact__id__in=accessible_contact_ids
+                    ).select_related('contact', 'created_by')
+            else:
+                # User has no role, show no transactions (safety default)
+                transactions = Transaction.objects.none()
+        except UserDetails.DoesNotExist:
+            # If user has no UserDetails, show no transactions (safety default)
+            transactions = Transaction.objects.none()
+    
+    # Order by date descending (most recent first)
+    transactions = transactions.order_by('-date', '-created_at')
+    
+    # Apply pagination if requested
+    if requested_page or requested_page_size:
+        from rest_framework.pagination import PageNumberPagination
+        
+        page_size = int(requested_page_size) if requested_page_size else 20
+        page = int(requested_page) if requested_page else 1
+        
+        max_page_size = 100
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role and user_details.role.data_access == 'all':
+                max_page_size = 1000
+        except UserDetails.DoesNotExist:
+            pass
+        
+        if page_size > max_page_size:
+            page_size = max_page_size
+        if page_size < 1:
+            page_size = 20
+        
+        def create_transaction_pagination(page_size_val):
+            class TransactionPagination(PageNumberPagination):
+                page_size = page_size_val
+                page_size_query_param = 'page_size'
+                max_page_size = max_page_size
+            return TransactionPagination
+        
+        TransactionPagination = create_transaction_pagination(page_size)
+        paginator = TransactionPagination()
+        paginated_transactions = paginator.paginate_queryset(transactions, request)
+        
+        serializer = TransactionSerializer(paginated_transactions, many=True)
+        
+        return Response({
+            'transactions': serializer.data,
+            'total': paginator.page.paginator.count,
+            'next': paginator.get_next_link(),
+            'previous': paginator.get_previous_link(),
+            'page': page,
+            'page_size': page_size,
+            'has_next': paginator.page.has_next(),
+            'has_previous': paginator.page.has_previous()
+        })
+    else:
+        serializer = TransactionSerializer(transactions, many=True)
+        return Response({'transactions': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def transaction_create(request):
+    user = request.user
+    serializer = TransactionSerializer(data=request.data)
+    
+    if serializer.is_valid():
+        # Generate unique ID if not provided
+        transaction_id = serializer.validated_data.get('id')
+        if not transaction_id:
+            from api.signals import generate_unique_id
+            transaction_id = generate_unique_id(Transaction)
+            serializer.validated_data['id'] = transaction_id
+        
+        # Get contact if contactId provided
+        contact = None
+        contact_id = request.data.get('contactId')
+        if contact_id:
+            try:
+                contact = Contact.objects.get(id=contact_id)
+            except Contact.DoesNotExist:
+                return Response({'error': 'Contact not found'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not contact:
+            return Response({'error': 'contactId is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if user has access to this contact (for own_only users)
+        try:
+            user_details = UserDetails.objects.get(django_user=user)
+            if user_details.role:
+                data_access = user_details.role.data_access
+                if data_access == 'own_only':
+                    # Check if user is teleoperateur or confirmateur of this contact
+                    if contact.teleoperator != user and contact.confirmateur != user:
+                        return Response(
+                            {'error': 'Vous n\'avez pas accès à ce contact'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+        except UserDetails.DoesNotExist:
+            pass
+        
+        # Get RIB if ribId provided
+        rib = None
+        rib_id = request.data.get('ribId')
+        if rib_id:
+            try:
+                rib = RIB.objects.get(id=rib_id)
+            except RIB.DoesNotExist:
+                pass
+        
+        # Create transaction
+        transaction = serializer.save(contact=contact, rib=rib, created_by=user)
+        
+        return Response(TransactionSerializer(transaction).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def transaction_update(request, transaction_id):
+    try:
+        transaction = Transaction.objects.get(id=transaction_id)
+    except Transaction.DoesNotExist:
+        return Response({'detail': 'Transaction not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check if user has access to this transaction's contact
+    user = request.user
+    try:
+        user_details = UserDetails.objects.get(django_user=user)
+        if user_details.role:
+            data_access = user_details.role.data_access
+            if data_access == 'own_only':
+                # Check if user is teleoperateur or confirmateur of this contact
+                if transaction.contact.teleoperator != user and transaction.contact.confirmateur != user:
+                    return Response(
+                        {'error': 'Vous n\'avez pas accès à cette transaction'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+    except UserDetails.DoesNotExist:
+        pass
+    
+    serializer = TransactionSerializer(transaction, data=request.data, partial=True)
+    if serializer.is_valid():
+        # Get contact if contactId provided
+        contact = transaction.contact
+        contact_id = request.data.get('contactId')
+        if contact_id:
+            try:
+                contact = Contact.objects.get(id=contact_id)
+            except Contact.DoesNotExist:
+                pass
+        
+        # Get RIB if ribId provided
+        rib = transaction.rib
+        rib_id = request.data.get('ribId')
+        if rib_id:
+            try:
+                rib = RIB.objects.get(id=rib_id)
+            except RIB.DoesNotExist:
+                pass
+        elif rib_id == '' or rib_id is None:
+            # Explicitly set to None if empty string or None
+            rib = None
+        
+        transaction = serializer.save(contact=contact, rib=rib)
+        return Response(TransactionSerializer(transaction).data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def transaction_delete(request, transaction_id):
+    try:
+        transaction = Transaction.objects.get(id=transaction_id)
+    except Transaction.DoesNotExist:
+        return Response({'detail': 'Transaction not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check if user has access to this transaction's contact
+    user = request.user
+    try:
+        user_details = UserDetails.objects.get(django_user=user)
+        if user_details.role:
+            data_access = user_details.role.data_access
+            if data_access == 'own_only':
+                # Check if user is teleoperateur or confirmateur of this contact
+                if transaction.contact.teleoperator != user and transaction.contact.confirmateur != user:
+                    return Response(
+                        {'error': 'Vous n\'avez pas accès à cette transaction'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+    except UserDetails.DoesNotExist:
+        pass
+    
+    transaction.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+# RIB endpoints
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def rib_list(request):
+    """List all RIBs"""
+    ribs = RIB.objects.all().order_by('-created_at')
+    serializer = RIBSerializer(ribs, many=True)
+    return Response({'ribs': serializer.data})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rib_create(request):
+    """Create a new RIB"""
+    user = request.user
+    serializer = RIBSerializer(data=request.data)
+    
+    if serializer.is_valid():
+        # Generate unique ID if not provided
+        rib_id = serializer.validated_data.get('id')
+        if not rib_id:
+            from api.signals import generate_unique_id
+            rib_id = generate_unique_id(RIB)
+            serializer.validated_data['id'] = rib_id
+        
+        # Create RIB
+        rib = serializer.save(created_by=user)
+        
+        return Response(RIBSerializer(rib).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def rib_delete(request, rib_id):
+    """Delete a RIB"""
+    try:
+        rib = RIB.objects.get(id=rib_id)
+    except RIB.DoesNotExist:
+        return Response({'detail': 'RIB not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
+    rib.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 @api_view(['POST'])

@@ -137,52 +137,63 @@ const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdi
           <div className="mb-2">
             <span className="contact-note-text" style={{ wordBreak: 'break-word', overflowWrap: 'break-word', display: 'block', minWidth: 0 }}>{note.text}</span>
           </div>
-          {/* Date, Creator and Edit/Delete Buttons */}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            {/* Date and Creator on the left */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500">
-                {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', { 
-                  day: '2-digit', 
-                  month: '2-digit', 
-                  year: 'numeric',
-                  hour: '2-digit', 
-                  minute: '2-digit'
-                })}
-              </span>
-              {(note.createdBy || note.userId?.username || note.user?.username) && (
-                <>
-                  <span className="text-xs text-slate-400">•</span>
-                  <span className="text-xs text-slate-500">
-                    {note.createdBy || note.userId?.username || note.user?.username}
-                  </span>
-                </>
+          {/* Edit/Delete Buttons - always at bottom */}
+          {(canEdit || canDelete) && (
+            <div className="flex gap-1 mb-2">
+              {canEdit && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleStartEdit}
+                  className="text-slate-600 cursor-pointer h-7 text-xs p-0"
+                >
+                  Modifier
+                </Button>
+              )}
+              {canDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onDelete(note.id)}
+                  className="contact-tab-button-delete text-red-600 cursor-pointer h-7 text-xs p-0"
+                >
+                  Supprimer
+                </Button>
               )}
             </div>
-            {/* Edit/Delete Buttons on the right */}
-            {(canEdit || canDelete) && (
-              <div className="flex gap-1 flex-shrink-0 p-0 m-0">
-                {canEdit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleStartEdit}
-                    className="text-slate-600 cursor-pointer h-7 text-xs p-0"
-                  >
-                    Modifier
-                  </Button>
-                )}
-                {canDelete && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onDelete(note.id)}
-                    className="contact-tab-button-delete text-red-600 cursor-pointer h-7 text-xs p-0"
-                  >
-                    Supprimer
-                  </Button>
-                )}
-              </div>
+          )}
+          {/* Date, Creator */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Category, Date and Creator */}
+            {note.categoryName && (
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: '600', 
+                color: '#3b82f6',
+                backgroundColor: '#dbeafe',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap'
+              }}>
+                {note.categoryName}
+              </span>
+            )}
+            <span className="text-xs text-slate-500">
+              {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric',
+                hour: '2-digit', 
+                minute: '2-digit'
+              })}
+            </span>
+            {(note.createdBy || note.userId?.username || note.user?.username) && (
+              <>
+                <span className="text-xs text-slate-400">•</span>
+                <span className="text-xs text-slate-500">
+                  {note.createdBy || note.userId?.username || note.user?.username}
+                </span>
+              </>
             )}
           </div>
         </div>
@@ -1076,6 +1087,21 @@ export function ContactInfoTab({
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [categories, accessibleCategoryIds]);
 
+  // Filter categories to only show those user has create permission for (for tabs)
+  const categoriesWithCreatePermission = React.useMemo(() => {
+    if (!currentUser?.permissions) return [];
+    return categories.filter(cat => {
+      // Check if user has create permission for this category AND can create in informations tab
+      const hasCategoryCreatePermission = currentUser.permissions.some((p: any) => 
+        p.component === 'note_categories' && 
+        p.action === 'create' && 
+        p.fieldName === cat.id &&
+        !p.statusId
+      );
+      return hasCategoryCreatePermission && canCreateInformationsTab;
+    }).sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [categories, currentUser?.permissions, canCreateInformationsTab]);
+
   // Calculate note counts for each accessible category
   const categoryCounts = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1218,21 +1244,22 @@ export function ContactInfoTab({
   }, [contactId]);
 
   useEffect(() => {
-    // Update selected category if current selection is not accessible
-    // Auto-select first category by default when categories are available
-    if (selectedCategoryId !== 'all' && !accessibleCategoryIds.includes(selectedCategoryId)) {
-      // Current selection is not accessible - switch to first accessible category
-      if (accessibleCategories.length > 0) {
-        setSelectedCategoryId(accessibleCategories[0].id);
+    // Update selected category if current selection is not in categories with create permission
+    // Auto-select first category by default when categories with create permission are available
+    const categoryIdsWithCreatePermission = categoriesWithCreatePermission.map(cat => cat.id);
+    if (selectedCategoryId !== 'all' && !categoryIdsWithCreatePermission.includes(selectedCategoryId)) {
+      // Current selection doesn't have create permission - switch to first category with create permission
+      if (categoriesWithCreatePermission.length > 0) {
+        setSelectedCategoryId(categoriesWithCreatePermission[0].id);
       } else {
-        // No accessible categories - keep 'all' to show all notes
+        // No categories with create permission - set to 'all' (tabs won't show anyway)
         setSelectedCategoryId('all');
       }
-    } else if (selectedCategoryId === 'all' && accessibleCategories.length > 0) {
-      // Default to first category when categories are available
-      setSelectedCategoryId(accessibleCategories[0].id);
+    } else if (selectedCategoryId === 'all' && categoriesWithCreatePermission.length > 0) {
+      // Default to first category with create permission when available
+      setSelectedCategoryId(categoriesWithCreatePermission[0].id);
     }
-  }, [accessibleCategories, accessibleCategoryIds, selectedCategoryId]);
+  }, [categoriesWithCreatePermission, selectedCategoryId]);
 
   async function loadCategories() {
     try {
@@ -1659,6 +1686,32 @@ export function ContactInfoTab({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        
+        // Create transaction for the first payment when moving to client status
+        if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
+          try {
+            const now = new Date();
+            const dateTime = now.toISOString();
+            
+            await apiCall('/api/transactions/create/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contactId: contactId,
+                type: 'Depot',
+                status: 'completed',
+                payment_type: clientFormData.paiement || '',
+                amount: parseFloat(clientFormData.montantEncaisse),
+                date: dateTime,
+                comment: `Premier paiement - Montant encaissé: ${clientFormData.montantEncaisse}€${clientFormData.bonus ? `, Bonus: ${clientFormData.bonus}€` : ''}`,
+              }),
+            });
+          } catch (transactionError: any) {
+            console.error('Error creating transaction:', transactionError);
+            // Don't fail the whole operation if transaction creation fails
+            toast.error('Contact mis à jour mais erreur lors de la création de la transaction');
+          }
+        }
       } else {
         // Update status (non-client default status)
         // If status is an event status, also update teleoperator
@@ -3821,104 +3874,25 @@ export function ContactInfoTab({
                 <p className="text-sm text-slate-500 text-center py-4">Chargement...</p>
               ) : (
                 <>
-                  {/* Show category tabs only if categories are loaded and user has access */}
-                  {loadingCategories ? (
-                    <p className="text-xs text-slate-400 text-center py-2">Chargement des catégories...</p>
-                  ) : accessibleCategories.length > 0 ? (
-                    <Tabs value={selectedCategoryId} onValueChange={(value) => {
-                      console.debug(`[ContactInfoTab] Category tab changed from "${selectedCategoryId}" to "${value}"`);
-                      console.debug(`[ContactInfoTab] Available categories:`, accessibleCategories.map(c => ({ id: c.id, name: c.name })));
-                      console.debug(`[ContactInfoTab] Current notes:`, localNotes.map(n => ({ id: n.id, categId: n.categId, categoryName: n.categoryName })));
-                      setSelectedCategoryId(value);
-                    }} className="mb-2 w-full">
-                      <TabsList className="h-8 w-full">
-                        {accessibleCategories.map((category) => (
-                          <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1 flex-1">
-                            {category.name}
-                            <span className="ml-1.5 px-1 py-0.5 text-[10px] font-medium bg-slate-200 text-slate-700 rounded-full">
-                              {categoryCounts[category.id] || 0}
-                            </span>
-                          </TabsTrigger>
-                        ))}
-                      </TabsList>
-                    </Tabs>
-                  ) : (
-                    <p className="text-xs text-slate-400 text-center py-2">
-                      Aucune catégorie accessible ({accessibleCategoryIds.length} permissions, {categories.length} catégories totales)
-                    </p>
-                  )}
-              
-                  {/* Show form only if user has create permission for informations tab AND category permission */}
-                  {canCreateInSelectedCategory && canCreateInformationsTab && (
-                    <form onSubmit={handleCreateNote} className="space-y-2">
-                      <Textarea
-                        value={noteText}
-                        onChange={(e) => setNoteText(e.target.value)}
-                        placeholder="Ajouter une note..."
-                        rows={2}
-                        className="resize-none text-sm w-full"
-                        disabled={isSubmittingNote}
-                      />
-                      <Button 
-                        type="submit" 
-                        size="sm" 
-                        className="w-full"
-                        disabled={isSubmittingNote || !noteText.trim()}
-                      >
-                        <Send className="w-3 h-3 mr-1" />
-                        {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
-                      </Button>
-                    </form>
-                  )}
-                  
-                  {/* Show notes list */}
+                  {/* Show notes list - Display all notes first, above category tabs */}
                   {(() => {
-                    // Filter notes by selected category only
-                    // Permissions are enforced at the tab level - if a category tab is visible, 
-                    // the user has permission to view ALL notes from that category
-                    // The backend already filters notes by permissions, so we only need to filter by selected tab
-                    
-                    // Normalize category IDs for comparison (handle string/number/whitespace issues)
-                    const normalizeCategoryId = (id: string | null | undefined): string | null => {
-                      if (!id) return null;
-                      return String(id).trim();
-                    };
-                    
-                    const normalizedSelectedCategoryId = selectedCategoryId !== 'all' 
-                      ? normalizeCategoryId(selectedCategoryId) 
-                      : 'all';
-                    
-                    // Filter notes by selected category only
-                    // If a specific category tab is selected, show ALL notes from that category
-                    // If "all" is selected, show ALL notes
+                    // Show all notes with view permissions - NOT filtered by selectedCategoryId
+                    // selectedCategoryId only affects which category new notes are created in
                     const filteredNotes = localNotes.filter(note => {
-                      const noteCategoryId = normalizeCategoryId(note.categId);
-                      
-                      // Debug logging to help identify filtering issues
-                      if (normalizedSelectedCategoryId !== 'all') {
-                        const matches = noteCategoryId === normalizedSelectedCategoryId;
-                        if (!matches && noteCategoryId) {
-                          console.debug(`[Notes Filter] Note ${note.id} with category "${noteCategoryId}" (type: ${typeof note.categId}) doesn't match selected "${normalizedSelectedCategoryId}" (type: ${typeof selectedCategoryId})`);
-                        }
-                        // When a specific category tab is selected, show all notes from that category
-                        // Notes with no category are excluded when a specific category is selected
-                        return matches;
+                      // If user has general view permission, show all notes
+                      if (hasGeneralViewPermission) {
+                        return true;
                       }
-                      
-                      // If "all" is selected, show all notes (no filtering)
-                      return true;
+                      // If note has no category, show it (null category notes are accessible)
+                      if (!note.categId) {
+                        return true;
+                      }
+                      // Only show if user has view permission for this category
+                      return accessibleCategoryIds.includes(String(note.categId).trim());
                     });
                     
-                    // Debug logging
-                    console.debug(`[Notes Filter] Total notes: ${localNotes.length}, Selected category: ${normalizedSelectedCategoryId}, Filtered notes: ${filteredNotes.length}`);
-                    if (localNotes.length > 0 && normalizedSelectedCategoryId !== 'all') {
-                      const noteCategories = localNotes.map(n => normalizeCategoryId(n.categId));
-                      console.debug(`[Notes Filter] All note categories:`, noteCategories);
-                      console.debug(`[Notes Filter] Filtered note categories:`, filteredNotes.map(n => normalizeCategoryId(n.categId)));
-                    }
-                    
                     return filteredNotes.length > 0 ? (
-                      <div className="space-y-2 pt-2">
+                      <div className="space-y-2 pb-3">
                         {[...filteredNotes]
                           .sort((a, b) => {
                             const dateA = new Date(a.createdAt || a.created_at).getTime();
@@ -3959,11 +3933,55 @@ export function ContactInfoTab({
                         )}
                       </div>
                     ) : (
-                      <p className="text-sm text-slate-500">
-                        Aucune note dans cette catégorie
+                      <p className="text-sm text-slate-500 pb-3">
+                        Aucune note
                       </p>
                     );
                   })()}
+
+                  {/* Show category tabs - only for selecting which category to write to */}
+                  {/* Tabs only show categories user has create permission for */}
+                  {/* Hide tabs if user has permission to create only 1 note category */}
+                  {loadingCategories ? (
+                    <p className="text-xs text-slate-400 text-center py-2">Chargement des catégories...</p>
+                  ) : categoriesWithCreatePermission.length > 1 ? (
+                    <Tabs value={selectedCategoryId} onValueChange={(value) => {
+                      console.debug(`[ContactInfoTab] Category tab changed from "${selectedCategoryId}" to "${value}"`);
+                      console.debug(`[ContactInfoTab] Available categories with create permission:`, categoriesWithCreatePermission.map(c => ({ id: c.id, name: c.name })));
+                      setSelectedCategoryId(value);
+                    }} className="mb-2 w-full">
+                      <TabsList className="h-8 w-full">
+                        {categoriesWithCreatePermission.map((category) => (
+                          <TabsTrigger key={category.id} value={category.id} className="text-xs px-2 py-1 flex-1">
+                            {category.name}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
+                  ) : null}
+              
+                  {/* Show form only if user has create permission for informations tab AND category permission */}
+                  {canCreateInSelectedCategory && canCreateInformationsTab && (
+                    <form onSubmit={handleCreateNote} className="space-y-2">
+                      <Textarea
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                        placeholder="Ajouter une note..."
+                        rows={2}
+                        className="resize-none text-sm w-full"
+                        disabled={isSubmittingNote}
+                      />
+                      <Button 
+                        type="submit" 
+                        size="sm" 
+                        className="w-full"
+                        disabled={isSubmittingNote || !noteText.trim()}
+                      >
+                        <Send className="w-3 h-3 mr-1" />
+                        {isSubmittingNote ? 'Envoi...' : 'Enregistrer'}
+                      </Button>
+                    </form>
+                  )}
                 </>
               )}
             </CardContent>
@@ -4005,7 +4023,7 @@ export function ContactInfoTab({
             </div>
             <form onSubmit={handleCreateAppointment} className="modal-form">
               {isEventModalFromStatus && pendingStatusChange && (
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-blue-800">
                   <p className="font-medium">Événement requis</p>
                   <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
                 </div>
@@ -4572,7 +4590,8 @@ export function ContactInfoTab({
                   Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
                 </Label>
                 {/* Show category tabs if user has permission to create/edit/delete categories */}
-                {categoriesForStatusChange.length > 0 && (
+                {/* Hide tabs if user has permission to create only 1 note category */}
+                {categoriesForStatusChange.length > 1 && (
                   <div className="mb-2 flex gap-2">
                     {categoriesForStatusChange.map((category) => (
                       <Button
@@ -4609,7 +4628,7 @@ export function ContactInfoTab({
                   required={requiresNoteForStatusChange}
                 />
                 {requiresNoteForStatusChange && (
-                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.875rem', color: 'rgb(217, 119, 6)', marginTop: '0.5rem' }}>
                     Une note est obligatoire pour changer le statut.
                   </p>
                 )}
@@ -4628,7 +4647,7 @@ export function ContactInfoTab({
                 return (
                   <>
                     <div className="modal-form-field">
-                      <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                      <div className="mb-2 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-800">
                         <p className="font-medium">Événement requis</p>
                         <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
                       </div>
@@ -4974,7 +4993,7 @@ export function ContactInfoTab({
                           required
                           className={fieldErrors.montantEncaisse ? 'border-red-500' : ''}
                         />
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-xs text-slate-500 mt-1" style={{ color: 'rgb(217, 119, 6)' }}>
                           Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
                         </p>
                       </div>

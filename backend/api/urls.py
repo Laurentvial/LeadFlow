@@ -58,6 +58,15 @@ urlpatterns = [
     path('events/create/', api_views.event_create, name='event-create'),
     path('events/<str:event_id>/update/', api_views.event_update, name='event-update'),
     path('events/<str:event_id>/', api_views.event_delete, name='event-delete'),
+    # Transactions endpoints
+    path('transactions/', api_views.transaction_list, name='transaction-list'),
+    path('transactions/create/', api_views.transaction_create, name='transaction-create'),
+    path('transactions/<str:transaction_id>/update/', api_views.transaction_update, name='transaction-update'),
+    path('transactions/<str:transaction_id>/', api_views.transaction_delete, name='transaction-delete'),
+    # RIB endpoints
+    path('ribs/', api_views.rib_list, name='rib-list'),
+    path('ribs/create/', api_views.rib_create, name='rib-create'),
+    path('ribs/<str:rib_id>/', api_views.rib_delete, name='rib-delete'),
     # Roles endpoints
     path('roles/', api_views.role_list, name='role-list'),
     path('roles/create/', api_views.role_create, name='role-create'),

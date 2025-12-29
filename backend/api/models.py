@@ -601,3 +601,66 @@ class OTP(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return timezone.now() > self.expires_at
+
+class Transaction(models.Model):
+    """Transaction history for contacts - Retrait (withdrawal) or Depot (deposit)"""
+    TRANSACTION_TYPE_CHOICES = [
+        ('Retrait', 'Retrait'),
+        ('Depot', 'Depot'),
+    ]
+    
+    TRANSACTION_STATUS_CHOICES = [
+        ('pending', 'En attente'),
+        ('completed', 'Terminé'),
+        ('cancelled', 'Annulé'),
+        ('failed', 'Échoué'),
+    ]
+    
+    PAYMENT_TYPE_CHOICES = [
+        ('carte', 'Carte'),
+        ('virement', 'Virement'),
+    ]
+    
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    contact = models.ForeignKey(Contact, on_delete=models.CASCADE, related_name='transactions')
+    type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
+    platform = models.ForeignKey('Platform', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
+    bonus = models.BooleanField(default=False); # True if the transaction is a bonus
+    status = models.CharField(max_length=20, choices=TRANSACTION_STATUS_CHOICES, default='pending')
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, blank=True, default="")
+    rib = models.ForeignKey('RIB', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    date = models.DateTimeField()
+    comment = models.TextField(default="", blank=True)
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_transactions')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['contact', '-date']),  # Optimize queries filtering by contact
+            models.Index(fields=['contact', 'type', '-date']),  # Optimize queries filtering by contact and type
+            models.Index(fields=['status', '-date']),  # Optimize queries filtering by status
+            models.Index(fields=['-date']),  # Optimize ordering by date
+        ]
+    
+    def __str__(self):
+        return f"Transaction {self.id} - {self.type} - {self.amount} - {self.contact.id}"
+
+class RIB(models.Model):
+    """RIB (Relevé d'Identité Bancaire) - Bank account details"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    rib_text = models.TextField(default="", blank=True)  # Free text field for RIB information
+    created_by = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_ribs')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at']),  # Optimize ordering by created_at
+        ]
+    
+    def __str__(self):
+        return f"RIB {self.id} - {self.rib_text[:50] if self.rib_text else 'Empty'}"

@@ -18,7 +18,8 @@ import {
   MessageSquare,
   ChevronLeft,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Receipt
 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { UnreadMessagesContext } from '../contexts/UnreadMessagesContext';
@@ -85,6 +86,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
   const hasUsersPermission = checkUserPermission('users', 'view');
   const hasPermissionsPermission = checkUserPermission('permissions', 'view');
   const hasMailsPermission = checkUserPermission('mails', 'view');
+  const hasTransactionsPermission = checkUserPermission('transactions', 'view');
   
   // Check statuses permission (same logic as useHasStatusesPermission)
   const hasStatusesPermission = (() => {
@@ -214,6 +216,16 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
       permissionAction: 'view' as const,
     },
     { 
+      id: 'transactions', 
+      label: 'Transactions', 
+      icon: Receipt, 
+      roles: ['admin', 'teamleader', 'gestionnaire'], 
+      path: '/transactions',
+      requiresPermission: true,
+      permissionComponent: 'transactions',
+      permissionAction: 'view' as const,
+    },
+    { 
       id: 'chat', 
       label: 'Messages', 
       icon: MessageSquare, 
@@ -262,6 +274,7 @@ export function Sidebar({ currentPage, onNavigate, userRole }: SidebarProps) {
     if (component === 'contacts') return hasContactsPermission;
     if (component === 'fosse') return hasFossePermission;
     if (component === 'mails') return hasMailsPermission;
+    if (component === 'transactions') return hasTransactionsPermission;
     if (component === 'chat') return true; // Chat is available to all authenticated users
     if (component === 'users') return hasUsersPermission;
     if (component === 'settings') return hasSettingsPermission; // This checks permissions OR statuses

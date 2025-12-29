@@ -25,6 +25,7 @@ export function Layout({ children }: LayoutProps) {
     if (path === '/fosse') return 'fosse';
     if (path === '/planning') return 'planning';
     if (path === '/mails') return 'mails';
+    if (path === '/transactions') return 'transactions';
     if (path === '/chat') return 'chat';
     if (path === '/settings') return 'settings';
     return 'dashboard';

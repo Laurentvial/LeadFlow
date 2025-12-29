@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, Trash2, X, Send, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, X, Send, Search } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { useUser } from '../contexts/UserContext';
@@ -35,10 +35,13 @@ export function PlanningCalendar() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<number | null>(null); // Selected day for filtering
   const [view, setView] = useState<'month' | 'week' | 'day'>('day'); // Calendar view mode
+  const [currentMonthYear, setCurrentMonthYear] = useState<string>(''); // Track current month/year for reloading
   const dayHoursRef = useRef<HTMLDivElement>(null); // Ref for day hours container
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
+  const [prefilledDateTime, setPrefilledDateTime] = useState<{ date: Date; hour: number } | null>(null);
+  const prefilledDateTimeRef = useRef<{ date: Date; hour: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [upcomingEventsPage, setUpcomingEventsPage] = useState(1);
   const [upcomingEventsHasMore, setUpcomingEventsHasMore] = useState(false);
@@ -69,22 +72,56 @@ export function PlanningCalendar() {
     userId: ''
   });
 
-  // Initialize userId with current user and today's date when modal opens
+  // Initialize userId with current user and date/time when modal opens
   useEffect(() => {
     if (isModalOpen) {
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+      let dateToUse: Date;
+      let hourToUse: number;
+      
+      // Check both state and ref for prefilled data
+      const prefilled = prefilledDateTime || prefilledDateTimeRef.current;
+      if (prefilled) {
+        // Use prefilled date and hour from hour row click
+        dateToUse = prefilled.date;
+        hourToUse = prefilled.hour;
+        // Clear after use
+        setPrefilledDateTime(null);
+        prefilledDateTimeRef.current = null;
+      } else {
+        // Default to today and 9:00
+        dateToUse = new Date();
+        hourToUse = 9;
+      }
+      
+      const dateStr = formatDateLocal(dateToUse); // Format: YYYY-MM-DD
+      const hourStr = hourToUse.toString().padStart(2, '0');
+      
       setFormData(prev => ({ 
         ...prev, 
         userId: currentUser?.id || prev.userId,
-        date: todayStr // Always set to today when modal opens
+        date: dateStr,
+        hour: hourStr,
+        minute: '00'
       }));
     }
   }, [isModalOpen, currentUser]);
 
   useEffect(() => {
     loadData();
+    // Initialize currentMonthYear
+    const date = new Date();
+    setCurrentMonthYear(`${date.getFullYear()}-${date.getMonth()}`);
   }, []);
+
+  // Reload events only when the month/year changes, not on every date or view change
+  useEffect(() => {
+    const monthYear = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}`;
+    if (monthYear !== currentMonthYear && currentMonthYear !== '') {
+      setCurrentMonthYear(monthYear);
+      loadData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
 
   // Auto-scroll to current hour in day view
   useEffect(() => {
@@ -390,6 +427,7 @@ export function PlanningCalendar() {
       });
       
       setIsModalOpen(false);
+      setPrefilledDateTime(null);
       setFormData({ date: '', hour: '09', minute: '00', clientId: '', userId: currentUser?.id || '' });
       setClientSearchQuery('');
       setClientSearchFocused(false);
@@ -652,24 +690,44 @@ export function PlanningCalendar() {
     return userId ? String(userId) : null;
   };
 
+  // Normalize date to midnight local time
+  function normalizeDate(date: Date): Date {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    return normalized;
+  }
+
+  // Format date to YYYY-MM-DD string using local timezone
+  function formatDateLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   function getEventsForDay(day: number) {
-    const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
+    const dateStr = formatDateLocal(date);
     const allEvents = [...upcomingEvents, ...pastEvents];
     return allEvents.filter(event => {
       if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-      return eventDate === dateStr;
+      const eventDate = new Date(event.datetime);
+      const eventDateStr = formatDateLocal(eventDate);
+      return eventDateStr === dateStr;
     });
   }
 
   // Get events for a specific date
   function getEventsForDate(date: Date) {
-    const dateStr = date.toISOString().split('T')[0];
+    // Normalize date to midnight local time for consistent comparison
+    const normalizedDate = normalizeDate(date);
+    const dateStr = formatDateLocal(normalizedDate);
     const allEvents = [...upcomingEvents, ...pastEvents];
     return allEvents.filter(event => {
       if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-      return eventDate === dateStr;
+      const eventDate = new Date(event.datetime);
+      const eventDateStr = formatDateLocal(eventDate);
+      return eventDateStr === dateStr;
     });
   }
 
@@ -683,17 +741,20 @@ export function PlanningCalendar() {
     });
   }
 
-  // Get week days (Sunday to Saturday)
+  // Get week days (Monday to Sunday)
   function getWeekDays(): Date[] {
     const startOfWeek = new Date(selectedDate);
     const day = startOfWeek.getDay();
-    const diff = startOfWeek.getDate() - day; // Get Sunday of the week
-    const sunday = new Date(startOfWeek.setDate(diff));
+    // Convert Sunday (0) to 7, then subtract 1 to get days from Monday (1) to Sunday (0)
+    // This gives us: Monday=0, Tuesday=1, ..., Sunday=6
+    const daysFromMonday = day === 0 ? 6 : day - 1;
+    const diff = startOfWeek.getDate() - daysFromMonday; // Get Monday of the week
+    const monday = new Date(startOfWeek.setDate(diff));
     
     const weekDays: Date[] = [];
     for (let i = 0; i < 7; i++) {
-      const date = new Date(sunday);
-      date.setDate(sunday.getDate() + i);
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + i);
       weekDays.push(date);
     }
     return weekDays;
@@ -767,7 +828,10 @@ export function PlanningCalendar() {
         </div>
         
         {canCreate && (
-          <Button type="button" onClick={() => setIsModalOpen(true)}>
+          <Button type="button" onClick={() => {
+            setPrefilledDateTime(null); // Clear any prefilled data
+            setIsModalOpen(true);
+          }}>
             <Plus className="planning-icon planning-icon-with-margin" />
             Ajouter un rendez-vous
           </Button>
@@ -776,6 +840,7 @@ export function PlanningCalendar() {
         {isModalOpen && (
           <div className="modal-overlay" onClick={() => {
             setIsModalOpen(false);
+            setPrefilledDateTime(null);
             setClientSearchQuery('');
             setClientSearchFocused(false);
           }}>
@@ -789,6 +854,7 @@ export function PlanningCalendar() {
                   className="modal-close"
                   onClick={() => {
                     setIsModalOpen(false);
+                    setPrefilledDateTime(null);
                     setClientSearchQuery('');
                     setClientSearchFocused(false);
                   }}
@@ -918,6 +984,7 @@ export function PlanningCalendar() {
                 <div className="modal-form-actions">
                   <Button type="button" variant="outline" onClick={() => {
                     setIsModalOpen(false);
+                    setPrefilledDateTime(null);
                     setClientSearchQuery('');
                     setClientSearchFocused(false);
                   }}>
@@ -1178,7 +1245,7 @@ export function PlanningCalendar() {
           <CardContent>
             {view === 'month' && (
               <div className="planning-calendar-grid">
-                {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'].map((day) => (
+                {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day) => (
                   <div key={day} className="planning-weekday">
                     {day}
                   </div>
@@ -1201,8 +1268,11 @@ export function PlanningCalendar() {
                       key={day}
                       className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
                       onClick={() => {
-                        // Toggle selection: if same day clicked, deselect; otherwise select new day
-                        setSelectedDay(isSelected ? null : day);
+                        // Redirect to day view for the clicked day
+                        const clickedDate = normalizeDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day));
+                        setSelectedDate(clickedDate);
+                        setView('day');
+                        setSelectedDay(null);
                       }}
                       style={{ cursor: 'pointer' }}
                     >
@@ -1224,7 +1294,8 @@ export function PlanningCalendar() {
                                 backgroundColor: lightColor,
                                 color: userColor,
                                 borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
-                                paddingLeft: '0.5rem'
+                                paddingLeft: '0.5rem',
+                                position: 'relative'
                               }}
                             >
                               <div className="planning-event-time">
@@ -1246,6 +1317,25 @@ export function PlanningCalendar() {
                                 >
                                   {event.contactName || event.clientName}
                                 </div>
+                              )}
+                              {canDelete && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteEvent(event.id);
+                                  }}
+                                  style={{ 
+                                    padding: '2px 4px',
+                                    fontSize: '0.7rem',
+                                    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                    color: '#dc2626'
+                                  }}
+                                >
+                                  Supprimer
+                                </Button>
                               )}
                               {eventUserId && (
                                 <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -1293,14 +1383,16 @@ export function PlanningCalendar() {
                         key={index}
                         className={`planning-week-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
                         onClick={() => {
-                          setSelectedDate(date);
-                          setSelectedDay(date.getDate());
+                          // Redirect to day view for the clicked day
+                          setSelectedDate(normalizeDate(date));
+                          setView('day');
+                          setSelectedDay(null);
                         }}
                         style={{ cursor: 'pointer' }}
                       >
                         <div className="planning-week-day-header">
                           <div className="planning-week-day-name">
-                            {['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'][date.getDay()]}
+                            {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'][(date.getDay() + 6) % 7]}
                           </div>
                           <div className="planning-week-day-number">{date.getDate()}</div>
                         </div>
@@ -1321,7 +1413,8 @@ export function PlanningCalendar() {
                                   backgroundColor: lightColor,
                                   color: userColor,
                                   borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
-                                  paddingLeft: '0.5rem'
+                                  paddingLeft: '0.5rem',
+                                  position: 'relative'
                                 }}
                               >
                                 <div className="planning-event-time">
@@ -1343,6 +1436,25 @@ export function PlanningCalendar() {
                                   >
                                     {event.contactName || event.clientName}
                                   </div>
+                                )}
+                                {canDelete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteEvent(event.id);
+                                    }}
+                                    style={{ 
+                                      padding: '2px 4px',
+                                      fontSize: '0.7rem',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                      color: '#dc2626'
+                                    }}
+                                  >
+                                    Supprimer
+                                  </Button>
                                 )}
                                 {eventUserId && (
                                   <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -1383,12 +1495,35 @@ export function PlanningCalendar() {
                       <div
                         key={hour}
                         data-hour={hour}
-                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''}`}
+                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''} ${canCreate ? 'planning-day-hour-clickable' : ''}`}
+                        onClick={canCreate ? (e) => {
+                          // Only open modal if clicking on the hour row itself or empty space, not on an event
+                          const target = e.target as HTMLElement;
+                          const isEventClick = target.closest('.planning-day-event');
+                          
+                          // Don't open modal if clicking on an event
+                          if (!isEventClick) {
+                            // Use the selectedDate from day view and the hour from the clicked row
+                            const dateToPrefill = normalizeDate(new Date(selectedDate));
+                            const prefilledData = { date: dateToPrefill, hour };
+                            // Set both state and ref to ensure it's available when modal opens
+                            setPrefilledDateTime(prefilledData);
+                            prefilledDateTimeRef.current = prefilledData;
+                            setIsModalOpen(true);
+                          }
+                        } : undefined}
+                        style={canCreate ? { cursor: 'pointer' } : undefined}
                       >
                         <div className="planning-day-hour-label">
                           {hour.toString().padStart(2, '0')}:00
                         </div>
-                        <div className="planning-day-hour-content">
+                        <div className="planning-day-hour-content" onClick={(e) => {
+                          // Stop propagation if clicking on events to prevent opening modal
+                          const target = e.target as HTMLElement;
+                          if (target.closest('.planning-day-event')) {
+                            e.stopPropagation();
+                          }
+                        }}>
                           {hourEvents.map((event) => {
                             const eventDate = new Date(event.datetime);
                             const time = eventDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -1405,7 +1540,8 @@ export function PlanningCalendar() {
                                 style={{ 
                                   cursor: canEdit ? 'pointer' : 'default',
                                   backgroundColor: lightColor,
-                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`
+                                  borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
+                                  position: 'relative'
                                 }}
                               >
                                 <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
@@ -1446,6 +1582,25 @@ export function PlanningCalendar() {
                                 })()}
                                 {event.comment && (
                                   <div className="planning-day-event-comment">{event.comment}</div>
+                                )}
+                                {canDelete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteEvent(event.id);
+                                    }}
+                                    style={{ 
+                                      padding: '2px 4px',
+                                      fontSize: '0.7rem',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                      color: '#dc2626'
+                                    }}
+                                  >
+                                    Supprimer
+                                  </Button>
                                 )}
                               </div>
                             );
@@ -1515,33 +1670,36 @@ export function PlanningCalendar() {
               
               // Filter by day if selected or in day view
               if (selectedDay !== null || view === 'day') {
-                const dayToFilter = view === 'day' ? selectedDate.getDate() : selectedDay;
                 const dateToFilter = view === 'day' ? selectedDate : new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDay!);
-                const selectedDateStr = `${dateToFilter.getFullYear()}-${String(dateToFilter.getMonth() + 1).padStart(2, '0')}-${String(dayToFilter).padStart(2, '0')}`;
+                const selectedDateStr = formatDateLocal(dateToFilter);
                 filteredUpcomingEvents = filteredUpcomingEvents.filter(event => {
                   if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate === selectedDateStr;
+                  const eventDate = new Date(event.datetime);
+                  const eventDateStr = formatDateLocal(eventDate);
+                  return eventDateStr === selectedDateStr;
                 });
                 filteredPastEvents = filteredPastEvents.filter(event => {
                   if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate === selectedDateStr;
+                  const eventDate = new Date(event.datetime);
+                  const eventDateStr = formatDateLocal(eventDate);
+                  return eventDateStr === selectedDateStr;
                 });
               } else if (view === 'week') {
                 // Filter events for the current week
                 const weekDays = getWeekDays();
-                const weekStartStr = weekDays[0].toISOString().split('T')[0];
-                const weekEndStr = weekDays[6].toISOString().split('T')[0];
+                const weekStartStr = formatDateLocal(weekDays[0]);
+                const weekEndStr = formatDateLocal(weekDays[6]);
                 filteredUpcomingEvents = filteredUpcomingEvents.filter(event => {
                   if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate >= weekStartStr && eventDate <= weekEndStr;
+                  const eventDate = new Date(event.datetime);
+                  const eventDateStr = formatDateLocal(eventDate);
+                  return eventDateStr >= weekStartStr && eventDateStr <= weekEndStr;
                 });
                 filteredPastEvents = filteredPastEvents.filter(event => {
                   if (!event.datetime) return false;
-                  const eventDate = new Date(event.datetime).toISOString().split('T')[0];
-                  return eventDate >= weekStartStr && eventDate <= weekEndStr;
+                  const eventDate = new Date(event.datetime);
+                  const eventDateStr = formatDateLocal(eventDate);
+                  return eventDateStr >= weekStartStr && eventDateStr <= weekEndStr;
                 });
               }
 

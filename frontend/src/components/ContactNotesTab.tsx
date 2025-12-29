@@ -8,6 +8,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useHasNoteCategoryPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
+import { useUser } from '../contexts/UserContext';
 
 interface NoteCategory {
   id: string;
@@ -99,68 +100,71 @@ const NoteItem: React.FC<NoteItemProps> = ({ note, onDelete, onEdit }) => {
             )}
           </div>
         </div>
-        <div className="flex gap-1">
-          {canEdit && !isEditing && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleStartEdit}
-              className="text-slate-600"
-            >
-              <Edit2 className="w-4 h-4" />
-            </Button>
-          )}
-          {canDelete && !isEditing && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onDelete(note.id)}
-              className="text-red-600"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          )}
-          {isEditing && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleSaveEdit}
-                disabled={isSaving}
-                className="text-green-600"
-              >
-                <Check className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelEdit}
-                disabled={isSaving}
-                className="text-slate-600"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </>
-          )}
-        </div>
       </div>
       {isEditing ? (
-        <Textarea
-          value={editText}
-          onChange={(e) => setEditText(e.target.value)}
-          className="resize-none"
-          rows={4}
-          disabled={isSaving}
-          autoFocus
-        />
+        <>
+          <Textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            className="resize-none"
+            rows={4}
+            disabled={isSaving}
+            autoFocus
+          />
+          <div className="flex gap-1 mt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSaveEdit}
+              disabled={isSaving}
+              className="text-green-600"
+            >
+              <Check className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCancelEdit}
+              disabled={isSaving}
+              className="text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </>
       ) : (
-        <p className="whitespace-pre-wrap">{note.text}</p>
+        <>
+          <p className="whitespace-pre-wrap mb-2">{note.text}</p>
+          <div className="flex gap-1">
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleStartEdit}
+                className="text-slate-600"
+              >
+                <Edit2 className="w-4 h-4" />
+              </Button>
+            )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onDelete(note.id)}
+                className="text-red-600"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
 };
 
 export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTabProps) {
+  const { currentUser } = useUser();
   const [noteText, setNoteText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [categories, setCategories] = useState<NoteCategory[]>([]);
@@ -180,10 +184,24 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
     return categories.filter(cat => accessibleCategoryIds.includes(cat.id))
       .sort((a, b) => a.orderIndex - b.orderIndex);
   }, [categories, accessibleCategoryIds]);
-  
+
+  // Filter categories to only show those user has create permission for (for tabs)
+  const categoriesWithCreatePermission = useMemo(() => {
+    if (!currentUser?.permissions) return [];
+    return categories.filter(cat => {
+      // Check if user has create permission for this category
+      return currentUser.permissions.some((p: any) => 
+        p.component === 'note_categories' && 
+        p.action === 'create' && 
+        p.fieldName === cat.id &&
+        !p.statusId
+      );
+    }).sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [categories, currentUser?.permissions]);
+
   // Check if user has any view permissions
   const hasAnyViewPermission = accessibleCategories.length > 0;
-  
+
   // Check create permission for selected category
   const canCreateInSelectedCategory = useHasNoteCategoryPermission(selectedCategoryId, 'create');
 
@@ -192,17 +210,18 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
   }, []);
 
   useEffect(() => {
-    // Update selected category if current selection is not accessible
-    if (selectedCategoryId !== 'all' && !accessibleCategoryIds.includes(selectedCategoryId)) {
-      if (accessibleCategories.length > 0) {
-        setSelectedCategoryId(accessibleCategories[0].id);
+    // Update selected category if current selection is not in categories with create permission
+    const categoryIdsWithCreatePermission = categoriesWithCreatePermission.map(cat => cat.id);
+    if (selectedCategoryId !== 'all' && !categoryIdsWithCreatePermission.includes(selectedCategoryId)) {
+      if (categoriesWithCreatePermission.length > 0) {
+        setSelectedCategoryId(categoriesWithCreatePermission[0].id);
       } else {
         setSelectedCategoryId('all');
       }
-    } else if (selectedCategoryId === 'all' && accessibleCategories.length > 0) {
-      setSelectedCategoryId(accessibleCategories[0].id);
+    } else if (selectedCategoryId === 'all' && categoriesWithCreatePermission.length > 0) {
+      setSelectedCategoryId(categoriesWithCreatePermission[0].id);
     }
-  }, [accessibleCategories, accessibleCategoryIds, selectedCategoryId]);
+  }, [categoriesWithCreatePermission, selectedCategoryId]);
 
   async function loadCategories() {
     try {
@@ -359,35 +378,13 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
     }
   }
 
-  // Calculate note counts for each accessible category
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    
-    accessibleCategories.forEach(category => {
-      counts[category.id] = localNotes.filter(note => {
-        // Only count notes that belong to this category
-        if (note.categId !== category.id) {
-          return false;
-        }
-        // Only count notes user has view permission for
-        return accessibleCategoryIds.includes(note.categId);
-      }).length;
-    });
-    
-    return counts;
-  }, [localNotes, accessibleCategories, accessibleCategoryIds]);
 
-  // Filter notes by selected category and view permissions
+  // Show all notes with view permissions - NOT filtered by selectedCategoryId
+  // selectedCategoryId only affects which category new notes are created in
   const filteredNotes = useMemo(() => {
-    let filtered = localNotes;
-    
-    // Filter by selected category
-    if (selectedCategoryId !== 'all') {
-      filtered = filtered.filter(note => note.categId === selectedCategoryId);
-    }
-    
     // Filter to only show notes from categories user has view permission for
-    filtered = filtered.filter(note => {
+    // Note: This does NOT filter by selectedCategoryId - all notes are shown together
+    return localNotes.filter(note => {
       // If note has no category, show it (null category notes are accessible)
       if (!note.categId) {
         return true;
@@ -395,9 +392,7 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
       // Only show if user has view permission for this category
       return accessibleCategoryIds.includes(note.categId);
     });
-    
-      return filtered;
-    }, [localNotes, selectedCategoryId, accessibleCategoryIds]);
+  }, [localNotes, accessibleCategoryIds]);
 
   // Don't render if user has no view permissions for any category
   if (!hasAnyViewPermission) {
@@ -406,26 +401,52 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
 
   return (
     <div className="space-y-6">
+      {/* Notes List - Display all notes first */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Notes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {filteredNotes.length > 0 ? (
+            <div className="space-y-3">
+              {filteredNotes.map((note) => (
+                <NoteItem 
+                  key={note.id} 
+                  note={note} 
+                  onDelete={handleDeleteNote}
+                  onEdit={handleEditNote}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">
+              Aucune note
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Category tabs - only for selecting which category to write to */}
+      {/* Tabs only show categories user has create permission for */}
+      {/* Hide tabs if user has permission to create only 1 note category */}
+      {categoriesWithCreatePermission.length > 1 && (
+        <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId}>
+          <TabsList>
+            {categoriesWithCreatePermission.map((category) => (
+              <TabsTrigger key={category.id} value={category.id}>
+                {category.name}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      )}
+
       {/* Create Note Form */}
       <Card>
         <CardHeader>
           <CardTitle>Ajouter une note</CardTitle>
         </CardHeader>
         <CardContent>
-          {accessibleCategories.length > 0 && (
-            <Tabs value={selectedCategoryId} onValueChange={setSelectedCategoryId} className="mb-4">
-              <TabsList>
-                {accessibleCategories.map((category) => (
-                  <TabsTrigger key={category.id} value={category.id}>
-                    {category.name}
-                    <span className="ml-2 px-1.5 py-0.5 text-xs font-medium bg-slate-200 text-slate-700 rounded-full">
-                      {categoryCounts[category.id] || 0}
-                    </span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          )}
           <form onSubmit={handleCreateNote} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="note-text">Note</Label>
@@ -446,31 +467,6 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
               </Button>
             )}
           </form>
-        </CardContent>
-      </Card>
-
-      {/* Notes List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {filteredNotes.length > 0 ? (
-            <div className="space-y-3">
-              {filteredNotes.map((note) => (
-                <NoteItem 
-                  key={note.id} 
-                  note={note} 
-                  onDelete={handleDeleteNote}
-                  onEdit={handleEditNote}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">
-              Aucune note dans cette catégorie
-            </p>
-          )}
         </CardContent>
       </Card>
     </div>

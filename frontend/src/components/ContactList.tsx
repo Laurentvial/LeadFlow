@@ -2958,6 +2958,32 @@ export function ContactList({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        
+        // Create transaction for the first payment when moving to client status
+        if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
+          try {
+            const now = new Date();
+            const dateTime = now.toISOString();
+            
+            await apiCall('/api/transactions/create/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contactId: selectedContact.id,
+                type: 'Depot',
+                status: 'completed',
+                payment_type: clientFormData.paiement || '',
+                amount: parseFloat(clientFormData.montantEncaisse),
+                date: dateTime,
+                comment: `Premier paiement - Montant encaissé: ${clientFormData.montantEncaisse}€${clientFormData.bonus ? `, Bonus: ${clientFormData.bonus}€` : ''}`,
+              }),
+            });
+          } catch (transactionError: any) {
+            console.error('Error creating transaction:', transactionError);
+            // Don't fail the whole operation if transaction creation fails
+            toast.error('Contact mis à jour mais erreur lors de la création de la transaction');
+          }
+        }
       } else {
         // Update status (non-client default status)
         // If status is an event status, also update teleoperator
@@ -4592,7 +4618,8 @@ export function ContactList({
                   Note {requiresNoteForStatusChange && <span style={{ color: '#ef4444' }}>*</span>}
                 </Label>
                 {/* Show category tabs if user has permission to create/edit/delete categories */}
-                {categoriesForStatusChange.length > 0 && (
+                {/* Hide tabs if user has permission to create only 1 note category */}
+                {categoriesForStatusChange.length > 1 && (
                   <div className="mb-2 flex gap-2">
                     {categoriesForStatusChange.map((category) => (
                       <Button
@@ -4629,7 +4656,7 @@ export function ContactList({
                   required={requiresNoteForStatusChange}
                 />
                 {requiresNoteForStatusChange && (
-                  <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.875rem', color: 'rgb(217, 119, 6)', marginTop: '0.5rem' }}>
                     Une note est obligatoire pour changer le statut.
                   </p>
                 )}
@@ -4698,7 +4725,7 @@ export function ContactList({
               {selectedStatusIsEvent && (
                 <>
                   <div className="modal-form-field">
-                    <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                    <div className="mb-2 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-800">
                       <p className="font-medium">Événement requis</p>
                       <p className="text-xs mt-1">Vous devez créer un événement pour valider le changement de statut.</p>
                     </div>
@@ -5040,7 +5067,7 @@ export function ContactList({
                           required
                           className={fieldErrors.montantEncaisse ? 'border-red-500' : ''}
                         />
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-xs text-slate-500 mt-1" style={{ color: 'rgb(217, 119, 6)' }}>
                           Merci d'indiquer dans la description le montant réellement prélevé par notre TPE, c'est-à-dire le montant déjà enregistré dans nos comptes, et non le montant inscrit sur le contrat. Si virement, merci d'y inscrire 0 (si virement mollie, directement envoyé a Cléo donc y mettre 0)
                         </p>
                       </div>
