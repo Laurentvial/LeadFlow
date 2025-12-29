@@ -105,6 +105,9 @@ export function PlanningAdministrateur() {
         // Use prefilled date and hour from hour row click
         dateToUse = prefilled.date;
         hourToUse = prefilled.hour;
+        // Clamp hour to 8-23 range
+        if (hourToUse < 8) hourToUse = 8;
+        if (hourToUse > 23) hourToUse = 23;
         // Clear after use
         setPrefilledDateTime(null);
         prefilledDateTimeRef.current = null;
@@ -541,8 +544,16 @@ export function PlanningAdministrateur() {
     
     const eventDate = new Date(event.datetime);
     const dateStr = formatDateLocal(eventDate);
-    const hour = eventDate.getHours().toString().padStart(2, '0');
-    const minute = eventDate.getMinutes().toString().padStart(2, '0');
+    let hour = eventDate.getHours();
+    // Clamp hour to 8-23 range
+    if (hour < 8) hour = 8;
+    if (hour > 23) hour = 23;
+    const hourStr = hour.toString().padStart(2, '0');
+    // Round minute to nearest 5-minute increment
+    let minute = eventDate.getMinutes();
+    minute = Math.round(minute / 5) * 5;
+    if (minute === 60) minute = 55; // Cap at 55
+    const minuteStr = minute.toString().padStart(2, '0');
     
     setEditingEvent(event);
     const selectedClientId = event.clientId_read || event.contactId || '';
@@ -589,8 +600,8 @@ export function PlanningAdministrateur() {
     
     setEditFormData({
       date: dateStr,
-      hour: hour,
-      minute: minute,
+      hour: hourStr,
+      minute: minuteStr,
       clientId: selectedClientId,
       userId: userIdString
     });
@@ -1419,8 +1430,8 @@ export function PlanningAdministrateur() {
                         <SelectValue placeholder="Heure" />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => {
-                          const hour = i.toString().padStart(2, '0');
+                        {Array.from({ length: 16 }, (_, i) => {
+                          const hour = (i + 8).toString().padStart(2, '0');
                           return (
                             <SelectItem key={hour} value={hour}>
                               {hour}
@@ -1438,8 +1449,8 @@ export function PlanningAdministrateur() {
                         <SelectValue placeholder="Minute" />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 60 }, (_, i) => {
-                          const minute = i.toString().padStart(2, '0');
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const minute = (i * 5).toString().padStart(2, '0');
                           return (
                             <SelectItem key={minute} value={minute}>
                               {minute}
@@ -1734,8 +1745,8 @@ export function PlanningAdministrateur() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => {
-                          const hour = i.toString().padStart(2, '0');
+                        {Array.from({ length: 16 }, (_, i) => {
+                          const hour = (i + 8).toString().padStart(2, '0');
                           return (
                             <SelectItem key={hour} value={hour}>
                               {hour}h
@@ -1753,8 +1764,8 @@ export function PlanningAdministrateur() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 60 }, (_, i) => {
-                          const minute = i.toString().padStart(2, '0');
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const minute = (i * 5).toString().padStart(2, '0');
                           return (
                             <SelectItem key={minute} value={minute}>
                               {minute}

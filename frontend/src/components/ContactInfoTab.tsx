@@ -315,6 +315,92 @@ export function ContactInfoTab({
   const [users, setUsers] = React.useState<any[]>([]);
   const [usersLoaded, setUsersLoaded] = React.useState(false);
   
+  // Filter teleoperateurs based on dataAccess
+  const availableTeleoperateurs = React.useMemo(() => {
+    if (!users || users.length === 0) return [];
+    
+    // First, filter to only teleoperateurs
+    const teleoperateurs = users.filter((user) => 
+      user && user.id && String(user.id).trim() !== '' && user.isTeleoperateur === true
+    );
+    
+    // If no currentUser or no dataAccess, show all teleoperateurs
+    if (!currentUser || !currentUser.dataAccess) {
+      return teleoperateurs;
+    }
+    
+    // own_only: Show only current user
+    if (currentUser.dataAccess === 'own_only') {
+      return teleoperateurs.filter((user) => String(user.id) === String(currentUser.id));
+    }
+    
+    // team_only: Show users from the same team
+    if (currentUser.dataAccess === 'team_only') {
+      // Normalize current user's teamId
+      const normalizeTeamId = (teamId: any): string | null => {
+        if (teamId === null || teamId === undefined || teamId === '') return null;
+        const str = String(teamId).trim();
+        return str === '' ? null : str;
+      };
+      
+      const currentUserTeamId = normalizeTeamId(currentUser.teamId);
+      
+      // If current user has no team, show only themselves
+      if (!currentUserTeamId) {
+        return teleoperateurs.filter((user) => String(user.id) === String(currentUser.id));
+      }
+      
+      // Filter: include users with matching teamId OR the current user
+      const filtered = teleoperateurs.filter((user) => {
+        const userId = String(user.id);
+        const currentUserId = String(currentUser.id);
+        
+        // Always include current user
+        if (userId === currentUserId) {
+          return true;
+        }
+        
+        // Check if user is in the same team
+        const userTeamId = normalizeTeamId(user.teamId);
+        if (userTeamId && userTeamId === currentUserTeamId) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      // Debug logging
+      console.log('[ContactInfoTab - Teleoperateurs Filter]', {
+        currentUser: {
+          id: currentUser.id,
+          teamId: currentUser.teamId,
+          normalizedTeamId: currentUserTeamId,
+          dataAccess: currentUser.dataAccess
+        },
+        totalTeleoperateurs: teleoperateurs.length,
+        filteredCount: filtered.length,
+        allTeleoperateurs: teleoperateurs.map(u => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email,
+          teamId: u.teamId,
+          normalizedTeamId: normalizeTeamId(u.teamId),
+          isCurrentUser: String(u.id) === String(currentUser.id)
+        })),
+        filtered: filtered.map(u => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email,
+          teamId: u.teamId,
+          normalizedTeamId: normalizeTeamId(u.teamId)
+        }))
+      });
+      
+      return filtered;
+    }
+    
+    // dataAccess === 'all' - show all teleoperateurs
+    return teleoperateurs;
+  }, [users, currentUser?.dataAccess, currentUser?.teamId, currentUser?.id]);
+  
   const loadUsersIfNeeded = React.useCallback(async () => {
     if (usersLoaded) return;
     try {
@@ -785,6 +871,8 @@ export function ContactInfoTab({
   const [eventHour, setEventHour] = useState('');
   const [eventMinute, setEventMinute] = useState('');
   const [eventTeleoperatorId, setEventTeleoperatorId] = useState('');
+  const [contactNotes, setContactNotes] = useState<any[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
   
   // Check if selected status is client default
   const selectedStatusIsClientDefault = React.useMemo(() => {
@@ -841,11 +929,32 @@ export function ContactInfoTab({
         // Don't pre-fill hour and minute - leave them empty
         setEventHour('');
         setEventMinute('');
-        // Prefill teleoperatorId with current user if they are a teleoperateur, otherwise use contact's teleoperator
+        // Prefill teleoperatorId based on dataAccess
         if (contact) {
-          const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
-            ? currentUser.id 
-            : (contact.teleoperatorId || contact.managerId || '');
+          let defaultTeleoperatorId = '';
+          if (currentUser?.dataAccess === 'own_only') {
+            // Only show/assign to themselves
+            defaultTeleoperatorId = currentUser?.isTeleoperateur === true ? currentUser.id : '';
+          } else if (currentUser?.dataAccess === 'team_only') {
+            // Prefer current user if they're a teleoperateur, otherwise use contact's teleoperator if in same team
+            if (currentUser?.isTeleoperateur === true) {
+              defaultTeleoperatorId = currentUser.id;
+            } else {
+              const contactTeleoperator = users.find(u => u.id === contact.teleoperatorId);
+              if (contactTeleoperator) {
+                const currentUserTeamId = currentUser?.teamId ? String(currentUser.teamId).trim() : null;
+                const contactTeleoperatorTeamId = contactTeleoperator.teamId ? String(contactTeleoperator.teamId).trim() : null;
+                if (currentUserTeamId && contactTeleoperatorTeamId === currentUserTeamId) {
+                  defaultTeleoperatorId = contact.teleoperatorId || '';
+                }
+              }
+            }
+          } else {
+            // dataAccess === 'all' - use current user or contact's teleoperator
+            defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+              ? currentUser.id 
+              : (contact.teleoperatorId || contact.managerId || '');
+          }
           setEventTeleoperatorId(defaultTeleoperatorId);
         }
       } else if (!isEventStatus) {
@@ -1140,6 +1249,54 @@ export function ContactInfoTab({
       setStatusChangeNoteCategoryId(categoriesForStatusChange[0].id);
     }
   }, [isStatusModalOpen, categoriesForStatusChange, statusChangeNoteCategoryId]);
+  
+  // Load notes when status modal opens
+  React.useEffect(() => {
+    const loadContactNotes = async () => {
+      if (!isStatusModalOpen || !contactId) {
+        setContactNotes([]);
+        return;
+      }
+
+      setLoadingNotes(true);
+      try {
+        const data = await apiCall(`/api/notes/?contactId=${contactId}`);
+        // Handle both paginated response (data.results) and direct array response
+        const notesArray = Array.isArray(data) ? data : (data.results || data.notes || []);
+        // Filter notes by permissions (same logic as ContactList)
+        const filteredNotes = notesArray.filter((note: any) => {
+          // If user has general view permission, show all notes
+          if (hasGeneralViewPermission) {
+            return true;
+          }
+          // If note has no category, show it (null category notes are accessible)
+          if (!note.categId) {
+            return true;
+          }
+          // Only show if user has view permission for this category
+          const noteCategoryId = String(note.categId).trim();
+          const normalizedAccessibleIds = accessibleCategoryIds.map(id => String(id).trim());
+          return normalizedAccessibleIds.includes(noteCategoryId);
+        });
+        // Sort by created_at descending and take last 3
+        const sortedNotes = [...filteredNotes]
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || a.created_at).getTime();
+            const dateB = new Date(b.createdAt || b.created_at).getTime();
+            return dateB - dateA; // Descending order (most recent first)
+          })
+          .slice(0, 3);
+        setContactNotes(sortedNotes);
+      } catch (error) {
+        console.error('Error loading notes:', error);
+        setContactNotes([]);
+      } finally {
+        setLoadingNotes(false);
+      }
+    };
+
+    loadContactNotes();
+  }, [isStatusModalOpen, contactId, hasGeneralViewPermission, accessibleCategoryIds]);
   
   // Helper function to prefill client form with contact data
   const prefillClientForm = React.useCallback((contactData: any) => {
@@ -1567,10 +1724,22 @@ export function ContactInfoTab({
   };
 
   async function handleUpdateStatus() {
-    if (!contact) return;
+    console.log('[Status Update] ===== handleUpdateStatus called =====');
+    console.log('[Status Update] contact:', contact?.id);
+    console.log('[Status Update] selectedStatusId:', selectedStatusId);
+    console.log('[Status Update] eventDate:', eventDate);
+    console.log('[Status Update] eventHour:', eventHour);
+    console.log('[Status Update] eventMinute:', eventMinute);
+    console.log('[Status Update] eventTeleoperatorId:', eventTeleoperatorId);
+    
+    if (!contact) {
+      console.log('[Status Update] ERROR: No contact, returning early');
+      return;
+    }
     
     // Validate note is required only if permission requires it
     if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
+      console.log('[Status Update] ERROR: Note required but not provided');
       setFieldErrors(prev => ({ ...prev, note: true }));
       toast.error('Veuillez saisir une note pour changer le statut');
       setIsSavingClientForm(false);
@@ -1588,6 +1757,7 @@ export function ContactInfoTab({
     
     // Validate that a category is selected if note is provided and categories are available
     if (statusChangeNote.trim() && categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
+      console.log('[Status Update] ERROR: Note category required but not selected');
       toast.error('Veuillez sélectionner une catégorie pour la note');
       return;
     }
@@ -1597,17 +1767,26 @@ export function ContactInfoTab({
     const selectedStatus = statuses.find(s => String(s.id) === String(selectedStatusId));
     // Check both isEvent (camelCase) and is_event (snake_case) for compatibility
     const isEventStatus = selectedStatus && (selectedStatus.isEvent === true || selectedStatus.is_event === true);
+    console.log('[Status Update] isEventStatus:', isEventStatus);
     
-    // If status is an event status, validate event fields
-    if (isEventStatus && canCreatePlanning) {
+    // If status is an event status, validate event fields (don't require canCreatePlanning permission)
+    console.log('[Status Update] Checking event validation...');
+    console.log('[Status Update] isEventStatus:', isEventStatus);
+    if (isEventStatus) {
+      console.log('[Status Update] Event status detected, validating event fields...');
       if (!eventDate) {
+        console.log('[Status Update] ERROR: eventDate is missing');
         toast.error('Veuillez sélectionner une date pour l\'événement');
         return;
       }
       if (!eventHour || !eventMinute) {
+        console.log('[Status Update] ERROR: eventHour or eventMinute is missing', { eventHour, eventMinute });
         toast.error('Veuillez sélectionner une heure pour l\'événement');
         return;
       }
+      console.log('[Status Update] Event fields validation passed');
+    } else {
+      console.log('[Status Update] Not an event status');
     }
     
     // If status is being changed, check permissions
@@ -1634,10 +1813,13 @@ export function ContactInfoTab({
       }
     }
     
+    console.log('[Status Update] All validations passed, proceeding with status update...');
     setIsSavingClientForm(true);
     try {
+      console.log('[Status Update] selectedStatusIsClientDefault:', selectedStatusIsClientDefault);
       // If status is client default, validate and include client form data
       if (selectedStatusIsClientDefault) {
+        console.log('[Status Update] Processing client default status...');
         // Validate required client form fields and set errors
         const errors: Record<string, boolean> = {};
         if (!clientFormData.platformId) errors.platformId = true;
@@ -1681,11 +1863,13 @@ export function ContactInfoTab({
         };
         
         // Update contact with client form data
+        console.log('[Status Update] Updating contact with client form data:', payload);
         await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        console.log('[Status Update] Contact updated successfully');
         
         // Create transaction for the first payment when moving to client status
         if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
@@ -1714,37 +1898,99 @@ export function ContactInfoTab({
         }
       } else {
         // Update status (non-client default status)
+        console.log('[Status Update] Processing non-client default status...');
         // If status is an event status, also update teleoperator
         const updatePayload: any = {
           statusId: selectedStatusId || ''
         };
         
         if (isEventStatus && eventTeleoperatorId) {
+          console.log('[Status Update] Adding teleoperator to update payload:', eventTeleoperatorId);
           updatePayload.teleoperatorId = eventTeleoperatorId || null;
         }
         
+        console.log('[Status Update] Updating contact status:', updatePayload);
         await apiCall(`/api/contacts/${contactId}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatePayload)
         });
+        console.log('[Status Update] Contact status updated successfully');
       }
       
-      // Create event if status has isEvent=true
-      if (isEventStatus && canCreatePlanning && canCreateInformationsTab && eventDate && eventHour && eventMinute) {
-        const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
-        await apiCall('/api/events/create/', {
-          method: 'POST',
-          body: JSON.stringify({
-            datetime: `${eventDate}T${timeString}`,
+      // Create event if status has isEvent=true (don't require canCreatePlanning permission for status changes)
+      let eventCreated = false;
+      console.log('[Status Update] ===== Checking event creation conditions =====');
+      console.log('[Status Update] isEventStatus:', isEventStatus);
+      console.log('[Status Update] eventDate:', eventDate);
+      console.log('[Status Update] eventHour:', eventHour);
+      console.log('[Status Update] eventMinute:', eventMinute);
+      console.log('[Status Update] All conditions met?', isEventStatus && eventDate && eventHour && eventMinute);
+      
+      if (isEventStatus && eventDate && eventHour && eventMinute) {
+        try {
+          const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
+          const datetimeString = `${eventDate}T${timeString}:00`;
+          // Use selected teleoperator if available, otherwise use current user
+          const eventUserId = eventTeleoperatorId && eventTeleoperatorId !== '' ? eventTeleoperatorId : (currentUser?.id || null);
+          
+          console.log('[Event Creation] Creating event with:', {
+            datetime: datetimeString,
             contactId: contactId,
-            userId: currentUser?.id || null,
+            userId: eventUserId,
             comment: ''
-          }),
+          });
+          
+          const eventResponse = await apiCall('/api/events/create/', {
+            method: 'POST',
+            body: JSON.stringify({
+              datetime: datetimeString,
+              contactId: contactId,
+              userId: eventUserId,
+              comment: ''
+            }),
+          });
+          
+          console.log('[Event Creation] Event created successfully:', eventResponse);
+          eventCreated = true;
+        } catch (eventError: any) {
+          console.error('[Event Creation] Error creating event:', eventError);
+          console.error('[Event Creation] Error response:', eventError?.response);
+          console.error('[Event Creation] Error data:', eventError?.response?.data);
+          const errorMessage = eventError?.response?.data?.datetime?.[0] || 
+                              eventError?.response?.data?.non_field_errors?.[0] ||
+                              eventError?.response?.error || 
+                              eventError?.response?.detail || 
+                              JSON.stringify(eventError?.response?.data) ||
+                              eventError?.message || 
+                              'Erreur lors de la création de l\'événement';
+          toast.error(`Statut mis à jour mais ${errorMessage}`);
+        }
+      } else {
+        console.log('[Status Update] ===== Event NOT created =====');
+        console.log('[Status Update] Conditions check:', {
+          isEventStatus,
+          eventDate: eventDate || 'MISSING',
+          eventHour: eventHour || 'MISSING',
+          eventMinute: eventMinute || 'MISSING',
+          allConditionsMet: eventDate && eventHour && eventMinute
         });
+        
+        // Additional debugging: check what the selected status actually is
+        if (selectedStatusId) {
+          const status = statuses.find(s => s.id === selectedStatusId);
+          console.log('[Status Update] Selected status details:', {
+            id: status?.id,
+            name: status?.name,
+            isEvent: status?.isEvent,
+            is_event: status?.is_event,
+            type: status?.type
+          });
+        }
       }
       
       // Create note with selected category if note was provided
+      console.log('[Status Update] Checking note creation...');
       if (statusChangeNote.trim()) {
         // Validate that a category is selected if categories are available
         if (categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
@@ -1768,7 +2014,22 @@ export function ContactInfoTab({
         });
       }
       
-      toast.success(isEventStatus ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
+      // Determine success message based on what was actually done
+      let successMessage = '';
+      if (selectedStatusIsClientDefault) {
+        successMessage = 'Contact mis à jour avec succès';
+      } else if (isEventStatus && eventCreated) {
+        successMessage = 'Statut mis à jour et événement créé avec succès';
+      } else if (isEventStatus && !eventCreated) {
+        successMessage = 'Statut mis à jour avec succès';
+        console.warn('[Status Update] WARNING: Event status but event was not created!');
+      } else {
+        successMessage = 'Statut mis à jour avec succès';
+      }
+      console.log('[Status Update] ===== Status update completed successfully =====');
+      console.log('[Status Update] Success message:', successMessage);
+      console.log('[Status Update] Event created:', eventCreated);
+      toast.success(successMessage);
       setIsStatusModalOpen(false);
       setSelectedStatusId('');
       setStatusChangeNote('');
@@ -1814,10 +2075,15 @@ export function ContactInfoTab({
         window.location.reload();
       }, 500);
     } catch (error: any) {
-      console.error('Error updating status:', error);
+      console.error('[Status Update] ===== ERROR in handleUpdateStatus =====');
+      console.error('[Status Update] Error object:', error);
+      console.error('[Status Update] Error response:', error?.response);
+      console.error('[Status Update] Error data:', error?.response?.data);
+      console.error('[Status Update] Error message:', error?.message);
       const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
       toast.error(errorMessage);
     } finally {
+      console.log('[Status Update] Setting isSavingClientForm to false');
       setIsSavingClientForm(false);
     }
   }
@@ -1906,9 +2172,13 @@ export function ContactInfoTab({
       // Set today's date as default
       const today = new Date();
       const dateStr = today.toISOString().split('T')[0];
+      let hour = today.getHours();
+      // Clamp hour to 8-23 range
+      if (hour < 8) hour = 8;
+      if (hour > 23) hour = 23;
       setAppointmentFormData({
         date: dateStr,
-        hour: today.getHours().toString().padStart(2, '0'),
+        hour: hour.toString().padStart(2, '0'),
         minute: '00',
         userId: currentUser?.id || ''
       });
@@ -1940,8 +2210,8 @@ export function ContactInfoTab({
     }
   }
   
-  const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
-  const minutes = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
+  const hours = Array.from({ length: 16 }, (_, i) => (i + 8).toString().padStart(2, '0'));
+  const minutes = Array.from({ length: 12 }, (_, i) => (i * 5).toString().padStart(2, '0'));
   
   async function handleCreateAppointment(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -1955,12 +2225,14 @@ export function ContactInfoTab({
     setIsSubmittingAppointment(true);
     try {
       const timeString = `${appointmentFormData.hour.padStart(2, '0')}:${appointmentFormData.minute.padStart(2, '0')}`;
+      // Use userId from appointmentFormData if set (for teleoperator assignment), otherwise use current user
+      const eventUserId = appointmentFormData.userId && appointmentFormData.userId !== '' ? appointmentFormData.userId : (currentUser?.id || null);
       await apiCall('/api/events/create/', {
         method: 'POST',
         body: JSON.stringify({
           datetime: `${appointmentFormData.date}T${timeString}`,
           contactId: contactId,
-          userId: currentUser?.id || null,
+          userId: eventUserId,
           comment: ''
         }),
       });
@@ -2006,8 +2278,16 @@ export function ContactInfoTab({
     if (!canEditPlanning || !canEditInformationsTab) return;
     const eventDate = new Date(appointment.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
-    const hour = eventDate.getHours().toString().padStart(2, '0');
-    const minute = eventDate.getMinutes().toString().padStart(2, '0');
+    let hour = eventDate.getHours();
+    // Clamp hour to 8-23 range
+    if (hour < 8) hour = 8;
+    if (hour > 23) hour = 23;
+    const hourStr = hour.toString().padStart(2, '0');
+    // Round minute to nearest 5-minute increment
+    let minute = eventDate.getMinutes();
+    minute = Math.round(minute / 5) * 5;
+    if (minute === 60) minute = 55; // Cap at 55
+    const minuteStr = minute.toString().padStart(2, '0');
     
     // Ensure userId is set properly - use appointment.userId if it exists, otherwise currentUser
     const userIdToSet = appointment.userId && appointment.userId.trim() !== '' 
@@ -2017,8 +2297,8 @@ export function ContactInfoTab({
     setEditingAppointment(appointment);
     setEditAppointmentFormData({
       date: dateStr,
-      hour: hour,
-      minute: minute,
+      hour: hourStr,
+      minute: minuteStr,
       comment: appointment.comment || '',
       userId: userIdToSet
     });
@@ -4049,8 +4329,8 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Heure" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 24 }, (_, i) => {
-                        const hour = i.toString().padStart(2, '0');
+                      {Array.from({ length: 16 }, (_, i) => {
+                        const hour = (i + 8).toString().padStart(2, '0');
                         return (
                           <SelectItem key={hour} value={hour}>
                             {hour}
@@ -4068,8 +4348,8 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Minute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 60 }, (_, i) => {
-                        const minute = i.toString().padStart(2, '0');
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const minute = (i * 5).toString().padStart(2, '0');
                         return (
                           <SelectItem key={minute} value={minute}>
                             {minute}
@@ -4080,6 +4360,32 @@ export function ContactInfoTab({
                   </Select>
                 </div>
               </div>
+
+              {isEventModalFromStatus && (
+                <div className="modal-form-field">
+                  <Label htmlFor="appointment-teleoperator">Téléopérateur</Label>
+                  <Select
+                    value={appointmentFormData.userId || 'none'}
+                    onValueChange={(value) => setAppointmentFormData({ ...appointmentFormData, userId: value === 'none' ? '' : value })}
+                    disabled={isSubmittingAppointment || !canEditContact(contact)}
+                  >
+                    <SelectTrigger id="appointment-teleoperator">
+                      <SelectValue placeholder="Sélectionner un téléopérateur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun téléopérateur</SelectItem>
+                      {availableTeleoperateurs.map((user) => {
+                        const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                        return (
+                          <SelectItem key={user.id} value={String(user.id)}>
+                            {displayName}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="modal-form-actions">
                 <Button
@@ -4158,8 +4464,8 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Heure" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 24 }, (_, i) => {
-                        const hour = i.toString().padStart(2, '0');
+                      {Array.from({ length: 16 }, (_, i) => {
+                        const hour = (i + 8).toString().padStart(2, '0');
                         return (
                           <SelectItem key={hour} value={hour}>
                             {hour}
@@ -4177,8 +4483,8 @@ export function ContactInfoTab({
                       <SelectValue placeholder="Minute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 60 }, (_, i) => {
-                        const minute = i.toString().padStart(2, '0');
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const minute = (i * 5).toString().padStart(2, '0');
                         return (
                           <SelectItem key={minute} value={minute}>
                             {minute}
@@ -4251,7 +4557,7 @@ export function ContactInfoTab({
 
       {/* Status Change Modal */}
       {isStatusModalOpen && contact && (
-        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
+        <div className="modal-overlay" style={{ paddingLeft: '1rem', paddingRight: '1rem' }} onClick={(e) => handleModalOverlayClick(e, () => {
           setIsStatusModalOpen(false);
           setSelectedStatusId('');
           setStatusChangeNote('');
@@ -4288,15 +4594,18 @@ export function ContactInfoTab({
             onClick={(e) => e.stopPropagation()}
             style={{ 
               maxWidth: selectedStatusIsClientDefault ? '1200px' : '600px', 
-              maxHeight: '90vh', 
+              maxHeight: 'calc(100vh - 2rem)', 
               overflow: 'visible',
               display: 'flex',
               flexDirection: 'row',
-              gap: '20px'
+              gap: '20px',
+              width: 'auto',
+              paddingLeft: '1rem',
+              paddingRight: '1rem'
             }}
           >
             {/* Left Column - Status Selection */}
-            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: '80vh', overflow: 'visible' }}>
+            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 2rem)', overflow: 'visible' }}>
               <div className="modal-header" style={{ flexShrink: 0 }}>
                 <h2 className="modal-title">Modifier le statut</h2>
                 <Button
@@ -4340,7 +4649,7 @@ export function ContactInfoTab({
                   <X className="planning-icon-md" />
                 </Button>
               </div>
-              <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
+              <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0, gap: '0.55rem' }}>
               <div className="modal-form-field">
                 <Label htmlFor="statusSelect">Statut</Label>
                 {(() => {
@@ -4633,6 +4942,66 @@ export function ContactInfoTab({
                   </p>
                 )}
               </div>
+
+              {/* Last 3 Notes Section */}
+              {contactId && (
+                <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+                  <h3 style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '12px' }}>Dernières notes</h3>
+                  {loadingNotes ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                      Chargement...
+                    </div>
+                  ) : contactNotes.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', minWidth: 0, maxWidth: '100%' }}>
+                      {contactNotes.map((note) => (
+                        <div key={note.id} style={{ fontSize: '0.875rem', color: '#374151', lineHeight: '1.6', width: '100%', minWidth: 0, maxWidth: '100%' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
+                            {note.categoryName && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: '600', 
+                                color: '#3b82f6',
+                                backgroundColor: '#dbeafe',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {note.categoryName}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                              {(note.createdBy || note.userId?.username || note.user?.username) && `Par ${note.createdBy || note.userId?.username || note.user?.username}`}
+                              {(note.createdAt || note.created_at) && (
+                                <span style={{ marginLeft: '4px' }}>
+                                  {new Date(note.createdAt || note.created_at).toLocaleString('fr-FR', {
+                                    dateStyle: 'short',
+                                    timeStyle: 'short'
+                                  })}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div style={{ 
+                            marginTop: '4px', 
+                            wordBreak: 'break-word', 
+                            overflowWrap: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '100%',
+                            overflow: 'hidden'
+                          }}>
+                            {note.text}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>
+                      Aucune note
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Event fields - show when selected status has isEvent=true */}
               {(() => {
                 // Use String() to ensure consistent type comparison
@@ -4659,7 +5028,7 @@ export function ContactInfoTab({
                         value={eventDate}
                         onChange={(value) => setEventDate(value)}
                         required
-                        disabled={!canCreatePlanning || !canCreateInformationsTab}
+                        disabled={!canCreatePlanning}
                       />
                     </div>
                     <div className="modal-form-field">
@@ -4668,14 +5037,13 @@ export function ContactInfoTab({
                         <Select
                           value={eventHour}
                           onValueChange={(value) => setEventHour(value)}
-                          disabled={!canCreatePlanning || !canCreateInformationsTab}
                         >
                           <SelectTrigger style={{ flex: 1 }}>
                             <SelectValue placeholder="Heure" />
                           </SelectTrigger>
                           <SelectContent>
-                            {Array.from({ length: 24 }, (_, i) => {
-                              const hour = i.toString().padStart(2, '0');
+                            {Array.from({ length: 16 }, (_, i) => {
+                              const hour = (i + 8).toString().padStart(2, '0');
                               return (
                                 <SelectItem key={hour} value={hour}>
                                   {hour}
@@ -4688,14 +5056,13 @@ export function ContactInfoTab({
                         <Select
                           value={eventMinute}
                           onValueChange={(value) => setEventMinute(value)}
-                          disabled={!canCreatePlanning || !canCreateInformationsTab}
                         >
                           <SelectTrigger style={{ flex: 1 }}>
                             <SelectValue placeholder="Minute" />
                           </SelectTrigger>
                           <SelectContent>
-                            {Array.from({ length: 60 }, (_, i) => {
-                              const minute = i.toString().padStart(2, '0');
+                            {Array.from({ length: 12 }, (_, i) => {
+                              const minute = (i * 5).toString().padStart(2, '0');
                               return (
                                 <SelectItem key={minute} value={minute}>
                                   {minute}
@@ -4711,23 +5078,21 @@ export function ContactInfoTab({
                       <Select
                         value={eventTeleoperatorId || 'none'}
                         onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
-                        disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedStatusId) || !canCreatePlanning || !canCreateInformationsTab}
+                        disabled={isSavingClientForm || !canEditContact(contact)}
                       >
                         <SelectTrigger id="eventTeleoperator">
                           <SelectValue placeholder="Sélectionner un téléopérateur" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                          {users
-                            ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
-                            .map((user) => {
-                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                              return (
-                                <SelectItem key={user.id} value={user.id}>
-                                  {displayName}
-                                </SelectItem>
-                              );
-                            })}
+                          {availableTeleoperateurs.map((user) => {
+                            const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                            return (
+                              <SelectItem key={user.id} value={user.id}>
+                                {displayName}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -4799,17 +5164,17 @@ export function ContactInfoTab({
 
             {/* Right Column - Client Form (shown when client default status is selected) */}
             {selectedStatusIsClientDefault && (
-              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px', display: 'flex', flexDirection: 'column', maxHeight: '80vh', overflow: 'visible' }}>
+              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 2rem)', overflow: 'visible' }}>
                 <div className="modal-header" style={{ flexShrink: 0 }}>
                   <h2 className="modal-title">Fiche client</h2>
                 </div>
-                <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
+                <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0, gap: '0.55rem' }}>
                   <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-sm text-blue-800">
                     <p className="font-semibold mb-2">Pour que le gestionnaire de compte reçoive toutes les informations nécessaires, merci de remplir la fiche de manière exacte, complète et en vous assurant qu'elle correspond exactement.</p>
                     <p className="mb-2">L'objectif : une fiche claire et fidèle aux échanges avec le client afin que le profil client sur la plateforme soit également en correspondance avec son identité.</p>
                   </div>
 
-                  <div className="space-y-4">
+                  <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="modal-form-field">
                         <Label htmlFor="client-platform" style={fieldErrors.platformId ? { color: '#ef4444' } : {}}>Plateforme <span style={{ color: '#ef4444' }}>*</span></Label>

@@ -45,7 +45,7 @@ export function AppointmentCard({
   const handleContactClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (contactId) {
-      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
     }
   };
 

@@ -3749,6 +3749,7 @@ def csv_import_contacts(request):
             try:
                 first_line = file_content[:100].decode('utf-8', errors='ignore')
                 if ',' in first_line or ';' in first_line:
+                    logger.warning(f"File appears to be CSV, not Excel. First line: {first_line[:100]}")
                     logger.info(f"File detected as CSV content (not Excel), despite .xlsx extension. Treating as CSV.")
                     actual_is_csv = True
                     is_excel = False
@@ -3880,11 +3881,31 @@ def csv_import_contacts(request):
                 except:
                     file_content = file_content_bytes.decode('utf-8', errors='ignore')
             
-            # For CSV files, always skip the first row (treat as header)
-            # The include_first_row setting is for Excel files where headers might be in a different row
-            # CSV files typically have headers in the first row, so we always skip it
-            logger.info(f"CSV import: Skipping first row (treating as header), include_first_row setting={include_first_row} (ignored for CSV)")
-            file_reader = csv.DictReader(io.StringIO(file_content))
+            # For CSV files, handle include_first_row setting
+            # If include_first_row is True, we need to generate headers and include first row as data
+            # If include_first_row is False, treat first row as headers
+            csv_lines = file_content.strip().split('\n')
+            if not csv_lines:
+                return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if include_first_row:
+                # Generate generic headers and include first row as data
+                first_row_values = csv_lines[0].split(',')
+                num_columns = len(first_row_values)
+                headers = [f'Column{i+1}' for i in range(num_columns)]
+                # Create a reader that includes the first row
+                all_lines = csv_lines  # Include first row
+                logger.info(f"CSV import: Including first row as data, generated {num_columns} column headers")
+            else:
+                # Use first row as headers
+                first_row = csv_lines[0]
+                headers = [h.strip().strip('"') for h in first_row.split(',')]
+                all_lines = csv_lines[1:]  # Skip first row
+                logger.info(f"CSV import: Using first row as headers: {headers[:5]}...")
+            
+            # Create CSV reader with appropriate data
+            csv_content = '\n'.join(all_lines)
+            file_reader = csv.DictReader(io.StringIO(csv_content), fieldnames=headers if include_first_row else None)
         
         # Get status and source objects
         status_obj = Status.objects.filter(id=default_status_id).first()
@@ -4061,6 +4082,57 @@ def csv_import_contacts(request):
                     if not csv_column:
                         continue
                     
+                    # Special handling for autreInformations - can be a list of columns
+                    if frontend_field == 'autreInformations' and isinstance(csv_column, list):
+                        # Concatenate multiple columns with line breaks
+                        values = []
+                        for col in csv_column:
+                            if not col:
+                                continue
+                            
+                            # Normalize column names for matching
+                            normalized_csv_column = col.strip().replace('"', '').replace("'", '')
+                            
+                            # Try exact match first, then case-insensitive match, then normalized match
+                            csv_value = None
+                            if col in row:
+                                csv_value = row[col]
+                            else:
+                                # Try case-insensitive match
+                                for key in row.keys():
+                                    if not key:
+                                        continue
+                                    normalized_key = key.strip().replace('"', '').replace("'", '')
+                                    # Try exact match first
+                                    if key.strip() == col.strip():
+                                        csv_value = row[key]
+                                        break
+                                    # Try normalized match
+                                    elif normalized_key.lower() == normalized_csv_column.lower():
+                                        csv_value = row[key]
+                                        break
+                                    # Try case-insensitive match on original values
+                                    elif key.strip().lower() == col.strip().lower():
+                                        csv_value = row[key]
+                                        break
+                            
+                            if csv_value is not None:
+                                # Convert to string and strip
+                                str_value = str(csv_value).strip() if csv_value else ''
+                                
+                                # Only add non-empty values
+                                if str_value:
+                                    values.append(str_value)
+                        
+                        # Concatenate all values with line breaks
+                        if values:
+                            model_field = field_mapping.get(frontend_field)
+                            if model_field:
+                                contact_data[model_field] = '\n'.join(values)
+                                mapped_fields_count += 1
+                        continue
+                    
+                    # Handle single column mapping (existing logic)
                     # Normalize column names for matching (remove extra spaces, quotes, etc.)
                     normalized_csv_column = csv_column.strip().replace('"', '').replace("'", '')
                     
@@ -5931,7 +6003,6 @@ def contact_detail(request, contact_id):
                                 permission__action='edit',
                                 permission__field_name='teleoperatorId'
                             ).exists()
-                            print(f"[DEBUG] GET request - is_teleoperateur: {is_teleoperateur}, has_field_permission (teleoperatorId): {has_field_permission}")
                         if is_confirmateur and not has_field_permission:
                             has_field_permission = PermissionRole.objects.filter(
                                 role=user_details.role,
@@ -5939,7 +6010,6 @@ def contact_detail(request, contact_id):
                                 permission__action='edit',
                                 permission__field_name='confirmateurId'
                             ).exists()
-                            print(f"[DEBUG] GET request - is_confirmateur: {is_confirmateur}, has_field_permission (confirmateurId): {has_field_permission}")
                     
                     if is_teleoperateur and is_confirmateur:
                         # User is both: allow if user is teleoperator OR confirmateur OR has field permission
@@ -5950,14 +6020,11 @@ def contact_detail(request, contact_id):
                             )
                     elif is_teleoperateur:
                         # Teleoperateur with own_only: allow if user is teleoperator OR has field permission
-                        print(f"[DEBUG] Teleoperateur check - contact.teleoperator: {contact.teleoperator}, user: {user}, has_field_permission: {has_field_permission}")
                         if contact.teleoperator != user and not has_field_permission:
-                            print(f"[DEBUG] Denying access - user is not teleoperator and no field permission")
                             return Response(
                                 {'error': 'Vous n\'avez pas accès à ce contact'},
                                 status=status.HTTP_403_FORBIDDEN
                             )
-                        print(f"[DEBUG] Allowing access - user is teleoperator or has field permission")
                     elif is_confirmateur:
                         # Confirmateur with own_only: allow if user is confirmateur OR has field permission
                         if contact.confirmateur != user and not has_field_permission:
@@ -6651,6 +6718,7 @@ def get_current_user(request):
         user_details = UserDetails.objects.select_related(
             'role_id'
         ).prefetch_related(
+            'team_memberships__team',  # For teamId
             'role_id__permission_roles__permission__status'
         ).get(django_user=django_user, deleted_at__isnull=True)
         # Use UserDetailsSerializer to ensure consistent format with other endpoints
@@ -7601,6 +7669,8 @@ def transaction_list(request):
             )
         
         # User has permission, return transactions for this contact with pagination support
+        # Note: Using contact_id=contact_id (not contact=contact_id) to filter by ForeignKey ID value directly
+        # This is the correct Django ORM syntax when filtering by ID (string) rather than model instance
         transactions = Transaction.objects.filter(contact_id=contact_id).select_related('contact', 'created_by').order_by('-date', '-created_at')
         
         # Apply pagination if requested

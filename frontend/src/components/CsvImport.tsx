@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2, Search } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2, Search, ChevronDown } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
@@ -20,7 +21,7 @@ import '../styles/PageHeader.css';
 import '../styles/Modal.css';
 
 interface ColumnMapping {
-  [key: string]: string; // CRM field -> CSV column
+  [key: string]: string | string[]; // CRM field -> CSV column (or array for autreInformations)
 }
 
 const CRM_FIELDS = [
@@ -69,6 +70,10 @@ export function CsvImport() {
   const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
   const [includeFirstRow, setIncludeFirstRow] = useState(false);
+  const [autreInformationsOpen, setAutreInformationsOpen] = useState(false);
+  const autreInformationsRef = useRef<HTMLDivElement>(null);
+  const autreInformationsButtonRef = useRef<HTMLButtonElement>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   
   // Search states for teleoperator and source
   const [teleoperatorSearchQuery, setTeleoperatorSearchQuery] = useState('');
@@ -181,6 +186,65 @@ export function CsvImport() {
       }
     }
   }, [defaultSourceId, sources, sourceSearchQuery]);
+
+  // Calculate dropdown position and handle click outside
+  useEffect(() => {
+    const updatePosition = () => {
+      if (autreInformationsButtonRef.current && autreInformationsOpen) {
+        const rect = autreInformationsButtonRef.current.getBoundingClientRect();
+        // Use fixed positioning - coordinates are relative to viewport (no scroll offset needed)
+        setDropdownPosition({
+          top: rect.bottom + 4, // 4px gap below button
+          left: rect.left,
+          width: rect.width,
+        });
+      }
+    };
+
+    if (autreInformationsOpen) {
+      updatePosition();
+      // Update position on scroll and resize
+      window.addEventListener('scroll', updatePosition, true);
+      window.addEventListener('resize', updatePosition);
+      // Also update when any scrollable parent scrolls
+      const scrollableParent = autreInformationsButtonRef.current?.closest('.overflow-y-auto, .overflow-auto, [style*="overflow"]');
+      if (scrollableParent) {
+        scrollableParent.addEventListener('scroll', updatePosition, true);
+      }
+    }
+
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+      const scrollableParent = autreInformationsButtonRef.current?.closest('.overflow-y-auto, .overflow-auto, [style*="overflow"]');
+      if (scrollableParent) {
+        scrollableParent.removeEventListener('scroll', updatePosition, true);
+      }
+    };
+  }, [autreInformationsOpen]);
+
+  // Close autreInformations dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        autreInformationsRef.current &&
+        !autreInformationsRef.current.contains(target) &&
+        autreInformationsButtonRef.current &&
+        !autreInformationsButtonRef.current.contains(target)
+      ) {
+        setAutreInformationsOpen(false);
+      }
+    };
+
+    if (autreInformationsOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [autreInformationsOpen]);
 
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -341,7 +405,8 @@ export function CsvImport() {
       const initialMapping: ColumnMapping = {};
       CRM_FIELDS.forEach(field => {
         if (field.value) {
-          initialMapping[field.value] = '';
+          // Initialize autreInformations as empty array, others as empty string
+          initialMapping[field.value] = field.value === 'autreInformations' ? [] : '';
         }
       });
       setColumnMapping(initialMapping);
@@ -507,6 +572,7 @@ export function CsvImport() {
     setError(null);
     setIsLoading(false);
     setIncludeFirstRow(false);
+    setAutreInformationsOpen(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -743,22 +809,143 @@ export function CsvImport() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {CRM_FIELDS.filter(field => field.value !== '').map((field) => {
                       const selectedColumn = columnMapping[field.value];
-                      const isMapped = selectedColumn && selectedColumn !== '';
+                      const isAutreInformations = field.value === 'autreInformations';
+                      const selectedColumns = isAutreInformations 
+                        ? (Array.isArray(selectedColumn) ? selectedColumn : [])
+                        : [];
+                      const isMapped = isAutreInformations 
+                        ? selectedColumns.length > 0
+                        : selectedColumn && selectedColumn !== '';
                       
                       // Helper function to check if a CSV column is already mapped to another field
                       const isColumnAlreadyMapped = (header: string) => {
-                        return Object.values(columnMapping).some(
-                          (mappedColumn) => mappedColumn === header && mappedColumn !== ''
-                        );
+                        return Object.entries(columnMapping).some(([key, mappedColumn]) => {
+                          // Skip checking the current field
+                          if (key === field.value) {
+                            return false;
+                          }
+                          if (key === 'autreInformations') {
+                            return Array.isArray(mappedColumn) && mappedColumn.includes(header);
+                          }
+                          return mappedColumn === header && mappedColumn !== '';
+                        });
                       };
                       
+                      // Special handling for autreInformations - multiple select
+                      if (isAutreInformations) {
+                        return (
+                          <div key={field.value} className="flex flex-col gap-2 md:col-span-2" ref={autreInformationsRef}>
+                            <Label className="text-sm font-medium">
+                              {field.label}
+                            </Label>
+                            <div className="relative">
+                              <Button
+                                ref={autreInformationsButtonRef}
+                                type="button"
+                                variant="outline"
+                                className={`w-full justify-between ${isMapped ? 'bg-blue-50 border-blue-300 dark:bg-blue-950 dark:border-blue-700' : ''}`}
+                                onClick={() => setAutreInformationsOpen(!autreInformationsOpen)}
+                              >
+                                <span className="text-left flex-1">
+                                  {selectedColumns.length === 0
+                                    ? 'Sélectionner des colonnes CSV'
+                                    : `${selectedColumns.length} colonne(s) sélectionnée(s)`}
+                                </span>
+                                <ChevronDown className={`h-4 w-4 transition-transform ${autreInformationsOpen ? 'rotate-180' : ''}`} />
+                              </Button>
+                              {autreInformationsOpen && dropdownPosition && typeof document !== 'undefined' && createPortal(
+                                <div 
+                                  ref={autreInformationsRef}
+                                  className="fixed bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto"
+                                  style={{
+                                    top: `${dropdownPosition.top}px`,
+                                    left: `${dropdownPosition.left}px`,
+                                    width: `${dropdownPosition.width}px`,
+                                    zIndex: 99999,
+                                  }}
+                                >
+                                  {csvHeaders.map((header) => {
+                                    const isSelected = selectedColumns.includes(header);
+                                    const isUsedElsewhere = isColumnAlreadyMapped(header) && !isSelected;
+                                    
+                                    return (
+                                      <div
+                                        key={header}
+                                        className={`px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 ${
+                                          isSelected ? 'bg-blue-50' : ''
+                                        } ${isUsedElsewhere ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        onClick={() => {
+                                          if (isUsedElsewhere) return;
+                                          const newSelection = isSelected
+                                            ? selectedColumns.filter(col => col !== header)
+                                            : [...selectedColumns, header];
+                                          setColumnMapping({
+                                            ...columnMapping,
+                                            [field.value]: newSelection,
+                                          });
+                                        }}
+                                      >
+                                        <Checkbox
+                                          checked={isSelected}
+                                          disabled={isUsedElsewhere}
+                                          onCheckedChange={(checked) => {
+                                            if (isUsedElsewhere) return;
+                                            const newSelection = checked
+                                              ? [...selectedColumns, header]
+                                              : selectedColumns.filter(col => col !== header);
+                                            setColumnMapping({
+                                              ...columnMapping,
+                                              [field.value]: newSelection,
+                                            });
+                                          }}
+                                        />
+                                        <span className="flex-1">{header}</span>
+                                        {isSelected && <span className="text-blue-600">✓</span>}
+                                        {isUsedElsewhere && <span className="text-xs text-gray-500">(déjà utilisé)</span>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>,
+                                document.body
+                              )}
+                            </div>
+                            {selectedColumns.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mt-2">
+                                {selectedColumns.map((col) => (
+                                  <span
+                                    key={col}
+                                    className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded flex items-center gap-1"
+                                  >
+                                    {col}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newSelection = selectedColumns.filter(c => c !== col);
+                                        setColumnMapping({
+                                          ...columnMapping,
+                                          [field.value]: newSelection,
+                                        });
+                                      }}
+                                      className="hover:text-blue-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+                      
+                      // Regular single select for other fields
                       return (
                         <div key={field.value} className="flex items-center gap-3">
                           <Label className="w-40 text-sm font-medium flex-shrink-0">
                             {field.label}
                           </Label>
                           <Select
-                            value={selectedColumn || '__none__'}
+                            value={typeof selectedColumn === 'string' ? (selectedColumn || '__none__') : '__none__'}
                             onValueChange={(value) => {
                               console.log('[Mapping] Column mapping changed:', {
                                 field: field.value,

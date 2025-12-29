@@ -79,6 +79,92 @@ export function ContactList({
   // Get current user for default permission functions
   const { currentUser, loading: userLoading } = useUser();
   
+  // Filter teleoperateurs based on dataAccess
+  const availableTeleoperateurs = React.useMemo(() => {
+    if (!users || users.length === 0) return [];
+    
+    // First, filter to only teleoperateurs
+    const teleoperateurs = users.filter((user) => 
+      user && user.id && String(user.id).trim() !== '' && user.isTeleoperateur === true
+    );
+    
+    // If no currentUser or no dataAccess, show all teleoperateurs
+    if (!currentUser || !currentUser.dataAccess) {
+      return teleoperateurs;
+    }
+    
+    // own_only: Show only current user
+    if (currentUser.dataAccess === 'own_only') {
+      return teleoperateurs.filter((user) => String(user.id) === String(currentUser.id));
+    }
+    
+    // team_only: Show users from the same team
+    if (currentUser.dataAccess === 'team_only') {
+      // Normalize current user's teamId
+      const normalizeTeamId = (teamId: any): string | null => {
+        if (teamId === null || teamId === undefined || teamId === '') return null;
+        const str = String(teamId).trim();
+        return str === '' ? null : str;
+      };
+      
+      const currentUserTeamId = normalizeTeamId(currentUser.teamId);
+      
+      // If current user has no team, show only themselves
+      if (!currentUserTeamId) {
+        return teleoperateurs.filter((user) => String(user.id) === String(currentUser.id));
+      }
+      
+      // Filter: include users with matching teamId OR the current user
+      const filtered = teleoperateurs.filter((user) => {
+        const userId = String(user.id);
+        const currentUserId = String(currentUser.id);
+        
+        // Always include current user
+        if (userId === currentUserId) {
+          return true;
+        }
+        
+        // Check if user is in the same team
+        const userTeamId = normalizeTeamId(user.teamId);
+        if (userTeamId && userTeamId === currentUserTeamId) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      // Debug logging
+      console.log('[ContactList - Teleoperateurs Filter]', {
+        currentUser: {
+          id: currentUser.id,
+          teamId: currentUser.teamId,
+          normalizedTeamId: currentUserTeamId,
+          dataAccess: currentUser.dataAccess
+        },
+        totalTeleoperateurs: teleoperateurs.length,
+        filteredCount: filtered.length,
+        allTeleoperateurs: teleoperateurs.map(u => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email,
+          teamId: u.teamId,
+          normalizedTeamId: normalizeTeamId(u.teamId),
+          isCurrentUser: String(u.id) === String(currentUser.id)
+        })),
+        filtered: filtered.map(u => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || u.email,
+          teamId: u.teamId,
+          normalizedTeamId: normalizeTeamId(u.teamId)
+        }))
+      });
+      
+      return filtered;
+    }
+    
+    // dataAccess === 'all' - show all teleoperateurs
+    return teleoperateurs;
+  }, [users, currentUser?.dataAccess, currentUser?.teamId, currentUser?.id]);
+  
   // Get accessible category IDs based on view permissions (same logic as ContactInfoTab)
   const accessibleCategoryIds = useAccessibleNoteCategoryIds();
   
@@ -526,9 +612,21 @@ export function ContactList({
 
   // Check if selected status is event
   const selectedStatusIsEvent = React.useMemo(() => {
-    if (!selectedStatusId || selectedStatusId === '') return false;
+    if (!selectedStatusId || selectedStatusId === '') {
+      console.log('[Status Detection] selectedStatusIsEvent: false (no selectedStatusId)');
+      return false;
+    }
     const status = statuses.find(s => s.id === selectedStatusId);
-    return status?.isEvent === true || status?.is_event === true;
+    const isEvent = status?.isEvent === true || status?.is_event === true;
+    console.log('[Status Detection] selectedStatusIsEvent computed:', {
+      selectedStatusId,
+      statusFound: !!status,
+      statusName: status?.name,
+      statusIsEvent: status?.isEvent,
+      statusIs_event: status?.is_event,
+      result: isEvent
+    });
+    return isEvent;
   }, [selectedStatusId, statuses]);
   
   // Filter categories to only show those user has view permission for
@@ -1905,7 +2003,7 @@ export function ContactList({
   // Helper function to open contact detail
   const openContactDetail = useCallback((contactId: string) => {
     setLastOpenedContactId(contactId);
-    window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+    window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
   }, []);
 
   // Load notes for a contact
@@ -2805,9 +2903,31 @@ export function ContactList({
         setEventHour('');
         setEventMinute('');
         if (selectedContact) {
-          const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
-            ? currentUser.id 
-            : (selectedContact.teleoperatorId || selectedContact.managerId || '');
+          // Prefill teleoperatorId based on dataAccess
+          let defaultTeleoperatorId = '';
+          if (currentUser?.dataAccess === 'own_only') {
+            // Only show/assign to themselves
+            defaultTeleoperatorId = currentUser?.isTeleoperateur === true ? currentUser.id : '';
+          } else if (currentUser?.dataAccess === 'team_only') {
+            // Prefer current user if they're a teleoperateur, otherwise use contact's teleoperator if in same team
+            if (currentUser?.isTeleoperateur === true) {
+              defaultTeleoperatorId = currentUser.id;
+            } else {
+              const contactTeleoperator = users.find(u => u.id === selectedContact.teleoperatorId);
+              if (contactTeleoperator) {
+                const currentUserTeamId = currentUser?.teamId ? String(currentUser.teamId).trim() : null;
+                const contactTeleoperatorTeamId = contactTeleoperator.teamId ? String(contactTeleoperator.teamId).trim() : null;
+                if (currentUserTeamId && contactTeleoperatorTeamId === currentUserTeamId) {
+                  defaultTeleoperatorId = selectedContact.teleoperatorId || '';
+                }
+              }
+            }
+          } else {
+            // dataAccess === 'all' - use current user or contact's teleoperator
+            defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
+              ? currentUser.id 
+              : (selectedContact.teleoperatorId || selectedContact.managerId || '');
+          }
           setEventTeleoperatorId(defaultTeleoperatorId);
         }
       } else if (!selectedStatusIsEvent) {
@@ -2889,10 +3009,24 @@ export function ContactList({
   };
 
   async function handleUpdateStatus() {
-    if (!selectedContact) return;
+    console.log('[Status Update] ===== handleUpdateStatus called =====');
+    console.log('[Status Update] selectedContact:', selectedContact?.id);
+    console.log('[Status Update] selectedStatusId:', selectedStatusId);
+    console.log('[Status Update] selectedStatusIsEvent:', selectedStatusIsEvent);
+    console.log('[Status Update] canCreatePlanning:', canCreatePlanning);
+    console.log('[Status Update] eventDate:', eventDate);
+    console.log('[Status Update] eventHour:', eventHour);
+    console.log('[Status Update] eventMinute:', eventMinute);
+    console.log('[Status Update] eventTeleoperatorId:', eventTeleoperatorId);
+    
+    if (!selectedContact) {
+      console.log('[Status Update] ERROR: No selectedContact, returning early');
+      return;
+    }
     
     // Validate note is required only if permission requires it
     if (requiresNoteForStatusChange && !statusChangeNote.trim()) {
+      console.log('[Status Update] ERROR: Note required but not provided');
       setFieldErrors(prev => ({ ...prev, note: true }));
       toast.error('Veuillez saisir une note pour changer le statut');
       setIsSavingClientForm(false);
@@ -2910,20 +3044,31 @@ export function ContactList({
     
     // Validate that a category is selected if note is provided and categories are available
     if (statusChangeNote.trim() && categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
+      console.log('[Status Update] ERROR: Note category required but not selected');
       toast.error('Veuillez sélectionner une catégorie pour la note');
       return;
     }
     
-    // If status is an event status, validate event fields
-    if (selectedStatusIsEvent && canCreatePlanning) {
+    // If status is an event status, validate event fields (don't require canCreatePlanning permission)
+    console.log('[Status Update] Checking event validation...');
+    console.log('[Status Update] selectedStatusIsEvent:', selectedStatusIsEvent);
+    if (selectedStatusIsEvent) {
+      console.log('[Status Update] Event status detected, validating event fields...');
       if (!eventDate) {
+        console.log('[Status Update] ERROR: eventDate is missing');
         toast.error('Veuillez sélectionner une date pour l\'événement');
         return;
       }
       if (!eventHour || !eventMinute) {
+        console.log('[Status Update] ERROR: eventHour or eventMinute is missing', { eventHour, eventMinute });
         toast.error('Veuillez sélectionner une heure pour l\'événement');
         return;
       }
+      console.log('[Status Update] Event fields validation passed');
+    } else {
+      console.log('[Status Update] Not an event status:', {
+        selectedStatusIsEvent
+      });
     }
     
     // If status is being changed, check permissions
@@ -2950,10 +3095,13 @@ export function ContactList({
       }
     }
     
+    console.log('[Status Update] All validations passed, proceeding with status update...');
     setIsSavingClientForm(true);
     try {
+      console.log('[Status Update] selectedStatusIsClientDefault:', selectedStatusIsClientDefault);
       // If status is client default, validate and include client form data
       if (selectedStatusIsClientDefault) {
+        console.log('[Status Update] Processing client default status...');
         // Validate required client form fields and set errors
         const errors: Record<string, boolean> = {};
         if (!clientFormData.platformId) errors.platformId = true;
@@ -2997,11 +3145,13 @@ export function ContactList({
         };
         
         // Update contact with client form data
+        console.log('[Status Update] Updating contact with client form data:', payload);
         await apiCall(`/api/contacts/${selectedContact.id}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        console.log('[Status Update] Contact updated successfully');
         
         // Create transaction for the first payment when moving to client status
         if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
@@ -3030,37 +3180,99 @@ export function ContactList({
         }
       } else {
         // Update status (non-client default status)
+        console.log('[Status Update] Processing non-client default status...');
         // If status is an event status, also update teleoperator
         const updatePayload: any = {
           statusId: selectedStatusId || ''
         };
         
         if (selectedStatusIsEvent && eventTeleoperatorId) {
+          console.log('[Status Update] Adding teleoperator to update payload:', eventTeleoperatorId);
           updatePayload.teleoperatorId = eventTeleoperatorId || null;
         }
         
+        console.log('[Status Update] Updating contact status:', updatePayload);
         await apiCall(`/api/contacts/${selectedContact.id}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatePayload)
         });
+        console.log('[Status Update] Contact status updated successfully');
       }
       
-      // Create event if status has isEvent=true
-      if (selectedStatusIsEvent && canCreatePlanning && eventDate) {
-        const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
-        await apiCall('/api/events/create/', {
-          method: 'POST',
-          body: JSON.stringify({
-            datetime: `${eventDate}T${timeString}`,
+      // Create event if status has isEvent=true (don't require canCreatePlanning permission for status changes)
+      let eventCreated = false;
+      console.log('[Status Update] ===== Checking event creation conditions =====');
+      console.log('[Status Update] selectedStatusIsEvent:', selectedStatusIsEvent);
+      console.log('[Status Update] eventDate:', eventDate);
+      console.log('[Status Update] eventHour:', eventHour);
+      console.log('[Status Update] eventMinute:', eventMinute);
+      console.log('[Status Update] All conditions met?', selectedStatusIsEvent && eventDate && eventHour && eventMinute);
+      
+      if (selectedStatusIsEvent && eventDate && eventHour && eventMinute) {
+        try {
+          const timeString = `${eventHour.padStart(2, '0')}:${eventMinute.padStart(2, '0')}`;
+          const datetimeString = `${eventDate}T${timeString}:00`;
+          // Use selected teleoperator if available, otherwise use current user
+          const eventUserId = eventTeleoperatorId && eventTeleoperatorId !== '' ? eventTeleoperatorId : (currentUser?.id || null);
+          
+          console.log('[Event Creation] Creating event with:', {
+            datetime: datetimeString,
             contactId: selectedContact.id,
-            userId: currentUser?.id || null,
+            userId: eventUserId,
             comment: ''
-          }),
+          });
+          
+          const eventResponse = await apiCall('/api/events/create/', {
+            method: 'POST',
+            body: JSON.stringify({
+              datetime: datetimeString,
+              contactId: selectedContact.id,
+              userId: eventUserId,
+              comment: ''
+            }),
+          });
+          
+          console.log('[Event Creation] Event created successfully:', eventResponse);
+          eventCreated = true;
+        } catch (eventError: any) {
+          console.error('[Event Creation] Error creating event:', eventError);
+          console.error('[Event Creation] Error response:', eventError?.response);
+          console.error('[Event Creation] Error data:', eventError?.response?.data);
+          const errorMessage = eventError?.response?.data?.datetime?.[0] || 
+                              eventError?.response?.data?.non_field_errors?.[0] ||
+                              eventError?.response?.error || 
+                              eventError?.response?.detail || 
+                              JSON.stringify(eventError?.response?.data) ||
+                              eventError?.message || 
+                              'Erreur lors de la création de l\'événement';
+          toast.error(`Statut mis à jour mais ${errorMessage}`);
+        }
+      } else {
+        console.log('[Status Update] ===== Event NOT created =====');
+        console.log('[Status Update] Conditions check:', {
+          selectedStatusIsEvent,
+          eventDate: eventDate || 'MISSING',
+          eventHour: eventHour || 'MISSING',
+          eventMinute: eventMinute || 'MISSING',
+          allConditionsMet: eventDate && eventHour && eventMinute
         });
+        
+        // Additional debugging: check what the selected status actually is
+        if (selectedStatusId) {
+          const status = statuses.find(s => s.id === selectedStatusId);
+          console.log('[Status Update] Selected status details:', {
+            id: status?.id,
+            name: status?.name,
+            isEvent: status?.isEvent,
+            is_event: status?.is_event,
+            type: status?.type
+          });
+        }
       }
       
       // Create note with selected category if note was provided
+      console.log('[Status Update] Checking note creation...');
       if (statusChangeNote.trim()) {
         // Validate that a category is selected if categories are available
         if (categoriesForStatusChange.length > 0 && !statusChangeNoteCategoryId) {
@@ -3084,7 +3296,22 @@ export function ContactList({
         });
       }
       
-      toast.success(selectedStatusIsEvent ? 'Statut mis à jour et événement créé avec succès' : (selectedStatusIsClientDefault ? 'Contact mis à jour avec succès' : 'Statut mis à jour avec succès'));
+      // Determine success message based on what was actually done
+      let successMessage = '';
+      if (selectedStatusIsClientDefault) {
+        successMessage = 'Contact mis à jour avec succès';
+      } else if (selectedStatusIsEvent && eventCreated) {
+        successMessage = 'Statut mis à jour et événement créé avec succès';
+      } else if (selectedStatusIsEvent && !eventCreated) {
+        successMessage = 'Statut mis à jour avec succès';
+        console.warn('[Status Update] WARNING: Event status but event was not created!');
+      } else {
+        successMessage = 'Statut mis à jour avec succès';
+      }
+      console.log('[Status Update] ===== Status update completed successfully =====');
+      console.log('[Status Update] Success message:', successMessage);
+      console.log('[Status Update] Event created:', eventCreated);
+      toast.success(successMessage);
       setIsStatusModalOpen(false);
       setSelectedContact(null);
       setSelectedStatusId('');
@@ -3119,10 +3346,15 @@ export function ContactList({
       // Wait for loadData to complete to ensure fresh data for next modal open
       await loadData();
     } catch (error: any) {
-      console.error('Error updating status:', error);
+      console.error('[Status Update] ===== ERROR in handleUpdateStatus =====');
+      console.error('[Status Update] Error object:', error);
+      console.error('[Status Update] Error response:', error?.response);
+      console.error('[Status Update] Error data:', error?.response?.data);
+      console.error('[Status Update] Error message:', error?.message);
       const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
       toast.error(errorMessage);
     } finally {
+      console.log('[Status Update] Setting isSavingClientForm to false');
       setIsSavingClientForm(false);
     }
   }
@@ -4361,16 +4593,18 @@ export function ContactList({
             onClick={(e) => e.stopPropagation()}
             style={{ 
               maxWidth: selectedStatusIsClientDefault ? '1200px' : '600px', 
-              maxHeight: '90vh', 
-              overflowY: 'auto',
+              maxHeight: 'calc(100vh - 2rem)', 
+              overflow: 'visible',
               display: 'flex',
               flexDirection: 'row',
-              gap: '20px'
+              gap: '20px',
+              width: 'auto',
+              marginRight: '17px'
             }}
           >
             {/* Left Column - Status Selection */}
-            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0 }}>
-              <div className="modal-header">
+            <div style={{ flex: selectedStatusIsClientDefault ? '0 0 400px' : '1', minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 2rem)', overflow: 'visible' }}>
+              <div className="modal-header" style={{ flexShrink: 0, marginBottom: '0.5rem' }}>
                 <h2 className="modal-title">Modifier le statut</h2>
                 <Button
                   type="button"
@@ -4410,7 +4644,7 @@ export function ContactList({
                   <X className="planning-icon-md" />
                 </Button>
               </div>
-              <div className="modal-form">
+              <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0, gap: '0.5rem', paddingTop: '0.5rem' }}>
               <div className="modal-form-field">
                 <Label htmlFor="statusSelect">Statut</Label>
                 {(() => {
@@ -4795,8 +5029,8 @@ export function ContactList({
                           <SelectValue placeholder="Heure" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 24 }, (_, i) => {
-                            const hour = i.toString().padStart(2, '0');
+                          {Array.from({ length: 16 }, (_, i) => {
+                            const hour = (i + 8).toString().padStart(2, '0');
                             return (
                               <SelectItem key={hour} value={hour}>
                                 {hour}
@@ -4814,8 +5048,8 @@ export function ContactList({
                           <SelectValue placeholder="Minute" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 60 }, (_, i) => {
-                            const minute = i.toString().padStart(2, '0');
+                          {Array.from({ length: 12 }, (_, i) => {
+                            const minute = (i * 5).toString().padStart(2, '0');
                             return (
                               <SelectItem key={minute} value={minute}>
                                 {minute}
@@ -4831,30 +5065,28 @@ export function ContactList({
                     <Select
                       value={eventTeleoperatorId ? String(eventTeleoperatorId) : 'none'}
                       onValueChange={(value) => setEventTeleoperatorId(value === 'none' ? '' : value)}
-                      disabled={isSavingClientForm || !canEditFieldInModal('teleoperatorId', selectedContact, selectedStatusId) || !canCreatePlanning}
+                      disabled={isSavingClientForm || !canEditContact(selectedContact)}
                     >
                       <SelectTrigger id="eventTeleoperator">
                         <SelectValue placeholder="Sélectionner un téléopérateur" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                        {users
-                          ?.filter((user) => user.id && user.id.trim() !== '' && user.isTeleoperateur === true)
-                          .map((user) => {
-                            const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                            return (
-                              <SelectItem key={user.id} value={String(user.id)}>
-                                {displayName}
-                              </SelectItem>
-                            );
-                          })}
+                        {availableTeleoperateurs.map((user) => {
+                          const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                          return (
+                            <SelectItem key={user.id} value={String(user.id)}>
+                              {displayName}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
                 </>
               )}
 
-              <div className="modal-form-actions" style={{ paddingBottom: '16px' }}>
+              <div className="modal-form-actions" style={{ paddingBottom: '0.5rem' }}>
                 <Button 
                   type="button" 
                   variant="outline" 
@@ -4914,11 +5146,11 @@ export function ContactList({
 
             {/* Right Column - Client Form (shown when client default status is selected) */}
             {selectedStatusIsClientDefault && (
-              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px' }}>
-                <div className="modal-header">
+              <div style={{ flex: '1', minWidth: 0, borderLeft: '1px solid #e5e7eb', paddingLeft: '20px', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 2rem)', overflow: 'visible' }}>
+                <div className="modal-header" style={{ flexShrink: 0 }}>
                   <h2 className="modal-title">Fiche client</h2>
                 </div>
-                <div className="modal-form">
+                <div className="modal-form" style={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
                   <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-sm text-blue-800">
                     <p className="font-semibold mb-2">Pour que le gestionnaire de compte reçoive toutes les informations nécessaires, merci de remplir la fiche de manière exacte, complète et en vous assurant qu'elle correspond exactement.</p>
                     <p className="mb-2">L'objectif : une fiche claire et fidèle aux échanges avec le client afin que le profil client sur la plateforme soit également en correspondance avec son identité.</p>

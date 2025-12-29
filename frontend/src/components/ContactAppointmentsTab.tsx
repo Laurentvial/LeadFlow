@@ -101,14 +101,22 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
     if (!canEdit) return;
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
-    const hour = eventDate.getHours().toString().padStart(2, '0');
-    const minute = eventDate.getMinutes().toString().padStart(2, '0');
+    let hour = eventDate.getHours();
+    // Clamp hour to 8-23 range
+    if (hour < 8) hour = 8;
+    if (hour > 23) hour = 23;
+    const hourStr = hour.toString().padStart(2, '0');
+    // Round minute to nearest 5-minute increment
+    let minute = eventDate.getMinutes();
+    minute = Math.round(minute / 5) * 5;
+    if (minute === 60) minute = 55; // Cap at 55
+    const minuteStr = minute.toString().padStart(2, '0');
     
     setEditingEvent(event);
     setEditFormData({
       date: dateStr,
-      hour: hour,
-      minute: minute,
+      hour: hourStr,
+      minute: minuteStr,
       comment: event.comment || '',
       userId: event.userId || currentUser?.id || ''
     });
@@ -171,10 +179,10 @@ export function ContactAppointmentsTab({ appointments, contactId, onRefresh }: C
     }
   }
 
-  // Generate hour options (00-23)
-  const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
-  // Generate minute options (00, 15, 30, 45)
-  const minutes = ['00', '15', '30', '45'];
+  // Generate hour options (08-23)
+  const hours = Array.from({ length: 16 }, (_, i) => (i + 8).toString().padStart(2, '0'));
+  // Generate minute options (5-minute increments: 00, 05, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+  const minutes = Array.from({ length: 12 }, (_, i) => (i * 5).toString().padStart(2, '0'));
 
   return (
     <div className="space-y-6">

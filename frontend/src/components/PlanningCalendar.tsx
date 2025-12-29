@@ -84,6 +84,9 @@ export function PlanningCalendar() {
         // Use prefilled date and hour from hour row click
         dateToUse = prefilled.date;
         hourToUse = prefilled.hour;
+        // Clamp hour to 8-23 range
+        if (hourToUse < 8) hourToUse = 8;
+        if (hourToUse > 23) hourToUse = 23;
         // Clear after use
         setPrefilledDateTime(null);
         prefilledDateTimeRef.current = null;
@@ -443,8 +446,16 @@ export function PlanningCalendar() {
     if (!canEdit) return;
     const eventDate = new Date(event.datetime);
     const dateStr = eventDate.toISOString().split('T')[0];
-    const hour = eventDate.getHours().toString().padStart(2, '0');
-    const minute = eventDate.getMinutes().toString().padStart(2, '0');
+    let hour = eventDate.getHours();
+    // Clamp hour to 8-23 range
+    if (hour < 8) hour = 8;
+    if (hour > 23) hour = 23;
+    const hourStr = hour.toString().padStart(2, '0');
+    // Round minute to nearest 5-minute increment
+    let minute = eventDate.getMinutes();
+    minute = Math.round(minute / 5) * 5;
+    if (minute === 60) minute = 55; // Cap at 55
+    const minuteStr = minute.toString().padStart(2, '0');
     
     setEditingEvent(event);
     const selectedClientId = event.clientId_read || event.contactId || '';
@@ -491,8 +502,8 @@ export function PlanningCalendar() {
     
     setEditFormData({
       date: dateStr,
-      hour: hour,
-      minute: minute,
+      hour: hourStr,
+      minute: minuteStr,
       clientId: selectedClientId,
       userId: userIdString
     });
@@ -883,8 +894,8 @@ export function PlanningCalendar() {
                         <SelectValue placeholder="Heure" />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => {
-                          const hour = i.toString().padStart(2, '0');
+                        {Array.from({ length: 16 }, (_, i) => {
+                          const hour = (i + 8).toString().padStart(2, '0');
                           return (
                             <SelectItem key={hour} value={hour}>
                               {hour}
@@ -902,8 +913,8 @@ export function PlanningCalendar() {
                         <SelectValue placeholder="Minute" />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 60 }, (_, i) => {
-                          const minute = i.toString().padStart(2, '0');
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const minute = (i * 5).toString().padStart(2, '0');
                           return (
                             <SelectItem key={minute} value={minute}>
                               {minute}
@@ -1050,8 +1061,8 @@ export function PlanningCalendar() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => {
-                          const hour = i.toString().padStart(2, '0');
+                        {Array.from({ length: 16 }, (_, i) => {
+                          const hour = (i + 8).toString().padStart(2, '0');
                           return (
                             <SelectItem key={hour} value={hour}>
                               {hour}h
@@ -1069,8 +1080,8 @@ export function PlanningCalendar() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 60 }, (_, i) => {
-                          const minute = i.toString().padStart(2, '0');
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const minute = (i * 5).toString().padStart(2, '0');
                           return (
                             <SelectItem key={minute} value={minute}>
                               {minute}
@@ -1309,7 +1320,7 @@ export function PlanningCalendar() {
                                     e.stopPropagation();
                                     const contactId = event.clientId_read || event.contactId;
                                     if (contactId) {
-                                      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
                                     }
                                   }}
                                   style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
@@ -1428,7 +1439,7 @@ export function PlanningCalendar() {
                                       e.stopPropagation();
                                       const contactId = event.clientId_read || event.contactId;
                                       if (contactId) {
-                                        window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                        window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
                                       }
                                     }}
                                     style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
@@ -1558,7 +1569,7 @@ export function PlanningCalendar() {
                                             e.stopPropagation();
                                             const contactId = event.clientId_read || event.contactId;
                                             if (contactId) {
-                                              window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+                                              window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
                                             }
                                           }}
                                           style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
