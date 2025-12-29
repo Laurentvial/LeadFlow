@@ -502,6 +502,9 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['confirmateurEmail'] = instance.confirmateur_email if hasattr(instance, 'confirmateur_email') else ''
         ret['confirmateurTelephone'] = instance.confirmateur_telephone if hasattr(instance, 'confirmateur_telephone') else ''
         
+        # Email verification status
+        ret['emailVerificationStatus'] = instance.email_verification_status if hasattr(instance, 'email_verification_status') else 'not_verified'
+        
         # Manager is the teleoperator (the one selected in teleoperateur select during creation)
         if instance.teleoperator:
             ret['managerId'] = str(instance.teleoperator.id)

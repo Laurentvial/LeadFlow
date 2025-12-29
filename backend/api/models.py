@@ -36,6 +36,16 @@ class Contact(models.Model):
     phone = models.BigIntegerField(null=True, blank=True)
     mobile = models.BigIntegerField(null=True, blank=True)
     email = models.EmailField(max_length=100, default="", blank=True)
+    email_verification_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('not_verified', 'Not Verified'),
+            ('valid', 'Valid'),
+            ('invalid', 'Invalid'),
+        ],
+        default='not_verified',
+        db_index=True
+    )
     birth_date = models.DateField(null=True, blank=True)
     birth_place = models.CharField(max_length=100, default="", blank=True)
     address = models.CharField(max_length=200, default="", blank=True)

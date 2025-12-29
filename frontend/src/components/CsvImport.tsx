@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle, Plus, X, Loader2, Search } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ import { useUsers } from '../hooks/useUsers';
 import { useUser } from '../contexts/UserContext';
 import LoadingIndicator from './LoadingIndicator';
 import { Input } from './ui/input';
+import { Checkbox } from './ui/checkbox';
 import * as XLSX from 'xlsx';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -49,6 +50,8 @@ export function CsvImport() {
   const { users, loading: usersLoading, error: usersError } = useUsers();
   const { currentUser } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const teleoperatorSearchRef = useRef<HTMLDivElement>(null);
+  const sourceSearchRef = useRef<HTMLDivElement>(null);
   
   const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'results'>('upload');
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -65,6 +68,17 @@ export function CsvImport() {
   const [error, setError] = useState<string | null>(null);
   const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
+  const [includeFirstRow, setIncludeFirstRow] = useState(false);
+  
+  // Search states for teleoperator and source
+  const [teleoperatorSearchQuery, setTeleoperatorSearchQuery] = useState('');
+  const [teleoperatorSearchResults, setTeleoperatorSearchResults] = useState<any[]>([]);
+  const [teleoperatorSearchOpen, setTeleoperatorSearchOpen] = useState(false);
+  const [teleoperatorManuallyCleared, setTeleoperatorManuallyCleared] = useState(false);
+  const [teleoperatorAutoSet, setTeleoperatorAutoSet] = useState(false);
+  const [sourceSearchQuery, setSourceSearchQuery] = useState('');
+  const [sourceSearchResults, setSourceSearchResults] = useState<any[]>([]);
+  const [sourceSearchOpen, setSourceSearchOpen] = useState(false);
 
   // Get status view permissions
   const statusViewPermissions = React.useMemo(() => {
@@ -89,15 +103,84 @@ export function CsvImport() {
     });
   }, [statuses, statusViewPermissions]);
   
-  // Get teleoperateurs only
-  const teleoperateurs = Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];
+  // Get teleoperateurs only - memoized to prevent infinite loops
+  const teleoperateurs = React.useMemo(() => {
+    return Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];
+  }, [users]);
 
   // Auto-set teleoperateur to current user if they have the teleoperateur role
+  // But only once on initial load, not when user manually selects someone else
   React.useEffect(() => {
-    if (currentUser?.isTeleoperateur === true && currentUser?.id) {
-      setDefaultTeleoperatorId(currentUser.id);
+    if (currentUser?.isTeleoperateur === true && currentUser?.id && !teleoperatorManuallyCleared && !teleoperatorAutoSet) {
+      // Only auto-set if not already set
+      if (!defaultTeleoperatorId) {
+        setDefaultTeleoperatorId(currentUser.id);
+        const currentUserObj = teleoperateurs.find((u: any) => u.id === currentUser.id);
+        if (currentUserObj) {
+          const newQuery = `${currentUserObj.firstName} ${currentUserObj.lastName}`;
+          setTeleoperatorSearchQuery(newQuery);
+        }
+        setTeleoperatorAutoSet(true); // Mark as auto-set so we don't override manual selections
+      }
     }
-  }, [currentUser]);
+  }, [currentUser, teleoperateurs, teleoperatorManuallyCleared, defaultTeleoperatorId, teleoperatorAutoSet]);
+
+  // Search functions for teleoperator and source
+  React.useEffect(() => {
+    if (teleoperatorSearchQuery.trim().length === 0) {
+      setTeleoperatorSearchResults([]);
+      return;
+    }
+    
+    const query = teleoperatorSearchQuery.toLowerCase();
+    const filtered = teleoperateurs.filter((u: any) => {
+      const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      return fullName.includes(query) || email.includes(query);
+    });
+    setTeleoperatorSearchResults(filtered.slice(0, 10)); // Limit to 10 results
+  }, [teleoperatorSearchQuery, teleoperateurs]);
+
+  React.useEffect(() => {
+    if (sourceSearchQuery.trim().length === 0) {
+      setSourceSearchResults([]);
+      return;
+    }
+    
+    const query = sourceSearchQuery.toLowerCase();
+    const filtered = sources.filter((s: any) => {
+      const name = (s.name || '').toLowerCase();
+      return name.includes(query);
+    });
+    setSourceSearchResults(filtered.slice(0, 10)); // Limit to 10 results
+  }, [sourceSearchQuery, sources]);
+
+  // Update search query when selection changes - only if different to prevent infinite loop
+  React.useEffect(() => {
+    if (defaultTeleoperatorId) {
+      const selected = teleoperateurs.find((u: any) => u.id === defaultTeleoperatorId);
+      if (selected) {
+        const newQuery = `${selected.firstName} ${selected.lastName}`;
+        // Only update if different to prevent infinite loop
+        if (teleoperatorSearchQuery !== newQuery) {
+          setTeleoperatorSearchQuery(newQuery);
+        }
+      }
+    }
+  }, [defaultTeleoperatorId, teleoperateurs, teleoperatorSearchQuery]);
+
+  React.useEffect(() => {
+    if (defaultSourceId) {
+      const selected = sources.find((s: any) => s.id === defaultSourceId);
+      if (selected) {
+        const newQuery = selected.name;
+        // Only update if different to prevent infinite loop
+        if (sourceSearchQuery !== newQuery) {
+          setSourceSearchQuery(newQuery);
+        }
+      }
+    }
+  }, [defaultSourceId, sources, sourceSearchQuery]);
 
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -143,14 +226,22 @@ export function CsvImport() {
           throw new Error('Le fichier Excel est vide');
         }
 
-        // First row is headers
-        headers = jsonData[0].map((h, idx) => {
-          const cleaned = String(h || '').trim();
-          return cleaned || `Column${idx + 1}`;
-        });
+        // Extract headers
+        if (includeFirstRow) {
+          // If including first row, generate generic column names
+          const firstRowLength = jsonData[0]?.length || 0;
+          headers = Array.from({ length: firstRowLength }, (_, idx) => `Column${idx + 1}`);
+        } else {
+          // First row is headers
+          headers = jsonData[0].map((h, idx) => {
+            const cleaned = String(h || '').trim();
+            return cleaned || `Column${idx + 1}`;
+          });
+        }
 
-        // Process all rows (skip header row)
-        for (let i = 1; i < jsonData.length; i++) {
+        // Process rows - start from row 0 if includeFirstRow is true, otherwise start from row 1
+        const startRow = includeFirstRow ? 0 : 1;
+        for (let i = startRow; i < jsonData.length; i++) {
           const values = jsonData[i];
           const row: any = {};
           headers.forEach((header, idx) => {
@@ -209,16 +300,24 @@ export function CsvImport() {
           return result;
         };
         
-        // Use first row values as column headers for mapping
-        const firstRowValues = parseCSVLine(lines[0]);
-        headers = firstRowValues.map((h, idx) => {
-          const cleaned = h.replace(/^"|"$/g, '').trim();
-          // If header is empty, generate a name
-          return cleaned || `Column${idx + 1}`;
-        });
+        // Extract headers
+        if (includeFirstRow) {
+          // If including first row, generate generic column names based on first row length
+          const firstRowValues = parseCSVLine(lines[0]);
+          headers = Array.from({ length: firstRowValues.length }, (_, idx) => `Column${idx + 1}`);
+        } else {
+          // Use first row values as column headers for mapping
+          const firstRowValues = parseCSVLine(lines[0]);
+          headers = firstRowValues.map((h, idx) => {
+            const cleaned = h.replace(/^"|"$/g, '').trim();
+            // If header is empty, generate a name
+            return cleaned || `Column${idx + 1}`;
+          });
+        }
         
-        // Process data rows (skip header row at index 0)
-        for (let i = 1; i < lines.length; i++) {
+        // Process data rows - start from row 0 if includeFirstRow is true, otherwise start from row 1
+        const startRow = includeFirstRow ? 0 : 1;
+        for (let i = startRow; i < lines.length; i++) {
           const values = parseCSVLine(lines[i]);
           const row: any = {};
           headers.forEach((header, idx) => {
@@ -278,12 +377,6 @@ export function CsvImport() {
     if (!defaultStatusId) {
       setIsLoading(false);
       toast.error('Veuillez sélectionner un statut par défaut');
-      return;
-    }
-
-    if (!defaultTeleoperatorId) {
-      setIsLoading(false);
-      toast.error('Veuillez sélectionner un téléopérateur');
       return;
     }
 
@@ -358,6 +451,7 @@ export function CsvImport() {
       formData.append('file', fileToImport);
       formData.append('columnMapping', JSON.stringify(columnMapping));
       formData.append('defaultStatusId', defaultStatusId);
+      formData.append('includeFirstRow', includeFirstRow ? 'true' : 'false');
       if (defaultSourceId) {
         formData.append('defaultSourceId', defaultSourceId);
       }
@@ -407,9 +501,12 @@ export function CsvImport() {
     setDefaultStatusId('');
     setDefaultSourceId('');
     setDefaultTeleoperatorId('');
+    setTeleoperatorManuallyCleared(false); // Reset flag when resetting form
+    setTeleoperatorAutoSet(false); // Reset auto-set flag when resetting form
     setImportResults(null);
     setError(null);
     setIsLoading(false);
+    setIncludeFirstRow(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -559,6 +656,16 @@ export function CsvImport() {
                     Importez n'importe quel fichier CSV ou Excel (.xlsx, .xls). Vous pourrez ensuite mapper vos colonnes aux champs du CRM.
                     Les champs requis sont: Prénom. Taille maximale: 10MB
                   </p>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Checkbox
+                      id="include-first-row"
+                      checked={includeFirstRow}
+                      onCheckedChange={(checked) => setIncludeFirstRow(checked === true)}
+                    />
+                    <Label htmlFor="include-first-row" className="text-sm cursor-pointer">
+                      Inclure la première ligne dans l'import (par défaut, la première ligne est considérée comme en-tête)
+                    </Label>
+                  </div>
                   <input
                     ref={fileInputRef}
                     id="csv-file"
@@ -634,41 +741,66 @@ export function CsvImport() {
 
                 <div className="max-h-96 overflow-y-auto border  p-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {CRM_FIELDS.filter(field => field.value !== '').map((field) => (
-                      <div key={field.value} className="flex items-center gap-3">
-                        <Label className="w-40 text-sm font-medium flex-shrink-0">
-                          {field.label}
-                        </Label>
-                        <Select
-                          value={columnMapping[field.value] || '__none__'}
-                          onValueChange={(value) => {
-                            console.log('[Mapping] Column mapping changed:', {
-                              field: field.value,
-                              fieldLabel: field.label,
-                              selectedValue: value,
-                              csvHeaders: csvHeaders,
-                              csvHeadersIndex: csvHeaders.indexOf(value),
-                            });
-                            setColumnMapping({
-                              ...columnMapping,
-                              [field.value]: value === '__none__' ? '' : value,
-                            });
-                          }}
-                        >
-                          <SelectTrigger className="flex-1">
-                            <SelectValue placeholder="Sélectionner une colonne CSV" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">-- Ignorer --</SelectItem>
-                            {csvHeaders.map((header) => (
-                              <SelectItem key={header} value={header}>
-                                {header}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ))}
+                    {CRM_FIELDS.filter(field => field.value !== '').map((field) => {
+                      const selectedColumn = columnMapping[field.value];
+                      const isMapped = selectedColumn && selectedColumn !== '';
+                      
+                      // Helper function to check if a CSV column is already mapped to another field
+                      const isColumnAlreadyMapped = (header: string) => {
+                        return Object.values(columnMapping).some(
+                          (mappedColumn) => mappedColumn === header && mappedColumn !== ''
+                        );
+                      };
+                      
+                      return (
+                        <div key={field.value} className="flex items-center gap-3">
+                          <Label className="w-40 text-sm font-medium flex-shrink-0">
+                            {field.label}
+                          </Label>
+                          <Select
+                            value={selectedColumn || '__none__'}
+                            onValueChange={(value) => {
+                              console.log('[Mapping] Column mapping changed:', {
+                                field: field.value,
+                                fieldLabel: field.label,
+                                selectedValue: value,
+                                csvHeaders: csvHeaders,
+                                csvHeadersIndex: csvHeaders.indexOf(value),
+                              });
+                              setColumnMapping({
+                                ...columnMapping,
+                                [field.value]: value === '__none__' ? '' : value,
+                              });
+                            }}
+                          >
+                            <SelectTrigger 
+                              className={`flex-1 ${isMapped ? 'bg-blue-50 border-blue-300 dark:bg-blue-950 dark:border-blue-700' : ''}`}
+                            >
+                              <SelectValue placeholder="Sélectionner une colonne CSV" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">-- Ignorer --</SelectItem>
+                              {csvHeaders.map((header) => {
+                                const isSelected = selectedColumn === header;
+                                const isUsedElsewhere = isColumnAlreadyMapped(header) && !isSelected;
+                                
+                                return (
+                                  <SelectItem 
+                                    key={header} 
+                                    value={header}
+                                    className={isSelected ? 'bg-blue-100 dark:bg-blue-900 font-medium' : isUsedElsewhere ? 'bg-gray-100 dark:bg-gray-800 opacity-75' : ''}
+                                  >
+                                    {header}
+                                    {isSelected && ' ✓'}
+                                    {isUsedElsewhere && ' (déjà utilisé)'}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -721,43 +853,144 @@ export function CsvImport() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="default-teleoperator">Téléopérateur (requis)</Label>
-                  <Select
-                    value={defaultTeleoperatorId}
-                    onValueChange={setDefaultTeleoperatorId}
-                  >
-                    <SelectTrigger id="default-teleoperator">
-                      <SelectValue placeholder="Sélectionner un téléopérateur" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teleoperateurs.map((teleoperator) => (
-                        <SelectItem key={teleoperator.id} value={teleoperator.id}>
-                          {teleoperator.firstName} {teleoperator.lastName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="default-teleoperator">Téléopérateur (optionnel)</Label>
+                  <div className="relative" ref={teleoperatorSearchRef}>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10 pointer-events-none" />
+                      <Input
+                        id="default-teleoperator"
+                        type="text"
+                        placeholder="Rechercher un téléopérateur..."
+                        value={teleoperatorSearchQuery}
+                        onChange={(e) => {
+                          setTeleoperatorSearchQuery(e.target.value);
+                          setTeleoperatorSearchOpen(true);
+                        }}
+                        onFocus={() => setTeleoperatorSearchOpen(true)}
+                        className={`pl-10 ${(defaultTeleoperatorId || teleoperatorSearchQuery.trim().length > 0) ? 'pr-10' : ''}`}
+                      />
+                      {(defaultTeleoperatorId || teleoperatorSearchQuery.trim().length > 0) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDefaultTeleoperatorId('');
+                            setTeleoperatorSearchQuery('');
+                            setTeleoperatorSearchOpen(false);
+                            setTeleoperatorManuallyCleared(true); // Mark as manually cleared
+                            setTeleoperatorAutoSet(false); // Reset auto-set flag so it can auto-set again if needed
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 z-20 flex items-center justify-center"
+                          style={{ right: '12px' }}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    {teleoperatorSearchOpen && teleoperatorSearchResults.length > 0 && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                        {teleoperatorSearchResults.map((teleoperator) => (
+                          <button
+                            key={teleoperator.id}
+                            type="button"
+                            onClick={() => {
+                              setDefaultTeleoperatorId(teleoperator.id);
+                              setTeleoperatorSearchQuery(`${teleoperator.firstName} ${teleoperator.lastName}`);
+                              setTeleoperatorSearchOpen(false);
+                              setTeleoperatorManuallyCleared(false); // Reset flag when user selects someone
+                              setTeleoperatorAutoSet(true); // Mark as manually set to prevent auto-override
+                            }}
+                            className={`w-full text-left px-4 py-2 hover:bg-gray-100 ${
+                              defaultTeleoperatorId === teleoperator.id ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <div className="font-medium">{teleoperator.firstName} {teleoperator.lastName}</div>
+                            {teleoperator.email && (
+                              <div className="text-sm text-gray-500">{teleoperator.email}</div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {teleoperatorSearchOpen && teleoperatorSearchQuery.trim().length > 0 && teleoperatorSearchResults.length === 0 && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg p-4 text-sm text-gray-500">
+                        Aucun résultat trouvé
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="default-source">Source par défaut (optionnel)</Label>
                   <div className="flex items-center gap-2">
-                    <Select
-                      value={defaultSourceId || '__none__'}
-                      onValueChange={(value) => setDefaultSourceId(value === '__none__' ? '' : value)}
-                    >
-                      <SelectTrigger id="default-source" className="flex-1">
-                        <SelectValue placeholder="Sélectionner une source" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Aucune source</SelectItem>
-                        {sources.map((source) => (
-                          <SelectItem key={source.id} value={source.id}>
-                            {source.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="relative flex-1" ref={sourceSearchRef}>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10 pointer-events-none" />
+                        <Input
+                          id="default-source"
+                          type="text"
+                          placeholder="Rechercher une source..."
+                          value={sourceSearchQuery}
+                          onChange={(e) => {
+                            setSourceSearchQuery(e.target.value);
+                            setSourceSearchOpen(true);
+                          }}
+                          onFocus={() => setSourceSearchOpen(true)}
+                          className={`pl-10 ${(defaultSourceId || sourceSearchQuery.trim().length > 0) ? 'pr-10' : ''}`}
+                        />
+                        {(defaultSourceId || sourceSearchQuery.trim().length > 0) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDefaultSourceId('');
+                              setSourceSearchQuery('');
+                              setSourceSearchOpen(false);
+                            }}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 z-20 flex items-center justify-center"
+                            style={{ right: '12px' }}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                      {sourceSearchOpen && sourceSearchResults.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDefaultSourceId('');
+                              setSourceSearchQuery('');
+                              setSourceSearchOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-500"
+                          >
+                            Aucune source
+                          </button>
+                          {sourceSearchResults.map((source) => (
+                            <button
+                              key={source.id}
+                              type="button"
+                              onClick={() => {
+                                setDefaultSourceId(source.id);
+                                setSourceSearchQuery(source.name);
+                                setSourceSearchOpen(false);
+                              }}
+                              className={`w-full text-left px-4 py-2 hover:bg-gray-100 ${
+                                defaultSourceId === source.id ? 'bg-blue-50' : ''
+                              }`}
+                            >
+                              {source.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {sourceSearchOpen && sourceSearchQuery.trim().length > 0 && sourceSearchResults.length === 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg p-4 text-sm text-gray-500">
+                          Aucun résultat trouvé
+                        </div>
+                      )}
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
@@ -807,7 +1040,7 @@ export function CsvImport() {
                 </Button>
                 <Button
                   onClick={handleImport}
-                  disabled={isLoading || !columnMapping.firstName || !defaultStatusId || !defaultTeleoperatorId}
+                  disabled={isLoading || !columnMapping.firstName || !defaultStatusId}
                 >
                   <Upload className="w-4 h-4 mr-2" />
                   Importer les contacts

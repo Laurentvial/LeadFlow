@@ -2101,18 +2101,62 @@ export function ContactList({
           </td>
         );
       case 'email':
+        const getEmailStatusLabel = (status: string) => {
+          switch (status) {
+            case 'valid':
+              return 'Mail valide';
+            case 'invalid':
+              return 'Mail Invalide';
+            case 'not_verified':
+            default:
+              return 'Mail non verifie';
+          }
+        };
+        
+        const getEmailStatusColor = (status: string) => {
+          switch (status) {
+            case 'valid':
+              return '#10b981'; // green
+            case 'invalid':
+              return '#ef4444'; // red
+            case 'not_verified':
+            default:
+              return '#6b7280'; // gray
+          }
+        };
+        
+        const emailStatus = contact.emailVerificationStatus || 'not_verified';
+        const statusLabel = getEmailStatusLabel(emailStatus);
+        const statusColor = getEmailStatusColor(emailStatus);
+        
         return (
           <td key={columnId} className="contacts-table-email" onClick={stopPropagation}>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                openContactDetail(contact.id);
-              }}
-              className="contacts-name-link"
-              title={contact.email || ''}
-            >
-              {contact.email || '-'}
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openContactDetail(contact.id);
+                }}
+                className="contacts-name-link"
+                title={contact.email || ''}
+                style={{ textAlign: 'left', width: '100%' }}
+              >
+                {contact.email || '-'}
+              </button>
+              {contact.email && (
+                <span 
+                  style={{ 
+                    fontSize: '11px', 
+                    color: statusColor,
+                    fontWeight: 500,
+                    textAlign: 'left'
+                  }}
+                  title={statusLabel}
+                >
+                  {statusLabel}
+                </span>
+              )}
+            </div>
           </td>
         );
       case 'birthDate':

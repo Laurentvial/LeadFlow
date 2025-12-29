@@ -1633,9 +1633,9 @@ class FosseContactView(generics.ListAPIView):
             from .models import UserDetails, FosseSettings, Status
             fosse_default_status_name = None
             try:
-                user_details = UserDetails.objects.select_related('role').filter(django_user=self.request.user).first()
-                if user_details and user_details.role:
-                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                user_details = UserDetails.objects.select_related('role_id').filter(django_user=self.request.user).first()
+                if user_details and user_details.role_id:
+                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role_id).first()
                     if fosse_setting and fosse_setting.default_status:
                         fosse_default_status_name = fosse_setting.default_status.name
                     else:
@@ -1720,10 +1720,10 @@ class FosseContactView(generics.ListAPIView):
         default_order = None
         try:
             from .models import UserDetails, FosseSettings
-            user_details = UserDetails.objects.select_related('role').get(django_user=user)
-            if user_details.role:
+            user_details = UserDetails.objects.select_related('role_id').get(django_user=user)
+            if user_details.role_id:
                 try:
-                    fosse_setting = FosseSettings.objects.get(role=user_details.role)
+                    fosse_setting = FosseSettings.objects.get(role=user_details.role_id)
                     forced_filters = fosse_setting.forced_filters or {}
                     # Get default_order from settings - preserve 'none' value, don't convert None to 'created_at_desc'
                     # This allows the order query parameter to be used when default_order is 'none' or not set
@@ -2459,9 +2459,9 @@ class FosseContactView(generics.ListAPIView):
             from .models import UserDetails, FosseSettings, Status
             fosse_default_status_name = None
             try:
-                user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
-                if user_details and user_details.role:
-                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                user_details = UserDetails.objects.select_related('role_id').filter(django_user=request.user).first()
+                if user_details and user_details.role_id:
+                    fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role_id).first()
                     if fosse_setting and fosse_setting.default_status:
                         fosse_default_status_name = fosse_setting.default_status.name
                     else:
@@ -2517,9 +2517,9 @@ class FosseContactView(generics.ListAPIView):
                 from .models import UserDetails, FosseSettings, Status
                 fosse_default_status_name = None
                 try:
-                    user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
-                    if user_details and user_details.role:
-                        fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+                    user_details = UserDetails.objects.select_related('role_id').filter(django_user=request.user).first()
+                    if user_details and user_details.role_id:
+                        fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role_id).first()
                         if fosse_setting and fosse_setting.default_status:
                             fosse_default_status_name = fosse_setting.default_status.name
                         else:
@@ -2558,9 +2558,9 @@ class FosseContactView(generics.ListAPIView):
         from .models import UserDetails, FosseSettings, Status
         fosse_default_status_name = None
         try:
-            user_details = UserDetails.objects.select_related('role').filter(django_user=request.user).first()
-            if user_details and user_details.role:
-                fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role).first()
+            user_details = UserDetails.objects.select_related('role_id').filter(django_user=request.user).first()
+            if user_details and user_details.role_id:
+                fosse_setting = FosseSettings.objects.select_related('default_status').filter(role=user_details.role_id).first()
                 if fosse_setting and fosse_setting.default_status:
                     fosse_default_status_name = fosse_setting.default_status.name
                 else:
@@ -2591,6 +2591,19 @@ def contact_create(request):
     email = request.data.get('email', '').strip()
     if email and Contact.objects.filter(email=email).exists():
         return Response({'error': 'Un contact avec cet email existe déjà'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Verify email domain (DNS MX record check)
+    email_verification_status = 'not_verified'
+    if email:
+        try:
+            from api.utils.email_verification import verify_email_domain
+            email_verification_status, _ = verify_email_domain(email)
+        except Exception as e:
+            # If verification fails, default to not_verified
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Email verification failed for {email}: {str(e)}")
+            email_verification_status = 'not_verified'
     
     # Generate contact ID
     contact_id = uuid.uuid4().hex[:12]
@@ -2640,6 +2653,7 @@ def contact_create(request):
         'phone': phone_to_int(phone_value),
         'mobile': phone_to_int(mobile_value),
         'email': request.data.get('email', '') or '',
+        'email_verification_status': email_verification_status,
         'birth_date': get_date(request.data.get('birthDate')),
         'birth_place': request.data.get('birthPlace', '') or '',
         'address': request.data.get('address', '') or '',
@@ -3566,6 +3580,7 @@ def csv_import_contacts(request):
     default_status_id = request.data.get('defaultStatusId')
     default_source_id = request.data.get('defaultSourceId')
     default_teleoperator_id = request.data.get('defaultTeleoperatorId')
+    include_first_row = request.data.get('includeFirstRow', 'false').lower() == 'true'
     
     # Clean and validate IDs (strip whitespace, handle empty strings)
     if default_status_id:
@@ -3600,46 +3615,123 @@ def csv_import_contacts(request):
             workbook = load_workbook(file, read_only=True, data_only=True)
             sheet = workbook.active
             
-            # Get headers from first row
+            # Get headers
             headers = []
-            if sheet.max_row > 0:
+            # Safely check max_row - handle None case
+            max_row = sheet.max_row if sheet.max_row is not None else 0
+            if max_row > 0:
                 first_row = sheet[1]
-                for i, cell in enumerate(first_row):
-                    value = cell.value
-                    if value and str(value).strip():
-                        headers.append(str(value).strip())
-                    else:
-                        headers.append(f'Colonne_{i+1}')
+                if include_first_row:
+                    # Generate generic column headers - must match frontend format (Column1, Column2, etc.)
+                    num_columns = len(first_row)
+                    headers = [f'Column{i+1}' for i in range(num_columns)]
+                else:
+                    # Extract headers from first row
+                    for i, cell in enumerate(first_row):
+                        value = cell.value
+                        if value and str(value).strip():
+                            headers.append(str(value).strip())
+                        else:
+                            # Use Column1, Column2 format to match frontend
+                            headers.append(f'Column{i+1}')
             
             # Convert Excel rows to dict-like format compatible with CSV reader
             class ExcelDictReader:
-                def __init__(self, sheet, headers):
+                def __init__(self, sheet, headers, include_first_row=False):
                     self.sheet = sheet
                     self.headers = headers
-                    self.current_row = 2  # Start from row 2 (skip header)
-                    self.max_row = sheet.max_row
+                    # Start from row 1 if include_first_row is True, otherwise start from row 2 (skip header)
+                    self.current_row = 1 if include_first_row else 2
+                    # Handle None max_row - get actual max_row from sheet
+                    if sheet.max_row is None:
+                        # If max_row is None, try to find it manually
+                        self.max_row = 0
+                        try:
+                            # Try to find the last row with data
+                            for row_idx in range(1, 10000):  # Reasonable limit
+                                try:
+                                    row = sheet[row_idx]
+                                    if any(cell.value is not None for cell in row):
+                                        self.max_row = row_idx
+                                    else:
+                                        break
+                                except:
+                                    break
+                        except:
+                            self.max_row = 0
+                    else:
+                        self.max_row = sheet.max_row
                 
                 def __iter__(self):
                     return self
                 
                 def __next__(self):
+                    # Check if we've reached the end
                     if self.current_row > self.max_row:
                         raise StopIteration
                     
-                    row = self.sheet[self.current_row]
-                    row_dict = {}
-                    for i, cell in enumerate(row):
-                        header = self.headers[i] if i < len(self.headers) else f'Colonne_{i+1}'
-                        value = cell.value
-                        row_dict[header] = str(value) if value is not None else ''
-                    self.current_row += 1
-                    return row_dict
+                    try:
+                        row = self.sheet[self.current_row]
+                        row_dict = {}
+                        for i, cell in enumerate(row):
+                            header = self.headers[i] if i < len(self.headers) else f'Column{i+1}'
+                            value = cell.value
+                            row_dict[header] = str(value) if value is not None else ''
+                        self.current_row += 1
+                        return row_dict
+                    except Exception as e:
+                        # If we can't read the row, stop iteration
+                        raise StopIteration
             
-            file_reader = ExcelDictReader(sheet, headers)
+            file_reader = ExcelDictReader(sheet, headers, include_first_row)
         else:
             # Read CSV file
             file_content = file.read().decode('utf-8-sig')  # Handle BOM
-            file_reader = csv.DictReader(io.StringIO(file_content))
+            if include_first_row:
+                # If including first row, we need to manually parse it
+                # Generate generic column headers
+                lines = file_content.strip().split('\n')
+                if len(lines) == 0:
+                    return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Parse first line to determine number of columns
+                first_line_reader = csv.reader(io.StringIO(lines[0]))
+                first_row_values = next(first_line_reader)
+                # Generate generic headers like Column1, Column2, etc. - must match frontend format
+                headers_from_file = [f'Column{i+1}' for i in range(len(first_row_values))]
+                
+                # Create a custom reader that includes the first row
+                class CSVDictReaderWithFirstRow:
+                    def __init__(self, file_content, headers):
+                        self.lines = file_content.strip().split('\n')
+                        self.headers = headers
+                        self.current_line = 0
+                    
+                    def __iter__(self):
+                        return self
+                    
+                    def __next__(self):
+                        if self.current_line >= len(self.lines):
+                            raise StopIteration
+                        
+                        line = self.lines[self.current_line]
+                        reader = csv.reader(io.StringIO(line))
+                        values = next(reader)
+                        
+                        row_dict = {}
+                        for i, header in enumerate(self.headers):
+                            if i < len(values):
+                                row_dict[header] = values[i].strip() if values[i] else ''
+                            else:
+                                row_dict[header] = ''
+                        
+                        self.current_line += 1
+                        return row_dict
+                
+                file_reader = CSVDictReaderWithFirstRow(file_content, headers_from_file)
+            else:
+                # Normal behavior: skip first row (treat as header)
+                file_reader = csv.DictReader(io.StringIO(file_content))
         
         # Get status and source objects
         status_obj = Status.objects.filter(id=default_status_id).first()
@@ -3655,7 +3747,8 @@ def csv_import_contacts(request):
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Source ID '{default_source_id}' not found during import")
         
-        # Handle teleoperator - required field
+        # Handle teleoperator - optional field
+        # Only set if explicitly provided by user - do NOT auto-assign even if user is a teleoperateur
         teleoperator_obj = None
         if default_teleoperator_id:
             try:
@@ -3676,20 +3769,16 @@ def csv_import_contacts(request):
                 if teleoperator_user:
                     teleoperator_obj = teleoperator_user
                 else:
-                    return Response({'error': 'Invalid teleoperator ID'}, status=status.HTTP_400_BAD_REQUEST)
+                    # Log warning but don't fail - teleoperator is optional
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Teleoperator ID '{default_teleoperator_id}' not found during import")
             except Exception as e:
-                print(f"[DEBUG] Error setting teleoperator during CSV import: {e}")
-                return Response({'error': 'Invalid teleoperator ID'}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # If not provided, try to auto-set to current user if they have teleoperateur role
-            try:
-                user_details = UserDetails.objects.select_related('role').get(django_user=request.user)
-                if user_details.role and user_details.role.is_teleoperateur:
-                    teleoperator_obj = request.user
-                else:
-                    return Response({'error': 'Teleoperator is required. Please select a teleoperator or ensure your role has teleoperateur permissions.'}, status=status.HTTP_400_BAD_REQUEST)
-            except UserDetails.DoesNotExist:
-                return Response({'error': 'Teleoperator is required'}, status=status.HTTP_400_BAD_REQUEST)
+                # Log error but don't fail - teleoperator is optional
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error setting teleoperator during CSV import: {e}")
+        # Removed auto-assignment logic - if user removes teleoperator selection, respect that choice
         
         # Field mapping from frontend names to model field names
         field_mapping = {
@@ -3772,32 +3861,97 @@ def csv_import_contacts(request):
         row_data_map = {}  # Map contact_id to row number and name for results
         
         # First pass: Parse all rows and collect valid contacts
-        for row_num, row in enumerate(file_reader, start=2):  # Start at 2 (row 1 is header)
+        row_count = 0
+        
+        # Debug: Log file reader info
+        import logging
+        logger = logging.getLogger(__name__)
+        if is_excel:
+            logger.info(f"Excel import: sheet.max_row={sheet.max_row}, include_first_row={include_first_row}, file_reader.max_row={file_reader.max_row if hasattr(file_reader, 'max_row') else 'N/A'}, file_reader.current_row={file_reader.current_row if hasattr(file_reader, 'current_row') else 'N/A'}")
+        else:
+            logger.info(f"CSV import: include_first_row={include_first_row}")
+        
+        # Try to iterate and log first few rows
+        rows_processed = 0
+        for row in file_reader:
+            rows_processed += 1
+            row_count += 1
+            # Adjust row number: if include_first_row is False, first data row is row 2 (row 1 is header)
+            # If include_first_row is True, first data row is row 1
+            row_num = row_count + 1 if not include_first_row else row_count
             results['total'] += 1
+            
+            # Log first row for debugging
+            if rows_processed == 1:
+                logger.info(f"First row processed: row_num={row_num}, row_keys={list(row.keys())[:5] if row else 'empty'}")
+                logger.info(f"Column mapping: {column_mapping}")
+                logger.info(f"Row data sample: {dict(list(row.items())[:3])}")
+            
             try:
                 # Build contact data from CSV row
                 contact_data = {}
                 
+                # Check if column_mapping is empty
+                if not column_mapping:
+                    if rows_processed == 1:
+                        logger.error("Column mapping is empty! No data will be imported.")
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': 'Column mapping is empty. Please configure column mapping in the import interface.'
+                    })
+                    results['failed'] += 1
+                    continue
+                
                 # Map CSV columns to contact fields
+                mapped_fields_count = 0
                 for frontend_field, csv_column in column_mapping.items():
                     if not csv_column:
                         continue
                     
-                    # Try exact match first, then case-insensitive match
+                    # Normalize column names for matching (remove extra spaces, quotes, etc.)
+                    normalized_csv_column = csv_column.strip().replace('"', '').replace("'", '')
+                    
+                    # Try exact match first, then case-insensitive match, then normalized match
                     csv_value = None
                     if csv_column in row:
                         csv_value = row[csv_column]
                     else:
                         # Try case-insensitive match
                         for key in row.keys():
-                            if key and key.strip().lower() == csv_column.strip().lower():
+                            if not key:
+                                continue
+                            normalized_key = key.strip().replace('"', '').replace("'", '')
+                            # Try exact match first
+                            if key.strip() == csv_column.strip():
+                                csv_value = row[key]
+                                break
+                            # Try normalized match
+                            elif normalized_key.lower() == normalized_csv_column.lower():
+                                csv_value = row[key]
+                                break
+                            # Try case-insensitive match on original values
+                            elif key.strip().lower() == csv_column.strip().lower():
                                 csv_value = row[key]
                                 break
                     
                     if csv_value is None:
+                        # Log missing column for debugging
+                        if rows_processed == 1:
+                            logger.warning(f"Column '{csv_column}' not found in row. Available columns: {list(row.keys())[:10]}")
                         continue
                     
-                    value = csv_value.strip() if csv_value else ''
+                    # Convert to string and strip - handle None, empty strings, and whitespace
+                    if csv_value is None:
+                        value = ''
+                    else:
+                        value = str(csv_value).strip() if csv_value else ''
+                    
+                    # Log phone field mapping for debugging
+                    if rows_processed == 1 and frontend_field in ['phone', 'mobile']:
+                        logger.info(f"Phone field mapping: frontend_field='{frontend_field}', csv_column='{csv_column}', csv_value='{csv_value}', value='{value}'")
+                    
+                    # Skip empty values for most fields (except where empty is meaningful)
+                    # But still process the field to count it as mapped
                     
                     # Map to model field name
                     if frontend_field in field_mapping:
@@ -3805,7 +3959,9 @@ def csv_import_contacts(request):
                         
                         # Handle date field
                         if model_field == 'birth_date':
-                            contact_data[model_field] = parse_date(value)
+                            parsed_date = parse_date(value)
+                            if parsed_date:
+                                contact_data[model_field] = parsed_date
                         # Handle datetime fields - store separately for later update
                         elif model_field in ['created_at', 'updated_at', 'assigned_at']:
                             parsed_dt = parse_datetime(value)
@@ -3815,24 +3971,59 @@ def csv_import_contacts(request):
                         elif model_field in ['phone', 'mobile']:
                             if value:
                                 try:
-                                    # Remove all whitespace and convert to int
-                                    cleaned = ''.join(value.split())
-                                    contact_data[model_field] = int(cleaned) if cleaned else None
-                                except (ValueError, TypeError):
-                                    contact_data[model_field] = None
+                                    # Remove all whitespace, dashes, parentheses, and other non-digit characters
+                                    cleaned = ''.join(c for c in value if c.isdigit())
+                                    if cleaned:
+                                        contact_data[model_field] = int(cleaned)
+                                        # Log for debugging first row
+                                        if rows_processed == 1:
+                                            logger.info(f"Phone field '{model_field}' mapped: original='{value}', cleaned='{cleaned}', final={contact_data[model_field]}")
+                                    else:
+                                        if rows_processed == 1:
+                                            logger.warning(f"Phone field '{model_field}' value '{value}' resulted in empty string after cleaning")
+                                except (ValueError, TypeError) as e:
+                                    # Log error but don't fail - phone is optional
+                                    if rows_processed == 1:
+                                        logger.warning(f"Error converting phone field '{model_field}' value '{value}' to int: {e}")
+                                    pass  # Skip invalid phone numbers
                             else:
-                                contact_data[model_field] = None
+                                if rows_processed == 1:
+                                    logger.info(f"Phone field '{model_field}' has empty value, skipping")
                         # Handle old_contact_id - convert empty strings to None
                         elif model_field == 'old_contact_id':
-                            contact_data[model_field] = value if value else None
+                            if value:
+                                contact_data[model_field] = value
+                        # For other string fields, only set if value is not empty
                         else:
-                            contact_data[model_field] = value
+                            if value:
+                                contact_data[model_field] = value
+                        
+                        mapped_fields_count += 1
+                
+                # Log mapping results for first row
+                if rows_processed == 1:
+                    logger.info(f"Mapped {mapped_fields_count} fields. Contact data keys: {list(contact_data.keys())}")
+                    logger.info(f"Sample contact_data: {dict(list(contact_data.items())[:5])}")
                 
                 # Validate required fields - lastName is no longer required
                 # Only statusId is required (handled via default_status_id)
                 
                 # Store email for bulk duplicate check
                 email = contact_data.get('email', '').strip()
+                
+                # Verify email domain (DNS MX record check) - with short timeout to avoid blocking import
+                email_verification_status = 'not_verified'
+                if email:
+                    try:
+                        from api.utils.email_verification import verify_email_domain
+                        # Use short timeout (2 seconds) to avoid blocking bulk imports
+                        email_verification_status, _ = verify_email_domain(email, timeout=2)
+                    except Exception as e:
+                        # If verification fails for any reason, default to not_verified
+                        # Don't let email verification block contact creation
+                        email_verification_status = 'not_verified'
+                
+                contact_data['email_verification_status'] = email_verification_status
                 
                 # Generate contact ID (UUID collisions are extremely rare, so we'll handle them during bulk_create if needed)
                 contact_id = uuid.uuid4().hex[:12]
@@ -3847,12 +4038,13 @@ def csv_import_contacts(request):
                 # Always set source if source_obj exists (even if None, to ensure it's saved)
                 if source_obj is not None:
                     contact_data['source'] = source_obj
-                # Teleoperator is required, so always set it
-                contact_data['teleoperator'] = teleoperator_obj
-                # Set assigned_at only if not provided in CSV (when importing contact with teleoperator)
-                if 'assigned_at' not in contact_data:
-                    from django.utils import timezone
-                    contact_data['assigned_at'] = timezone.now()
+                # Teleoperator is optional
+                if teleoperator_obj is not None:
+                    contact_data['teleoperator'] = teleoperator_obj
+                    # Set assigned_at only if not provided in CSV (when importing contact with teleoperator)
+                    if 'assigned_at' not in contact_data:
+                        from django.utils import timezone
+                        contact_data['assigned_at'] = timezone.now()
                 
                 # Store custom timestamps separately for later update (since auto_now_add/auto_now may override)
                 custom_created_at = contact_data.pop('created_at', None)
@@ -3918,6 +4110,11 @@ def csv_import_contacts(request):
             for i in range(0, len(contacts_to_create), BATCH_SIZE):
                 batch = contacts_to_create[i:i + BATCH_SIZE]
                 try:
+                    # Ensure all contacts have email_verification_status set
+                    for contact in batch:
+                        if not hasattr(contact, 'email_verification_status') or contact.email_verification_status is None:
+                            contact.email_verification_status = 'not_verified'
+                    
                     Contact.objects.bulk_create(batch, batch_size=BATCH_SIZE)
                     
                     # Update custom timestamps directly in database for contacts that have them from CSV
@@ -3948,15 +4145,25 @@ def csv_import_contacts(request):
                             'name': row_data['name']
                         })
                         results['imported'] += 1
-                except IntegrityError as e:
-                    # Handle potential ID collisions by falling back to individual creates for this batch
-                    # This is extremely rare but can happen
+                except Exception as e:
+                    # Log the error for debugging
+                    import logging
+                    import traceback
+                    logger = logging.getLogger(__name__)
+                    error_details = traceback.format_exc()
+                    logger.error(f"Error bulk creating contacts batch: {str(e)}\n{error_details}")
+                    
+                    # Handle potential ID collisions or other errors by falling back to individual creates for this batch
                     for contact in batch:
                         try:
                             row_data = row_data_map[contact.id]
                             custom_created_at = row_data.get('created_at')
                             custom_updated_at = row_data.get('updated_at')
                             custom_assigned_at = row_data.get('assigned_at')
+                            
+                            # Ensure email_verification_status is set
+                            if not hasattr(contact, 'email_verification_status') or contact.email_verification_status is None:
+                                contact.email_verification_status = 'not_verified'
                             
                             # Save contact first (without custom timestamps)
                             contact.save()
@@ -4054,6 +4261,16 @@ def csv_import_contacts(request):
         # Close workbook if Excel file
         if workbook is not None:
             workbook.close()
+        
+        # Check if no rows were processed - this helps debug import issues
+        if results['total'] == 0:
+            return Response({
+                'error': 'No data rows were processed. Please check:\n1. Your file contains data rows\n2. Column mapping is correct\n3. File format is valid (CSV or Excel)\n4. If using Excel, ensure data starts from the correct row',
+                'results': results,
+                'total': 0,
+                'imported': 0,
+                'failed': 0
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         return Response(results, status=status.HTTP_200_OK)
         
