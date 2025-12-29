@@ -3460,19 +3460,96 @@ def csv_import_preview(request):
     
     # Check file extension
     is_csv = file_name.endswith('.csv')
-    is_excel = file_name.endswith('.xlsx') or file_name.endswith('.xls')
+    is_xlsx = file_name.endswith('.xlsx')
+    is_xls = file_name.endswith('.xls')
+    is_excel = is_xlsx or is_xls
     
     if not is_csv and not is_excel:
-        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx, .xls)'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx)'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # .xls files (old Excel format) are not supported - only .xlsx
+    if is_xls:
+        return Response({
+            'error': 'Old Excel format (.xls) is not supported. Please save your file as .xlsx format and try again.'
+        }, status=status.HTTP_400_BAD_REQUEST)
     
     try:
         if is_excel:
             # Handle Excel file
             from openpyxl import load_workbook
             
-            # Reset file pointer
+            # Reset file pointer and read into BytesIO buffer
+            # CRITICAL: Must read in binary mode - Django UploadedFile.read() returns bytes by default
+            # but we need to ensure we're getting raw binary data, not decoded text
             file.seek(0)
-            workbook = load_workbook(file, read_only=True, data_only=True)
+            
+            # Django's UploadedFile.read() should return bytes, but let's be explicit
+            # Check if file has chunks() method (more reliable for binary)
+            if hasattr(file, 'chunks'):
+                # Read file in chunks to ensure binary mode
+                file_content = b''.join(file.chunks())
+            else:
+                # Fallback: read directly
+                file_content = file.read()
+            
+            # Ensure we have bytes, not a string
+            if isinstance(file_content, str):
+                # If somehow we got a string, this is wrong - log it
+                logger.error(f"ERROR: File content is string, not bytes! First 50 chars: {file_content[:50]}")
+                # Try to get binary content properly
+                file.seek(0)
+                if hasattr(file, 'open'):
+                    try:
+                        with file.open('rb') as f:
+                            file_content = f.read()
+                    except:
+                        # Last resort: encode the string (but this is wrong)
+                        file_content = file_content.encode('latin-1')
+                else:
+                    file_content = file_content.encode('latin-1')
+            
+            # Validate file content
+            if not file_content:
+                return Response({'error': 'Excel file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Ensure file_content is bytes (Django UploadedFile should return bytes, but check to be safe)
+            if isinstance(file_content, str):
+                file_content = file_content.encode('latin-1')  # Preserve binary data
+            
+            # Validate that we have actual bytes
+            if not isinstance(file_content, bytes):
+                return Response({
+                    'error': f'Invalid file content type: {type(file_content)}. Expected bytes.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check file size
+            if len(file_content) < 100:  # Excel files should be at least a few KB
+                return Response({
+                    'error': f'File is too small ({len(file_content)} bytes). Excel files should be larger.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check magic bytes for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Excel import: file size={len(file_content)}, first 10 bytes={file_content[:10]}")
+            
+            file_buffer = BytesIO(file_content)
+            file_buffer.seek(0)  # Ensure buffer is at the start
+            
+            # Try to load the workbook - let openpyxl handle validation
+            try:
+                workbook = load_workbook(file_buffer, read_only=True, data_only=True)
+            except Exception as e:
+                # If it fails, provide a helpful error message
+                error_msg = str(e)
+                if 'not a zip file' in error_msg.lower() or 'bad zipfile' in error_msg.lower():
+                    return Response({
+                        'error': 'File is not a valid Excel file. Please ensure you are uploading a .xlsx file (not .xls or another format). The file may be corrupted or in an unsupported format.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return Response({
+                        'error': f'Failed to read Excel file: {error_msg}. Please ensure the file is a valid .xlsx file and not corrupted.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
             
             # Use the first sheet
             sheet = workbook.active
@@ -3553,18 +3630,33 @@ def csv_import_preview(request):
 @permission_classes([IsAuthenticated])
 def csv_import_contacts(request):
     """Import contacts from CSV or Excel with column mapping - optimized for large imports"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if 'file' not in request.FILES:
+        logger.warning("CSV import: No file provided")
         return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
     
     file = request.FILES['file']
     file_name = file.name.lower()
+    logger.info(f"CSV import: Processing file '{file.name}'")
     
     # Check file extension
     is_csv = file_name.endswith('.csv')
-    is_excel = file_name.endswith('.xlsx') or file_name.endswith('.xls')
+    is_xlsx = file_name.endswith('.xlsx')
+    is_xls = file_name.endswith('.xls')
+    is_excel = is_xlsx or is_xls
     
     if not is_csv and not is_excel:
-        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx, .xls)'}, status=status.HTTP_400_BAD_REQUEST)
+        logger.warning(f"CSV import: Invalid file type '{file_name}'")
+        return Response({'error': 'File must be a CSV or Excel file (.csv, .xlsx)'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # .xls files (old Excel format) are not supported - only .xlsx
+    if is_xls:
+        logger.warning(f"CSV import: Old Excel format (.xls) not supported for '{file_name}'")
+        return Response({
+            'error': 'Old Excel format (.xls) is not supported. Please save your file as .xlsx format and try again.'
+        }, status=status.HTTP_400_BAD_REQUEST)
     
     # Parse column mapping JSON string if it's a string
     column_mapping_str = request.data.get('columnMapping', '{}')
@@ -3581,6 +3673,8 @@ def csv_import_contacts(request):
     default_source_id = request.data.get('defaultSourceId')
     default_teleoperator_id = request.data.get('defaultTeleoperatorId')
     include_first_row = request.data.get('includeFirstRow', 'false').lower() == 'true'
+    
+    logger.info(f"CSV import: default_status_id='{default_status_id}', include_first_row={include_first_row}")
     
     # Clean and validate IDs (strip whitespace, handle empty strings)
     if default_status_id:
@@ -3602,17 +3696,104 @@ def csv_import_contacts(request):
     # lastName is no longer required
     
     if not default_status_id:
+        logger.warning(f"CSV import: Default status is required but not provided")
         return Response({'error': 'Default status is required'}, status=status.HTTP_400_BAD_REQUEST)
     
     workbook = None
     try:
-        # Read file based on type
-        if is_excel:
+        # Read file content first to detect actual file type (not just extension)
+        file.seek(0)
+        
+        # Django's UploadedFile.read() should return bytes, but let's be explicit
+        # Check if file has chunks() method (more reliable for binary)
+        if hasattr(file, 'chunks'):
+            # Read file in chunks to ensure binary mode
+            file_content = b''.join(file.chunks())
+        else:
+            # Fallback: read directly
+            file_content = file.read()
+        
+        # Validate file content
+        if not file_content:
+            return Response({'error': 'File is empty'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ensure we have bytes, not a string
+        if isinstance(file_content, str):
+            # If somehow we got a string, this is wrong - log it
+            logger.error(f"ERROR: File content is string, not bytes! First 50 chars: {file_content[:50]}")
+            # Try to get binary content properly
+            file.seek(0)
+            if hasattr(file, 'open'):
+                try:
+                    with file.open('rb') as f:
+                        file_content = f.read()
+                except:
+                    # Last resort: encode the string (but this is wrong)
+                    file_content = file_content.encode('latin-1')
+            else:
+                file_content = file_content.encode('latin-1')
+        
+        # Validate that we have actual bytes
+        if not isinstance(file_content, bytes):
+            return Response({
+                'error': f'Invalid file content type: {type(file_content)}. Expected bytes.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check magic bytes to detect actual file type (not just extension)
+        # Excel files (.xlsx) start with PK (ZIP signature: 0x50 0x4B)
+        actual_is_excel = len(file_content) >= 2 and file_content[:2] == b'PK'
+        actual_is_csv = False
+        
+        if not actual_is_excel:
+            # Check if it looks like CSV text
+            try:
+                first_line = file_content[:100].decode('utf-8', errors='ignore')
+                if ',' in first_line or ';' in first_line:
+                    logger.info(f"File detected as CSV content (not Excel), despite .xlsx extension. Treating as CSV.")
+                    actual_is_csv = True
+                    is_excel = False
+                    is_csv = True
+            except:
+                pass
+        
+        # Read file based on ACTUAL type (not just extension)
+        if is_excel and actual_is_excel:
             from openpyxl import load_workbook
             
-            # Reset file pointer
-            file.seek(0)
-            workbook = load_workbook(file, read_only=True, data_only=True)
+            # Check file size
+            if len(file_content) < 100:  # Excel files should be at least a few KB
+                return Response({
+                    'error': f'File is too small ({len(file_content)} bytes). Excel files should be larger.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Excel import: file size={len(file_content)}, first 10 bytes={file_content[:10]}")
+            
+            file_buffer = BytesIO(file_content)
+            file_buffer.seek(0)  # Ensure buffer is at the start
+            
+            # Try to load the workbook - let openpyxl handle validation
+            try:
+                workbook = load_workbook(file_buffer, read_only=True, data_only=True)
+            except Exception as e:
+                # Log the full error for debugging
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(f"Failed to load Excel workbook: {error_details}")
+                
+                # If it fails, provide a helpful error message
+                error_msg = str(e)
+                error_type = type(e).__name__
+                
+                # Include the actual error type and message in the response for debugging
+                if 'not a zip file' in error_msg.lower() or 'bad zipfile' in error_msg.lower() or 'bad magic number' in error_msg.lower() or 'zipfile' in error_type.lower():
+                    return Response({
+                        'error': f'File is not a valid Excel file ({error_type}: {error_msg}). Please ensure you are uploading a .xlsx file (not .xls or another format). The file may be corrupted or in an unsupported format.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return Response({
+                        'error': f'Failed to read Excel file ({error_type}: {error_msg}). Please ensure the file is a valid .xlsx file and not corrupted.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
             sheet = workbook.active
             
             # Get headers
@@ -3636,102 +3817,74 @@ def csv_import_contacts(request):
                             headers.append(f'Column{i+1}')
             
             # Convert Excel rows to dict-like format compatible with CSV reader
+            # Use iter_rows() instead of indexing because read_only=True doesn't support indexing
             class ExcelDictReader:
                 def __init__(self, sheet, headers, include_first_row=False):
                     self.sheet = sheet
                     self.headers = headers
                     # Start from row 1 if include_first_row is True, otherwise start from row 2 (skip header)
-                    self.current_row = 1 if include_first_row else 2
-                    # Handle None max_row - get actual max_row from sheet
-                    if sheet.max_row is None:
-                        # If max_row is None, try to find it manually
-                        self.max_row = 0
-                        try:
-                            # Try to find the last row with data
-                            for row_idx in range(1, 10000):  # Reasonable limit
-                                try:
-                                    row = sheet[row_idx]
-                                    if any(cell.value is not None for cell in row):
-                                        self.max_row = row_idx
-                                    else:
-                                        break
-                                except:
-                                    break
-                        except:
-                            self.max_row = 0
+                    start_row = 1 if include_first_row else 2
+                    # Handle None max_row - use sheet.max_row if available, otherwise let iter_rows find the end
+                    self.max_row = sheet.max_row if sheet.max_row is not None else None
+                    
+                    # Create iterator using iter_rows() which works with read_only=True
+                    # iter_rows() returns rows with cell objects, not values
+                    # If max_row is None, don't pass it and let iter_rows iterate until the end
+                    if self.max_row is not None:
+                        self.row_iterator = sheet.iter_rows(
+                            min_row=start_row,
+                            max_row=self.max_row,
+                            values_only=False
+                        )
                     else:
-                        self.max_row = sheet.max_row
+                        self.row_iterator = sheet.iter_rows(
+                            min_row=start_row,
+                            values_only=False
+                        )
+                    self.iterator = iter(self.row_iterator)
                 
                 def __iter__(self):
                     return self
                 
                 def __next__(self):
-                    # Check if we've reached the end
-                    if self.current_row > self.max_row:
-                        raise StopIteration
-                    
                     try:
-                        row = self.sheet[self.current_row]
+                        row = next(self.iterator)
                         row_dict = {}
                         for i, cell in enumerate(row):
                             header = self.headers[i] if i < len(self.headers) else f'Column{i+1}'
                             value = cell.value
                             row_dict[header] = str(value) if value is not None else ''
-                        self.current_row += 1
                         return row_dict
+                    except StopIteration:
+                        raise
                     except Exception as e:
                         # If we can't read the row, stop iteration
                         raise StopIteration
             
             file_reader = ExcelDictReader(sheet, headers, include_first_row)
         else:
-            # Read CSV file
-            file_content = file.read().decode('utf-8-sig')  # Handle BOM
-            if include_first_row:
-                # If including first row, we need to manually parse it
-                # Generate generic column headers
-                lines = file_content.strip().split('\n')
-                if len(lines) == 0:
-                    return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Parse first line to determine number of columns
-                first_line_reader = csv.reader(io.StringIO(lines[0]))
-                first_row_values = next(first_line_reader)
-                # Generate generic headers like Column1, Column2, etc. - must match frontend format
-                headers_from_file = [f'Column{i+1}' for i in range(len(first_row_values))]
-                
-                # Create a custom reader that includes the first row
-                class CSVDictReaderWithFirstRow:
-                    def __init__(self, file_content, headers):
-                        self.lines = file_content.strip().split('\n')
-                        self.headers = headers
-                        self.current_line = 0
-                    
-                    def __iter__(self):
-                        return self
-                    
-                    def __next__(self):
-                        if self.current_line >= len(self.lines):
-                            raise StopIteration
-                        
-                        line = self.lines[self.current_line]
-                        reader = csv.reader(io.StringIO(line))
-                        values = next(reader)
-                        
-                        row_dict = {}
-                        for i, header in enumerate(self.headers):
-                            if i < len(values):
-                                row_dict[header] = values[i].strip() if values[i] else ''
-                            else:
-                                row_dict[header] = ''
-                        
-                        self.current_line += 1
-                        return row_dict
-                
-                file_reader = CSVDictReaderWithFirstRow(file_content, headers_from_file)
+            # Read CSV file - use already-read file_content if available, otherwise read from file
+            if 'file_content' not in locals() or file_content is None:
+                file.seek(0)
+                file_content_bytes = file.read()
             else:
-                # Normal behavior: skip first row (treat as header)
-                file_reader = csv.DictReader(io.StringIO(file_content))
+                file_content_bytes = file_content
+            
+            # Decode CSV content from bytes to string
+            try:
+                file_content = file_content_bytes.decode('utf-8-sig')  # Handle BOM
+            except UnicodeDecodeError:
+                # Try other encodings if UTF-8 fails
+                try:
+                    file_content = file_content_bytes.decode('latin-1')
+                except:
+                    file_content = file_content_bytes.decode('utf-8', errors='ignore')
+            
+            # For CSV files, always skip the first row (treat as header)
+            # The include_first_row setting is for Excel files where headers might be in a different row
+            # CSV files typically have headers in the first row, so we always skip it
+            logger.info(f"CSV import: Skipping first row (treating as header), include_first_row setting={include_first_row} (ignored for CSV)")
+            file_reader = csv.DictReader(io.StringIO(file_content))
         
         # Get status and source objects
         status_obj = Status.objects.filter(id=default_status_id).first()
@@ -4277,6 +4430,12 @@ def csv_import_contacts(request):
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"CSV import error: {str(e)}")
+        logger.error(f"CSV import error details: {error_details}")
+        
         # Close workbook if Excel file (even on error)
         if workbook is not None:
             try:
