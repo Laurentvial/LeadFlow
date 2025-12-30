@@ -2211,8 +2211,8 @@ export function ContactList({
         );
       case 'fullName':
         return (
-          <td key={columnId} onClick={stopPropagation}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', minWidth: 0 }}>
+          <td key={columnId} onClick={stopPropagation} style={{ textAlign: 'left' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem', overflow: 'hidden', minWidth: 0 }}>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2220,7 +2220,7 @@ export function ContactList({
                 }}
                 className="contacts-name-link"
                 title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: '1 1 auto' }}
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, textAlign: 'left' }}
               >
                 {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
               </button>
@@ -4308,7 +4308,7 @@ export function ContactList({
         </div>
         
         <div className="flex gap-2">
-          {canCreate && (
+          {canCreate && !isFullscreen && (
             <>
               {showImportButton && (
                 <Button variant="outline" onClick={() => navigate(importButtonPath)}>
@@ -4329,8 +4329,8 @@ export function ContactList({
 
       {/* Filters */}
       <Card className="contacts-filters-card">
-        <CardContent className="pt-6">
-          <div className="contacts-filters">
+        <CardContent className={isFullscreen ? "pt-3" : "pt-6"}>
+          <div className={`contacts-filters ${isFullscreen ? 'contacts-filters-fullscreen' : ''}`}>
             <div className="contacts-filter-section contacts-filter-search">
               <Label>Recherche</Label>
               <div className="contacts-search-wrapper">

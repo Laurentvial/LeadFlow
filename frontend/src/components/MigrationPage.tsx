@@ -105,7 +105,7 @@ export function MigrationPage() {
   const [sourceMapping, setSourceMapping] = useState<{ [csvValue: string]: string }>({}); // CSV value -> Source ID
   const [failedRows, setFailedRows] = useState<MigratedRow[]>([]); // Rows that failed to insert
   const [processingProgress, setProcessingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 }); // Progress tracking
-  const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; created: number; updated: number; failureReasons: { [reason: string]: number } }>({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {} }); // Migration results summary
+  const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; created: number; updated: number; failureReasons: { [reason: string]: number }; updatedContacts?: Array<{ contactId: string; contactName: string; contactEmail: string; updatedFields: string[]; oldContactId?: string }> }>({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {} }); // Migration results summary
 
   // Contrat options from the select
   const contratOptions = [
@@ -1388,6 +1388,7 @@ export function MigrationPage() {
       const contactIdMap = new Map<string, string>();
       const failedRowsList: MigratedRow[] = [];
       const failureReasons: { [reason: string]: number } = {};
+      const updatedContactsList: Array<{ contactId: string; contactName: string; contactEmail: string; updatedFields: string[]; oldContactId?: string }> = [];
 
       const allResults: Array<{ row: MigratedRow; result: any; contactData: any }> = [];
 
@@ -1418,8 +1419,8 @@ export function MigrationPage() {
             campaign: row.mappedData.campaign || '',
             statusId: row.mappedData.statusId || null,
             sourceId: row.mappedData.sourceId || null,
-            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? row.mappedData.teleoperatorId.toString().trim() : null,
-            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? row.mappedData.confirmateurId.toString().trim() : null,
+            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? String(row.mappedData.teleoperatorId).trim() : null,
+            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? String(row.mappedData.confirmateurId).trim() : null,
             platformId: row.mappedData.platformId || null,
             montantEncaisse: row.mappedData.montantEncaisse || '',
             bonus: row.mappedData.bonus || '',
@@ -1500,6 +1501,17 @@ export function MigrationPage() {
           
           if (result.success && result.contactId) {
             contactIdMap.set(contactData.row.id, result.contactId);
+            
+            // Track updated contacts with details
+            if (result.updated) {
+              updatedContactsList.push({
+                contactId: result.contactId,
+                contactName: result.contactName || `${contactData.row.mappedData.firstName || ''} ${contactData.row.mappedData.lastName || ''}`.trim() || 'N/A',
+                contactEmail: result.contactEmail || contactData.row.mappedData.email || 'N/A',
+                updatedFields: result.updatedFields || ['Multiple fields'],
+                oldContactId: result.oldContactId || contactData.row.mappedData.oldContactId
+              });
+            }
           } else {
             // Track failed rows and categorize errors
             const errorMessage = result.error || 'Erreur lors de la création';
@@ -1557,9 +1569,17 @@ export function MigrationPage() {
 
       // Set failed rows and migration results
       setFailedRows(failedRowsList);
-      setMigrationResults({ success: totalSuccess, failed: totalFailed, created: totalCreated, updated: totalUpdated, failureReasons });
+      setMigrationResults({ 
+        success: totalSuccess, 
+        failed: totalFailed, 
+        created: totalCreated, 
+        updated: totalUpdated, 
+        failureReasons,
+        updatedContacts: updatedContactsList
+      });
       setProcessingProgress({ current: rowsToSave.length, total: rowsToSave.length });
       
+      // Always show results page after migration
       if (totalFailed === 0) {
         if (totalUpdated > 0 && totalCreated > 0) {
           toast.success(`${totalCreated} contact(s) créé(s), ${totalUpdated} contact(s) mis à jour avec succès`);
@@ -1568,10 +1588,8 @@ export function MigrationPage() {
         } else {
           toast.success(`${totalCreated} contact(s) créé(s) avec succès`);
         }
-        // If no failures, show success message and return to mapping
-        setTimeout(() => {
-          setStep('mapping');
-        }, 1500);
+        // Show results page instead of returning to mapping
+        setStep('results');
       } else {
         const successMsg = totalUpdated > 0 && totalCreated > 0 
           ? `${totalCreated} créé(s), ${totalUpdated} mis à jour`
@@ -1649,8 +1667,8 @@ export function MigrationPage() {
             campaign: row.mappedData.campaign || '',
             statusId: row.mappedData.statusId || null,
             sourceId: row.mappedData.sourceId || null,
-            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? row.mappedData.teleoperatorId.toString().trim() : null,
-            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? row.mappedData.confirmateurId.toString().trim() : null,
+            teleoperatorId: row.mappedData.teleoperatorId && row.mappedData.teleoperatorId.toString().trim() ? String(row.mappedData.teleoperatorId).trim() : null,
+            confirmateurId: row.mappedData.confirmateurId && row.mappedData.confirmateurId.toString().trim() ? String(row.mappedData.confirmateurId).trim() : null,
             platformId: row.mappedData.platformId || null,
             montantEncaisse: row.mappedData.montantEncaisse || '',
             bonus: row.mappedData.bonus || '',
@@ -1830,7 +1848,7 @@ export function MigrationPage() {
     setError(null);
     setIsLoading(false);
     setProcessingProgress({ current: 0, total: 0 });
-    setMigrationResults({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {} });
+    setMigrationResults({ success: 0, failed: 0, created: 0, updated: 0, failureReasons: {}, updatedContacts: [] });
     setExcludeFirstRow(true); // Reset to default
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -2721,6 +2739,107 @@ export function MigrationPage() {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* Detailed list of updated contacts */}
+                {migrationResults.updatedContacts && migrationResults.updatedContacts.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle>Contacts mis à jour ({migrationResults.updatedContacts.length})</CardTitle>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Export updated contacts to CSV
+                            const headers = ['Nom', 'Email', 'Ancien ID', 'Contact ID', 'Champs mis à jour'];
+                            const csvRows = migrationResults.updatedContacts!.map(contact => {
+                              const fields = contact.updatedFields.join('; ');
+                              return [
+                                contact.contactName,
+                                contact.contactEmail,
+                                contact.oldContactId || '',
+                                contact.contactId,
+                                fields
+                              ];
+                            });
+                            
+                            const csvContent = [
+                              headers.join(','),
+                              ...csvRows.map(row => 
+                                row.map(cell => {
+                                  const cellStr = String(cell || '');
+                                  if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+                                    return `"${cellStr.replace(/"/g, '""')}"`;
+                                  }
+                                  return cellStr;
+                                }).join(',')
+                              )
+                            ].join('\n');
+                            
+                            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `contacts_mis_a_jour_${new Date().toISOString().split('T')[0]}.csv`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            toast.success('Fichier CSV exporté avec succès');
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Exporter en CSV
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="max-h-[600px] overflow-y-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 sticky top-0">
+                              <tr>
+                                <th className="px-4 py-3 text-left font-semibold">Nom</th>
+                                <th className="px-4 py-3 text-left font-semibold">Email</th>
+                                <th className="px-4 py-3 text-left font-semibold">Ancien ID</th>
+                                <th className="px-4 py-3 text-left font-semibold">Contact ID</th>
+                                <th className="px-4 py-3 text-left font-semibold">Champs mis à jour</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {migrationResults.updatedContacts.map((contact, idx) => (
+                                <tr key={idx} className="border-t hover:bg-gray-50">
+                                  <td className="px-4 py-3 font-medium">{contact.contactName}</td>
+                                  <td className="px-4 py-3">{contact.contactEmail}</td>
+                                  <td className="px-4 py-3 font-mono text-xs">{contact.oldContactId || '-'}</td>
+                                  <td className="px-4 py-3 font-mono text-xs">{contact.contactId}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {contact.updatedFields && contact.updatedFields.length > 0 ? (
+                                        contact.updatedFields.map((field, fieldIdx) => (
+                                          <span 
+                                            key={fieldIdx}
+                                            className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium"
+                                          >
+                                            {field}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="inline-block px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+                                          Multiple fields
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
 
                 {/* Failed count and reasons */}

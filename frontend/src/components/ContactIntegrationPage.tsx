@@ -383,7 +383,22 @@ export function ContactIntegrationPage() {
       setImportResults(results);
       
       if (results.updated > 0) {
-        toast.success(`Intégration réussie: ${results.updated} contact(s) mis à jour`);
+        const updatedContacts = results.success?.filter((s: any) => s.updatedFields) || [];
+        if (updatedContacts.length > 0) {
+          // Show detailed message with first few contacts
+          const previewCount = Math.min(3, updatedContacts.length);
+          const preview = updatedContacts.slice(0, previewCount).map((c: any) => {
+            const name = c.contactName || c.contactId || 'Contact';
+            const fields = c.updatedFields?.join(', ') || 'champs';
+            return `${name} (${fields})`;
+          }).join('; ');
+          const moreText = updatedContacts.length > previewCount 
+            ? ` et ${updatedContacts.length - previewCount} autre(s)` 
+            : '';
+          toast.success(`Intégration réussie: ${results.updated} contact(s) mis à jour${moreText}. ${preview}`);
+        } else {
+          toast.success(`Intégration réussie: ${results.updated} contact(s) mis à jour`);
+        }
       }
       if (results.failed > 0) {
         toast.warning(`${results.failed} contact(s) n'ont pas pu être mis à jour`);
@@ -499,24 +514,43 @@ export function ContactIntegrationPage() {
 
             {importResults.success && importResults.success.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-lg font-semibold mb-2">Succès</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  Contacts mis à jour ({importResults.success.filter((s: any) => s.updatedFields).length})
+                </h3>
                 <div className="max-h-96 overflow-y-auto border rounded-lg">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-gray-50 sticky top-0">
                       <tr>
                         <th className="px-4 py-2 text-left">Ligne</th>
+                        <th className="px-4 py-2 text-left">Nom</th>
+                        <th className="px-4 py-2 text-left">Email</th>
                         <th className="px-4 py-2 text-left">Ancien ID</th>
                         <th className="px-4 py-2 text-left">Contact ID</th>
                         <th className="px-4 py-2 text-left">Champs mis à jour</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {importResults.success.map((success: any, idx: number) => (
-                        <tr key={idx} className="border-t">
+                      {importResults.success
+                        .filter((s: any) => s.updatedFields && s.updatedFields.length > 0)
+                        .map((success: any, idx: number) => (
+                        <tr key={idx} className="border-t hover:bg-gray-50">
                           <td className="px-4 py-2">{success.row}</td>
-                          <td className="px-4 py-2">{success.oldContactId}</td>
-                          <td className="px-4 py-2">{success.contactId}</td>
-                          <td className="px-4 py-2">{success.updatedFields?.join(', ') || '-'}</td>
+                          <td className="px-4 py-2 font-medium">{success.contactName || '-'}</td>
+                          <td className="px-4 py-2">{success.contactEmail || '-'}</td>
+                          <td className="px-4 py-2">{success.oldContactId || '-'}</td>
+                          <td className="px-4 py-2 font-mono text-xs">{success.contactId}</td>
+                          <td className="px-4 py-2">
+                            <div className="flex flex-wrap gap-1">
+                              {success.updatedFields?.map((field: string, fieldIdx: number) => (
+                                <span 
+                                  key={fieldIdx}
+                                  className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs"
+                                >
+                                  {field}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

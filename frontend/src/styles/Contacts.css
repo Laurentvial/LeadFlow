@@ -18,9 +18,9 @@
   bottom: 0;
   background-color: white;
   z-index: 1000;
-  padding: 1.5rem;
+  padding: 1rem;
   overflow-y: auto;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 
 .contacts-header {
@@ -30,6 +30,10 @@
   z-index: 30;
   padding: 0;
   margin-bottom: 1rem;
+}
+
+.contacts-container-fullscreen .contacts-header {
+  margin-bottom: 0.5rem;
 }
 
 /* Ensure card-content has higher z-index than layout header (z-index: 50) */
@@ -49,10 +53,18 @@
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
 }
 
+.contacts-container-fullscreen .contacts-filters-card {
+  margin-bottom: 0.25rem;
+}
+
 .contacts-filters {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.contacts-filters-fullscreen {
+  gap: 0.5rem;
 }
 
 @media (min-width: 768px) {
@@ -682,8 +694,8 @@
 }
 
 .contacts-table-wrapper-fullscreen {
-  height: calc(100vh - 400px) !important;
-  min-height: 400px !important;
+  height: calc(100vh - 200px) !important;
+  min-height: 600px !important;
   flex: 1;
   overflow: auto;
 }

@@ -229,6 +229,14 @@ export function ContactInfoTab({
 }: ContactInfoTabProps) {
   const { currentUser, loading: loadingUser } = useUser();
   
+  // Local contact state that can be updated immediately after save
+  const [localContact, setLocalContact] = useState<any>(contact);
+  
+  // Sync local contact with prop when prop changes
+  useEffect(() => {
+    setLocalContact(contact);
+  }, [contact]);
+  
   // State for limiting displayed events per column
   const [pastEventsLimit, setPastEventsLimit] = useState(3);
   const [futureEventsLimit, setFutureEventsLimit] = useState(3);
@@ -1669,6 +1677,9 @@ export function ContactInfoTab({
       console.log('[handleFieldUpdate] API response:', response);
       
       if (response?.contact) {
+        // Update local contact state immediately for instant UI update
+        setLocalContact(response.contact);
+        
         // Update local contact state if onContactUpdated is provided
         if (onContactUpdated) {
           onContactUpdated();
@@ -2877,9 +2888,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('teleoperatorId') ? 'editable' : ''}`}
-                    onClick={canEditField('teleoperatorId') ? () => startEditing('teleoperatorId', contact.teleoperatorId || contact.managerId) : undefined}
+                    onClick={canEditField('teleoperatorId') ? () => startEditing('teleoperatorId', localContact.teleoperatorId || localContact.managerId) : undefined}
                   >
-                    {contact.teleoperatorName || contact.managerName || '-'}
+                    {localContact.teleoperatorName || localContact.managerName || '-'}
                   </div>
                 )}
               </div>
@@ -2925,9 +2936,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('confirmateurId') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', contact.confirmateurId) : undefined}
+                    onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', localContact.confirmateurId) : undefined}
                   >
-                    {contact.confirmateurName || '-'}
+                    {localContact.confirmateurName || '-'}
                   </div>
                 )}
               </div>
@@ -3893,9 +3904,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('confirmateurEmail') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurEmail') ? () => startEditing('confirmateurEmail', contact.confirmateurEmail) : undefined}
+                    onClick={canEditField('confirmateurEmail') ? () => startEditing('confirmateurEmail', localContact.confirmateurEmail) : undefined}
                   >
-                    {contact.confirmateurEmail || '-'}
+                    {localContact.confirmateurEmail || '-'}
                   </div>
                 )}
               </div>
@@ -3929,9 +3940,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('confirmateurTelephone') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurTelephone') ? () => startEditing('confirmateurTelephone', contact.confirmateurTelephone) : undefined}
+                    onClick={canEditField('confirmateurTelephone') ? () => startEditing('confirmateurTelephone', localContact.confirmateurTelephone) : undefined}
                   >
-                    {formatPhoneNumber(contact.confirmateurTelephone) || '-'}
+                    {formatPhoneNumber(localContact.confirmateurTelephone) || '-'}
                   </div>
                 )}
               </div>

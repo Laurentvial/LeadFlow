@@ -3023,9 +3023,11 @@ def contacts_bulk_create(request):
         if contact_data.get('sourceId'):
             source_ids.add(contact_data['sourceId'])
         if contact_data.get('teleoperatorId'):
-            teleoperator_ids.add(str(contact_data['teleoperatorId']))
+            # Normalize to string and strip whitespace for consistent lookup
+            teleoperator_ids.add(str(contact_data['teleoperatorId']).strip())
         if contact_data.get('confirmateurId'):
-            confirmateur_ids.add(str(contact_data['confirmateurId']))
+            # Normalize to string and strip whitespace for consistent lookup
+            confirmateur_ids.add(str(contact_data['confirmateurId']).strip())
         if contact_data.get('platformId'):
             platform_ids.add(contact_data['platformId'])
         email = contact_data.get('email', '').strip()
@@ -3042,10 +3044,15 @@ def contacts_bulk_create(request):
     platforms_dict = {p.id: p for p in Platform.objects.filter(id__in=platform_ids)} if platform_ids else {}
     
     # Fetch users (both Django User and UserDetails)
+    # Use normalized string keys to ensure consistent lookup
     teleoperator_users_dict = {}
     confirmateur_users_dict = {}
     if teleoperator_ids or confirmateur_ids:
         from api.models import UserDetails
+        # Normalize all IDs to strings for consistent dictionary keys
+        teleoperator_ids_normalized = {str(uid).strip(): str(uid).strip() for uid in teleoperator_ids}
+        confirmateur_ids_normalized = {str(uid).strip(): str(uid).strip() for uid in confirmateur_ids}
+        
         # Try Django User IDs first
         django_user_ids = []
         for uid in list(teleoperator_ids) + list(confirmateur_ids):
@@ -3056,41 +3063,95 @@ def contacts_bulk_create(request):
         
         django_users = {u.id: u for u in DjangoUser.objects.filter(id__in=django_user_ids)} if django_user_ids else {}
         
-        # Try UserDetails IDs
+        # Try UserDetails IDs - store with normalized string keys
+        # Since we filter by id__in, any returned UserDetails must match one of the requested IDs
         user_details_list = UserDetails.objects.filter(id__in=list(teleoperator_ids) + list(confirmateur_ids)).select_related('django_user')
         for ud in user_details_list:
             if ud.django_user:
-                if ud.id in teleoperator_ids:
-                    teleoperator_users_dict[ud.id] = ud.django_user
-                if ud.id in confirmateur_ids:
-                    confirmateur_users_dict[ud.id] = ud.django_user
+                ud_id_str = str(ud.id).strip()
+                
+                # Store in teleoperator dict if this ID was requested for teleoperator
+                # Store with all possible ID formats to ensure lookup works
+                for uid in teleoperator_ids:
+                    uid_str = str(uid).strip()
+                    # Match by any format
+                    if (uid_str == ud_id_str or 
+                        str(uid) == str(ud.id) or 
+                        uid == ud.id):
+                        teleoperator_users_dict[ud_id_str] = ud.django_user
+                        teleoperator_users_dict[uid_str] = ud.django_user
+                        if str(uid) != uid_str:
+                            teleoperator_users_dict[str(uid)] = ud.django_user
+                        # Also try integer if applicable
+                        try:
+                            int_uid = int(uid)
+                            teleoperator_users_dict[int_uid] = ud.django_user
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Store in confirmateur dict if this ID was requested for confirmateur
+                # Since UserDetails was filtered by id__in, ud.id must match one of the IDs
+                # Store with all possible ID formats from confirmateur_ids set to ensure lookup works
+                ud_id_original = str(ud.id)
+                for uid in confirmateur_ids:
+                    uid_str = str(uid).strip()
+                    uid_original = str(uid)
+                    
+                    # Check if this UserDetails ID matches this confirmateur ID (any format)
+                    if (uid_str == ud_id_str or 
+                        uid_original == ud_id_original or
+                        uid_str == ud_id_original or
+                        uid_original == ud_id_str or
+                        str(uid).strip() == str(ud.id).strip() or
+                        uid == ud.id):
+                        # Store with normalized UserDetails ID
+                        confirmateur_users_dict[ud_id_str] = ud.django_user
+                        # Store with normalized request ID
+                        confirmateur_users_dict[uid_str] = ud.django_user
+                        # Store with original formats
+                        if uid_original != uid_str:
+                            confirmateur_users_dict[uid_original] = ud.django_user
+                        if ud_id_original != ud_id_str:
+                            confirmateur_users_dict[ud_id_original] = ud.django_user
+                        # Also try integer if applicable
+                        try:
+                            int_uid = int(uid)
+                            confirmateur_users_dict[int_uid] = ud.django_user
+                        except (ValueError, TypeError):
+                            pass
+                        try:
+                            int_ud_id = int(ud.id)
+                            confirmateur_users_dict[int_ud_id] = ud.django_user
+                        except (ValueError, TypeError):
+                            pass
+                        # Break after first match since we've stored with all formats
+                        break
         
-        # Add Django users directly
+        # Add Django users directly - store with both string and int keys
         for uid in teleoperator_ids:
+            uid_str = str(uid).strip()
             try:
                 int_uid = int(uid)
                 if int_uid in django_users:
-                    teleoperator_users_dict[uid] = django_users[int_uid]
+                    teleoperator_users_dict[uid_str] = django_users[int_uid]
+                    # Also store with int key for compatibility
+                    teleoperator_users_dict[int_uid] = django_users[int_uid]
             except (ValueError, TypeError):
                 pass
         
         for uid in confirmateur_ids:
+            uid_str = str(uid).strip()
             try:
                 int_uid = int(uid)
                 if int_uid in django_users:
-                    confirmateur_users_dict[uid] = django_users[int_uid]
+                    confirmateur_users_dict[uid_str] = django_users[int_uid]
+                    # Also store with int key for compatibility
+                    confirmateur_users_dict[int_uid] = django_users[int_uid]
             except (ValueError, TypeError):
                 pass
     
-    # Pre-fetch existing contacts by email for updates (in addition to old_contact_id)
-    existing_contacts_by_email = {}
-    if emails_to_check:
-        existing_contacts_by_email_query = Contact.objects.filter(email__in=emails_to_check).exclude(email__isnull=True).exclude(email='')
-        for contact in existing_contacts_by_email_query:
-            if contact.email:
-                existing_contacts_by_email[contact.email.strip().lower()] = contact
-    
     # Pre-fetch existing contacts by old_contact_id for updates
+    # NOTE: We ONLY match by old_contact_id, NOT by email (duplicate emails are allowed)
     existing_contacts_by_old_id = {}
     if old_contact_ids_to_check:
         existing_contacts = Contact.objects.filter(old_contact_id__in=old_contact_ids_to_check).exclude(old_contact_id__isnull=True).exclude(old_contact_id='')
@@ -3111,7 +3172,7 @@ def contacts_bulk_create(request):
         try:
             # Validate required fields - only statusId is required
             if not contact_data.get('statusId'):
-                results.append({'index': idx, 'success': False, 'error': 'Le statut est requis'})
+                results.append({'row': idx, 'success': False, 'error': 'Le statut est requis'})
                 continue
             
             # Handle old_contact_id and check for existing contact
@@ -3119,43 +3180,24 @@ def contacts_bulk_create(request):
             old_contact_id_clean = old_contact_id_value.strip() if old_contact_id_value.strip() else None
             
             # Check if contact with this old_contact_id already exists
+            # ONLY match by old_contact_id, NOT by email (duplicate emails are allowed)
             existing_contact = None
             if old_contact_id_clean:
                 existing_contact = existing_contacts_by_old_id.get(old_contact_id_clean)
             
-            # Check email - if not found by old_contact_id, check by email for updates
+            # Check email only for CSV duplicate detection (not for matching existing contacts)
             email = contact_data.get('email', '').strip()
             is_duplicate = False
             duplicate_reason = None
             
-            if email and not existing_contact:
+            if email:
                 email_lower = email.lower()
-                
-                # Check if email exists in database - if so, update that contact instead of creating new one
-                if email_lower in existing_contacts_by_email:
-                    existing_contact = existing_contacts_by_email[email_lower]
-                    is_duplicate = True
-                    duplicate_reason = f'L\'email {email} existe déjà dans la base de données'
-                    # Still mark as seen in batch to detect CSV duplicates
-                    if email_lower in emails_seen_in_batch:
-                        duplicate_reason += f' et apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
-                    else:
-                        emails_seen_in_batch[email_lower] = idx
-                else:
-                    # Check if this email appears multiple times in the CSV batch
-                    if email_lower in emails_seen_in_batch:
-                        is_duplicate = True
-                        duplicate_reason = f'L\'email {email} apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
-                    else:
-                        # Mark this email as seen in this batch
-                        emails_seen_in_batch[email_lower] = idx
-            elif email and existing_contact:
-                # Contact found by old_contact_id, but also check if email is duplicate
-                email_lower = email.lower()
+                # Check if this email appears multiple times in the CSV batch
                 if email_lower in emails_seen_in_batch:
                     is_duplicate = True
                     duplicate_reason = f'L\'email {email} apparaît plusieurs fois dans le CSV (première occurrence à l\'index {emails_seen_in_batch[email_lower]})'
                 else:
+                    # Mark this email as seen in this batch
                     emails_seen_in_batch[email_lower] = idx
             
             if existing_contact:
@@ -3194,20 +3236,57 @@ def contacts_bulk_create(request):
                 elif 'sourceId' in contact_data and not source_id:
                     existing_contact.source = None
                 
-                # Update teleoperator
-                teleoperator_id = str(contact_data.get('teleoperatorId', '')) if contact_data.get('teleoperatorId') else None
-                if teleoperator_id and teleoperator_id in teleoperator_users_dict:
-                    existing_contact.teleoperator = teleoperator_users_dict[teleoperator_id]
-                    if not existing_contact.assigned_at:
-                        existing_contact.assigned_at = timezone.now()
-                elif 'teleoperatorId' in contact_data and not teleoperator_id:
+                # Update teleoperator - normalize ID for lookup
+                teleoperator_id_raw = contact_data.get('teleoperatorId')
+                if teleoperator_id_raw:
+                    teleoperator_id = str(teleoperator_id_raw).strip()
+                    # Try exact match first
+                    if teleoperator_id in teleoperator_users_dict:
+                        existing_contact.teleoperator = teleoperator_users_dict[teleoperator_id]
+                        if not existing_contact.assigned_at:
+                            existing_contact.assigned_at = timezone.now()
+                    else:
+                        # Try as integer if it's numeric
+                        try:
+                            int_id = int(teleoperator_id)
+                            if int_id in teleoperator_users_dict:
+                                existing_contact.teleoperator = teleoperator_users_dict[int_id]
+                                if not existing_contact.assigned_at:
+                                    existing_contact.assigned_at = timezone.now()
+                        except (ValueError, TypeError):
+                            pass
+                elif 'teleoperatorId' in contact_data:
+                    # Explicitly set to None if field is present but empty
                     existing_contact.teleoperator = None
                 
-                # Update confirmateur
-                confirmateur_id = str(contact_data.get('confirmateurId', '')) if contact_data.get('confirmateurId') else None
-                if confirmateur_id and confirmateur_id in confirmateur_users_dict:
-                    existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id]
-                elif 'confirmateurId' in contact_data and not confirmateur_id:
+                # Update confirmateur - normalize ID for lookup
+                confirmateur_id_raw = contact_data.get('confirmateurId')
+                if confirmateur_id_raw:
+                    confirmateur_id = str(confirmateur_id_raw).strip()
+                    confirmateur_found = False
+                    
+                    # Try exact match first (normalized string)
+                    if confirmateur_id in confirmateur_users_dict:
+                        existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id]
+                        confirmateur_found = True
+                    else:
+                        # Try as integer if it's numeric
+                        try:
+                            int_id = int(confirmateur_id)
+                            if int_id in confirmateur_users_dict:
+                                existing_contact.confirmateur = confirmateur_users_dict[int_id]
+                                confirmateur_found = True
+                        except (ValueError, TypeError):
+                            pass
+                        
+                        # Try original format (without strip)
+                        if not confirmateur_found:
+                            confirmateur_id_original = str(confirmateur_id_raw)
+                            if confirmateur_id_original in confirmateur_users_dict:
+                                existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id_original]
+                                confirmateur_found = True
+                elif 'confirmateurId' in contact_data:
+                    # Explicitly set to None if field is present but empty
                     existing_contact.confirmateur = None
                 
                 # Update platform
@@ -3255,8 +3334,85 @@ def contacts_bulk_create(request):
                     if parsed_dt:
                         existing_contact.assigned_at = parsed_dt
                 
+                # Track which fields were updated
+                updated_fields = []
+                # Track all fields that are being updated (presence in contact_data means update)
+                if 'civility' in contact_data:
+                    updated_fields.append('civility')
+                if 'firstName' in contact_data:
+                    updated_fields.append('firstName')
+                if 'lastName' in contact_data:
+                    updated_fields.append('lastName')
+                if 'email' in contact_data:
+                    updated_fields.append('email')
+                if 'phone' in contact_data:
+                    updated_fields.append('phone')
+                if 'mobile' in contact_data:
+                    updated_fields.append('mobile')
+                if 'birthDate' in contact_data:
+                    updated_fields.append('birthDate')
+                if 'birthPlace' in contact_data:
+                    updated_fields.append('birthPlace')
+                if 'address' in contact_data:
+                    updated_fields.append('address')
+                if 'addressComplement' in contact_data:
+                    updated_fields.append('addressComplement')
+                if 'postalCode' in contact_data:
+                    updated_fields.append('postalCode')
+                if 'city' in contact_data:
+                    updated_fields.append('city')
+                if 'nationality' in contact_data:
+                    updated_fields.append('nationality')
+                if 'campaign' in contact_data:
+                    updated_fields.append('campaign')
+                if 'statusId' in contact_data:
+                    updated_fields.append('statusId')
+                if 'sourceId' in contact_data:
+                    updated_fields.append('sourceId')
+                if 'teleoperatorId' in contact_data:
+                    updated_fields.append('teleoperatorId')
+                if 'confirmateurId' in contact_data:
+                    updated_fields.append('confirmateurId')
+                if 'platformId' in contact_data:
+                    updated_fields.append('platformId')
+                if 'createdAt' in contact_data:
+                    updated_fields.append('createdAt')
+                if 'updatedAt' in contact_data:
+                    updated_fields.append('updatedAt')
+                if 'assignedAt' in contact_data:
+                    updated_fields.append('assignedAt')
+                if 'montantEncaisse' in contact_data:
+                    updated_fields.append('montantEncaisse')
+                if 'bonus' in contact_data:
+                    updated_fields.append('bonus')
+                if 'paiement' in contact_data:
+                    updated_fields.append('paiement')
+                if 'contrat' in contact_data:
+                    updated_fields.append('contrat')
+                if 'nomDeScene' in contact_data:
+                    updated_fields.append('nomDeScene')
+                if 'dateProTr' in contact_data:
+                    updated_fields.append('dateProTr')
+                if 'potentiel' in contact_data:
+                    updated_fields.append('potentiel')
+                if 'produit' in contact_data:
+                    updated_fields.append('produit')
+                if 'confirmateurEmail' in contact_data:
+                    updated_fields.append('confirmateurEmail')
+                if 'confirmateurTelephone' in contact_data:
+                    updated_fields.append('confirmateurTelephone')
+                
                 contacts_to_update.append(existing_contact)
-                result_entry = {'index': idx, 'success': True, 'contactId': existing_contact.id, 'updated': True}
+                result_entry = {
+                    'row': idx, 
+                    'success': True, 
+                    'contactId': existing_contact.id,
+                    'updated': True,
+                    'updatedFields': updated_fields,
+                    'contactName': f"{existing_contact.fname} {existing_contact.lname}".strip() or 'N/A',
+                    'contactEmail': existing_contact.email or 'N/A',
+                    'oldContactId': old_contact_id_clean
+                }
                 if is_duplicate:
                     result_entry['duplicate'] = True
                     result_entry['duplicateReason'] = duplicate_reason
@@ -3315,18 +3471,54 @@ def contacts_bulk_create(request):
                 if parsed_dt:
                     contact_obj_data['assigned_at'] = parsed_dt
             
-            # Set teleoperator
-            teleoperator_id = str(contact_data.get('teleoperatorId', '')) if contact_data.get('teleoperatorId') else None
-            if teleoperator_id and teleoperator_id in teleoperator_users_dict:
-                contact_obj_data['teleoperator'] = teleoperator_users_dict[teleoperator_id]
-                # Only set assigned_at to now() if not already set from CSV
-                if 'assigned_at' not in contact_obj_data:
-                    contact_obj_data['assigned_at'] = timezone.now()
+            # Set teleoperator - normalize ID for lookup
+            teleoperator_id_raw = contact_data.get('teleoperatorId')
+            if teleoperator_id_raw:
+                teleoperator_id = str(teleoperator_id_raw).strip()
+                # Try exact match first
+                if teleoperator_id in teleoperator_users_dict:
+                    contact_obj_data['teleoperator'] = teleoperator_users_dict[teleoperator_id]
+                    # Only set assigned_at to now() if not already set from CSV
+                    if 'assigned_at' not in contact_obj_data:
+                        contact_obj_data['assigned_at'] = timezone.now()
+                else:
+                    # Try as integer if it's numeric
+                    try:
+                        int_id = int(teleoperator_id)
+                        if int_id in teleoperator_users_dict:
+                            contact_obj_data['teleoperator'] = teleoperator_users_dict[int_id]
+                            # Only set assigned_at to now() if not already set from CSV
+                            if 'assigned_at' not in contact_obj_data:
+                                contact_obj_data['assigned_at'] = timezone.now()
+                    except (ValueError, TypeError):
+                        pass
             
-            # Set confirmateur
-            confirmateur_id = str(contact_data.get('confirmateurId', '')) if contact_data.get('confirmateurId') else None
-            if confirmateur_id and confirmateur_id in confirmateur_users_dict:
-                contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id]
+            # Set confirmateur - normalize ID for lookup
+            confirmateur_id_raw = contact_data.get('confirmateurId')
+            if confirmateur_id_raw:
+                confirmateur_id = str(confirmateur_id_raw).strip()
+                confirmateur_found = False
+                
+                # Try exact match first (normalized string)
+                if confirmateur_id in confirmateur_users_dict:
+                    contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id]
+                    confirmateur_found = True
+                else:
+                    # Try as integer if it's numeric
+                    try:
+                        int_id = int(confirmateur_id)
+                        if int_id in confirmateur_users_dict:
+                            contact_obj_data['confirmateur'] = confirmateur_users_dict[int_id]
+                            confirmateur_found = True
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    # Try original format (without strip)
+                    if not confirmateur_found:
+                        confirmateur_id_original = str(confirmateur_id_raw)
+                        if confirmateur_id_original in confirmateur_users_dict:
+                            contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id_original]
+                            confirmateur_found = True
             
             # Set platform
             platform_id = contact_data.get('platformId')
@@ -3358,7 +3550,7 @@ def contacts_bulk_create(request):
                 contact_obj_data['confirmateur_telephone'] = contact_data.get('confirmateurTelephone', '').strip()
             
             contacts_to_create.append((Contact(**contact_obj_data), contact_data))
-            result_entry = {'index': idx, 'success': True, 'contactId': contact_id}
+            result_entry = {'row': idx, 'success': True, 'contactId': contact_id}
             if is_duplicate:
                 result_entry['duplicate'] = True
                 result_entry['duplicateReason'] = duplicate_reason
@@ -3368,7 +3560,7 @@ def contacts_bulk_create(request):
             import traceback
             error_details = traceback.format_exc()
             print(f"Error preparing contact {idx}: {error_details}")
-            results.append({'index': idx, 'success': False, 'error': str(e)})
+            results.append({'row': idx, 'success': False, 'error': str(e)})
     
     # Bulk update existing contacts
     if contacts_to_update:
@@ -4643,10 +4835,17 @@ def contacts_integration_update(request):
                 return utc.localize(datetime_str)
             datetime_str = str(datetime_str).strip()
             
+            # Handle invalid dates like "0000-00-00 00:00:00" - return None silently
+            if datetime_str.startswith('0000-00-00') or datetime_str.startswith('0000/00/00'):
+                return None
+            
             # Try parsing ISO format with timezone first
             try:
                 from dateutil import parser
                 parsed = parser.parse(datetime_str)
+                # Check if parsed date is invalid (year 0 or similar)
+                if parsed.year == 0 or parsed.year < 1900:
+                    return None
                 if timezone.is_aware(parsed):
                     return parsed
                 return utc.localize(parsed)
@@ -4671,6 +4870,9 @@ def contacts_integration_update(request):
             for fmt in formats:
                 try:
                     parsed = datetime.strptime(datetime_str, fmt)
+                    # Check if parsed date is invalid (year 0 or similar)
+                    if parsed.year == 0 or parsed.year < 1900:
+                        return None
                     return utc.localize(parsed)
                 except ValueError:
                     continue
@@ -4779,12 +4981,7 @@ def contacts_integration_update(request):
                         parsed_dt = parse_datetime(created_at_value)
                         if parsed_dt:
                             update_fields['created_at'] = parsed_dt
-                        else:
-                            # Log parsing error but don't fail
-                            results['errors'].append({
-                                'row': row_num,
-                                'error': f'Could not parse created_at value: {created_at_value}'
-                            })
+                        # If parsing fails, silently skip (set to None/null) - don't log error
                 
                 # Handle updated_at
                 if 'updatedAt' in column_mapping and column_mapping['updatedAt']:
@@ -4793,12 +4990,7 @@ def contacts_integration_update(request):
                         parsed_dt = parse_datetime(updated_at_value)
                         if parsed_dt:
                             update_fields['updated_at'] = parsed_dt
-                        else:
-                            # Log parsing error but don't fail
-                            results['errors'].append({
-                                'row': row_num,
-                                'error': f'Could not parse updated_at value: {updated_at_value}'
-                            })
+                        # If parsing fails, silently skip (set to None/null) - don't log error
                 
                 # Handle assigned_at
                 if 'assignedAt' in column_mapping and column_mapping['assignedAt']:
@@ -4807,12 +4999,7 @@ def contacts_integration_update(request):
                         parsed_dt = parse_datetime(assigned_at_value)
                         if parsed_dt:
                             update_fields['assigned_at'] = parsed_dt
-                        else:
-                            # Log parsing error but don't fail
-                            results['errors'].append({
-                                'row': row_num,
-                                'error': f'Could not parse assigned_at value: {assigned_at_value}'
-                            })
+                        # If parsing fails, silently skip (set to None/null) - don't log error
                 
                 # Handle teleoperatorId
                 if 'teleoperatorId' in column_mapping and column_mapping['teleoperatorId']:
@@ -4986,6 +5173,146 @@ def contacts_integration_update(request):
                 results['failed'] += 1
         
         return Response(results, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def contacts_migration_missing(request):
+    """Check CSV file for old IDs not in database and return missing rows as CSV"""
+    if 'file' not in request.FILES:
+        return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    csv_file = request.FILES['file']
+    old_id_column = request.data.get('oldIdColumn', None)
+    
+    try:
+        # Read CSV file
+        csv_content = csv_file.read().decode('utf-8-sig')  # Handle BOM
+        csv_reader = csv.DictReader(io.StringIO(csv_content))
+        rows = list(csv_reader)
+        
+        if not rows:
+            return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get column names
+        fieldnames = csv_reader.fieldnames
+        if not fieldnames:
+            return Response({'error': 'CSV file has no headers'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Find old ID column
+        if not old_id_column:
+            # Try common variations
+            possible_names = [
+                'old id', 'old_id', 'old_contact_id', 'oldContactId',
+                'old contact id', 'old-contact-id', 'oldcontactid',
+                'OLD_ID', 'OLD_CONTACT_ID', 'Old ID', 'Old Contact ID'
+            ]
+            old_id_column = None
+            for name in possible_names:
+                if name in fieldnames:
+                    old_id_column = name
+                    break
+            
+            if not old_id_column:
+                # Try case-insensitive search
+                fieldnames_lower = {f.lower().replace('_', ' ').replace('-', ' '): f for f in fieldnames}
+                for name in possible_names:
+                    name_lower = name.lower().replace('_', ' ').replace('-', ' ')
+                    if name_lower in fieldnames_lower:
+                        old_id_column = fieldnames_lower[name_lower]
+                        break
+        
+        if not old_id_column:
+            return Response({
+                'error': 'Could not find old ID column',
+                'availableColumns': list(fieldnames),
+                'message': 'Please specify the column name using oldIdColumn parameter'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Extract all old IDs from CSV
+        old_ids_in_csv = []
+        for i, row in enumerate(rows):
+            old_id = str(row.get(old_id_column, '')).strip()
+            if old_id:
+                old_ids_in_csv.append((i, old_id, row))
+        
+        if not old_ids_in_csv:
+            return Response({
+                'error': 'No old IDs found in CSV file',
+                'detectedColumn': old_id_column
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Query database for existing old IDs in batches
+        # Normalize both CSV values and database values to handle whitespace differences
+        existing_old_ids = set()
+        old_id_values = [old_id for _, old_id, _ in old_ids_in_csv]
+        # Create a set of normalized CSV values for efficient lookup
+        normalized_csv_ids = {old_id.strip() for old_id in old_id_values}
+        batch_size = 1000
+        
+        for i in range(0, len(old_id_values), batch_size):
+            batch = old_id_values[i:i + batch_size]
+            # Build a Q object to query contacts where old_contact_id could match
+            # This includes exact matches and potential matches with whitespace
+            # We use Q objects to check if old_contact_id contains any batch value
+            # (to catch cases like " 123 " matching "123")
+            q_conditions = Q()
+            for batch_id in batch:
+                batch_id_str = str(batch_id).strip()
+                # Check for exact match
+                q_conditions |= Q(old_contact_id=batch_id)
+                # Also check if old_contact_id contains the batch value (to catch whitespace variations)
+                # This will match " 123 ", "123 ", " 123", etc.
+                # We'll filter more precisely in Python to avoid false positives
+                if batch_id_str:
+                    q_conditions |= Q(old_contact_id__contains=batch_id_str)
+            
+            # Query contacts that could potentially match
+            existing = Contact.objects.filter(
+                old_contact_id__isnull=False
+            ).filter(q_conditions).values_list('old_contact_id', flat=True).distinct()
+            
+            # Normalize database values and check if they match any normalized CSV value
+            # This ensures we only match values that, when stripped, exactly match the CSV value
+            for db_id in existing:
+                if db_id:
+                    normalized_db_id = str(db_id).strip()
+                    # Only add if normalized database ID exactly matches a normalized CSV ID
+                    # This prevents false positives from __contains (e.g., "123" matching "1234")
+                    if normalized_db_id in normalized_csv_ids:
+                        existing_old_ids.add(normalized_db_id)
+        
+        # Find rows with old IDs NOT in database
+        missing_rows = []
+        for row_index, old_id, row in old_ids_in_csv:
+            old_id_stripped = old_id.strip()
+            if old_id_stripped not in existing_old_ids:
+                missing_rows.append(row)
+        
+        # Create CSV content with missing rows
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(missing_rows)
+        csv_output = output.getvalue()
+        
+        # Return JSON response with statistics and CSV content
+        return Response({
+            'success': True,
+            'statistics': {
+                'totalRows': len(rows),
+                'rowsWithOldIds': len(old_ids_in_csv),
+                'rowsInDatabase': len(existing_old_ids),
+                'rowsMissing': len(missing_rows),
+            },
+            'detectedColumn': old_id_column,
+            'csvContent': csv_output,
+            'filename': f'missing_contacts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        }, status=status.HTTP_200_OK)
         
     except Exception as e:
         import traceback

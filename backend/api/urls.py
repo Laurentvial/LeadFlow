@@ -23,6 +23,7 @@ urlpatterns = [
     path('contacts/csv-import-preview/', api_views.csv_import_preview, name='csv-import-preview'),
     path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
     path('contacts/integration-update/', api_views.contacts_integration_update, name='contacts-integration-update'),
+    path('contacts/migration/missing/', api_views.contacts_migration_missing, name='contacts-migration-missing'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
     path('contacts/<str:contact_id>/delete/', api_views.contact_delete, name='contact-delete'),
     path('contacts/<str:contact_id>/logs/', api_views.contact_logs, name='contact-logs'),

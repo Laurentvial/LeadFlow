@@ -11,6 +11,7 @@ import Fosse from './components/Fosse';
 import AddContact from './components/AddContact';
 import { CsvImport } from './components/CsvImport';
 import { MigrationPage } from './components/MigrationPage';
+import { MissingContactsPage } from './components/MissingContactsPage';
 import { NotesMigrationPage } from './components/NotesMigrationPage';
 import { LogsMigrationPage } from './components/LogsMigrationPage';
 import { EventsMigrationPage } from './components/EventsMigrationPage';
@@ -155,6 +156,15 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <MigrationPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/migration/missing" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <MissingContactsPage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

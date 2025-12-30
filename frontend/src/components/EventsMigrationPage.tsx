@@ -17,9 +17,7 @@ interface ColumnMapping {
 
 const EVENT_FIELDS = [
   { value: 'oldContactId', label: 'Ancien ID Contact' },
-  { value: 'date', label: 'Date seulement (requis)', required: true },
-  { value: 'hour', label: 'Heure' },
-  { value: 'minute', label: 'Minutes' },
+  { value: 'datetime', label: 'Date et heure (format: 2025-04-29 10:30:00) (requis)', required: true },
   { value: 'comment', label: 'Commentaire' },
 ];
 
@@ -35,8 +33,6 @@ export function EventsMigrationPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [excludeFirstRow, setExcludeFirstRow] = useState(true);
-  const [defaultHour, setDefaultHour] = useState<string>('09');
-  const [defaultMinute, setDefaultMinute] = useState<string>('00');
   const [processingProgress, setProcessingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [migrationResults, setMigrationResults] = useState<{ success: number; failed: number; failureReasons: { [reason: string]: number } }>({ success: 0, failed: 0, failureReasons: {} });
 
@@ -129,77 +125,78 @@ export function EventsMigrationPage() {
     }
   };
 
-  const parseDateTime = (dateValue: string, hourValue?: string, minuteValue?: string): string | null => {
-    if (!dateValue) return null;
+  const parseDateTime = (datetimeValue: string): string | null => {
+    if (!datetimeValue || !datetimeValue.trim()) return null;
 
     try {
-      let parsedDate: Date | null = null;
+      const trimmedValue = datetimeValue.trim();
       
-      // Try to parse dd/mm/yyyy format first
-      const ddmmyyyyMatch = dateValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      // Try to parse the format: 2025-04-29 10:30:00
+      // This format: YYYY-MM-DD HH:MM:SS
+      const isoDateTimeMatch = trimmedValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (isoDateTimeMatch) {
+        const year = parseInt(isoDateTimeMatch[1], 10);
+        const month = parseInt(isoDateTimeMatch[2], 10);
+        const day = parseInt(isoDateTimeMatch[3], 10);
+        const hour = parseInt(isoDateTimeMatch[4], 10);
+        const minute = parseInt(isoDateTimeMatch[5], 10);
+        const second = isoDateTimeMatch[6] ? parseInt(isoDateTimeMatch[6], 10) : 0;
+        
+        // Validate ranges
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+          return null;
+        }
+        
+        const formattedMonth = String(month).padStart(2, '0');
+        const formattedDay = String(day).padStart(2, '0');
+        const formattedHour = String(hour).padStart(2, '0');
+        const formattedMinute = String(minute).padStart(2, '0');
+        const formattedSecond = String(second).padStart(2, '0');
+        
+        return `${year}-${formattedMonth}-${formattedDay}T${formattedHour}:${formattedMinute}:${formattedSecond}`;
+      }
+      
+      // Try to parse dd/mm/yyyy HH:MM:SS format
+      const ddmmyyyyMatch = trimmedValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
       if (ddmmyyyyMatch) {
         const day = parseInt(ddmmyyyyMatch[1], 10);
         const month = parseInt(ddmmyyyyMatch[2], 10);
         const year = parseInt(ddmmyyyyMatch[3], 10);
-        parsedDate = new Date(year, month - 1, day);
-      } else {
-        // Try ISO format or standard Date parsing
-        parsedDate = new Date(dateValue);
+        const hour = parseInt(ddmmyyyyMatch[4], 10);
+        const minute = parseInt(ddmmyyyyMatch[5], 10);
+        const second = ddmmyyyyMatch[6] ? parseInt(ddmmyyyyMatch[6], 10) : 0;
+        
+        // Validate ranges
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+          return null;
+        }
+        
+        const formattedMonth = String(month).padStart(2, '0');
+        const formattedDay = String(day).padStart(2, '0');
+        const formattedHour = String(hour).padStart(2, '0');
+        const formattedMinute = String(minute).padStart(2, '0');
+        const formattedSecond = String(second).padStart(2, '0');
+        
+        return `${year}-${formattedMonth}-${formattedDay}T${formattedHour}:${formattedMinute}:${formattedSecond}`;
       }
       
+      // Try standard Date parsing as fallback (handles ISO strings and other formats)
+      const parsedDate = new Date(trimmedValue);
       if (!parsedDate || isNaN(parsedDate.getTime())) {
         return null;
       }
-
-      // Extract date components
+      
+      // Extract components from parsed date
       const year = parsedDate.getFullYear();
       const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
       const day = String(parsedDate.getDate()).padStart(2, '0');
+      const hour = String(parsedDate.getHours()).padStart(2, '0');
+      const minute = String(parsedDate.getMinutes()).padStart(2, '0');
+      const second = String(parsedDate.getSeconds()).padStart(2, '0');
       
-      // Get hour and minute
-      let hour = defaultHour;
-      let minute = defaultMinute;
-      
-      // Try to extract hour from the date value if it contains time
-      const timeMatch = dateValue.match(/(\d{1,2}):(\d{2})/);
-      if (timeMatch) {
-        hour = timeMatch[1].padStart(2, '0');
-        minute = timeMatch[2].padStart(2, '0');
-      } else {
-        // Check if parsed date has time component
-        const hourFromDate = parsedDate.getHours();
-        const minuteFromDate = parsedDate.getMinutes();
-        if (hourFromDate !== 0 || minuteFromDate !== 0) {
-          hour = String(hourFromDate).padStart(2, '0');
-          minute = String(minuteFromDate).padStart(2, '0');
-        }
-      }
-      
-      // Override with hour column if provided
-      if (hourValue) {
-        const hourMatch = hourValue.match(/\d{1,2}/);
-        if (hourMatch) {
-          const h = parseInt(hourMatch[0]);
-          if (h >= 0 && h <= 23) {
-            hour = String(h).padStart(2, '0');
-          }
-        }
-      }
-      
-      // Override with minute column if provided
-      if (minuteValue) {
-        const minuteMatch = minuteValue.match(/\d{1,2}/);
-        if (minuteMatch) {
-          const m = parseInt(minuteMatch[0]);
-          if (m >= 0 && m <= 59) {
-            minute = String(m).padStart(2, '0');
-          }
-        }
-      }
-      
-      return `${year}-${month}-${day}T${hour}:${minute}:00`;
+      return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
     } catch (error) {
-      console.error('Error parsing date:', error);
+      console.error('Error parsing datetime:', error);
       return null;
     }
   };
@@ -211,9 +208,9 @@ export function EventsMigrationPage() {
       return;
     }
 
-    // Check if date is mapped (required)
-    if (!columnMapping.date) {
-      toast.error('Veuillez mapper "Date seulement"');
+    // Check if datetime is mapped (required)
+    if (!columnMapping.datetime) {
+      toast.error('Veuillez mapper "Date et heure"');
       return;
     }
 
@@ -324,18 +321,14 @@ export function EventsMigrationPage() {
               return { success: false, error: 'Ancien ID Contact manquant' };
             }
 
-            // Parse datetime from date field (required)
+            // Parse datetime from datetime field (required)
             let datetime: string | null = null;
-            if (columnMapping.date) {
-              datetime = parseDateTime(
-                row[columnMapping.date]?.trim() || '',
-                columnMapping.hour ? row[columnMapping.hour]?.trim() : undefined,
-                columnMapping.minute ? row[columnMapping.minute]?.trim() : undefined
-              );
+            if (columnMapping.datetime) {
+              datetime = parseDateTime(row[columnMapping.datetime]?.trim() || '');
             }
 
             if (!datetime) {
-              return { success: false, error: 'Date invalide ou manquante' };
+              return { success: false, error: 'Date et heure invalides ou manquantes' };
             }
             
             const comment = columnMapping.comment ? row[columnMapping.comment]?.trim() : '';
@@ -517,43 +510,14 @@ export function EventsMigrationPage() {
                 </div>
               ))}
 
-              {/* Default values */}
+              {/* Format info */}
               <div className="pt-4 border-t space-y-4">
-                <h3 className="font-semibold text-lg">Valeurs par défaut</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium mb-2 block">Heure par défaut</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      max="23"
-                      value={defaultHour}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 23)) {
-                          setDefaultHour(val || '00');
-                        }
-                      }}
-                      placeholder="09"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium mb-2 block">Minutes par défaut</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      max="59"
-                      value={defaultMinute}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 59)) {
-                          setDefaultMinute(val || '00');
-                        }
-                      }}
-                      placeholder="00"
-                    />
-                  </div>
+                <div className="bg-blue-50 border border-blue-200 rounded p-4">
+                  <p className="text-sm text-blue-800">
+                    <strong>Format attendu pour la date et heure:</strong> <code className="bg-blue-100 px-2 py-1 rounded">2025-04-29 10:30:00</code>
+                    <br />
+                    Format: YYYY-MM-DD HH:MM:SS (année-mois-jour heure:minute:seconde)
+                  </p>
                 </div>
               </div>
 
