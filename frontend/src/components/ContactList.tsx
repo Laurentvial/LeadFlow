@@ -714,6 +714,7 @@ export function ContactList({
     { id: 'teleoperator', label: 'Téléopérateur', defaultVisible: true },
     { id: 'assignedAt', label: 'Attribué le', defaultVisible: true },
     { id: 'confirmateur', label: 'Confirmateur', defaultVisible: true },
+    { id: 'platform', label: 'Plateforme', defaultVisible: false },
     { id: 'creator', label: 'Créateur', defaultVisible: false },
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
     { id: 'previousStatus', label: 'Statut précédent', defaultVisible: false },
@@ -1568,7 +1569,7 @@ export function ContactList({
 
   // Helper function to determine if a column should use multi-select filter
   const shouldUseMultiSelectFilter = (columnId: string): boolean => {
-    return ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam', 'previousStatus', 'previousTeleoperator'].includes(columnId);
+    return ['status', 'creator', 'teleoperator', 'confirmateur', 'source', 'postalCode', 'nationality', 'campaign', 'civility', 'managerTeam', 'previousStatus', 'previousTeleoperator', 'platform'].includes(columnId);
   };
 
   const isDateColumn = (columnId: string): boolean => {
@@ -1655,6 +1656,13 @@ export function ContactList({
           label: source.name
         }));
         options.push(...sourceOptions);
+        break;
+      case 'platform':
+        const platformOptions = platforms.map(platform => ({
+          id: platform.id,
+          label: platform.name
+        }));
+        options.push(...platformOptions);
         break;
       case 'postalCode':
         // Extract unique postal codes from contacts
@@ -2455,6 +2463,8 @@ export function ContactList({
             </span>
           </td>
         );
+      case 'platform':
+        return <td key={columnId} title={contact.platform || ''}>{truncateText(contact.platform || '-')}</td>;
       case 'creator':
         return <td key={columnId} title={contact.creatorName || ''}>{truncateText(contact.creatorName || '-')}</td>;
       case 'managerTeam':
