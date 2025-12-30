@@ -372,60 +372,60 @@ export function EventsMigrationPage() {
           console.log(`[DEBUG] Looking up ${oldContactIds.length} unique oldContactIds`);
 
           if (oldContactIds.length > 0) {
-            // Try fetching all contacts first (more reliable for migration)
-            let allContacts: any[] = [];
+            // Use the dedicated endpoint to fetch contacts by oldContactIds
+            // This is more efficient and bypasses pagination limits
             try {
-              console.log(`[DEBUG] Attempting to fetch all contacts for migration...`);
-              const allContactsResponse = await apiCall('/api/contacts/', {
-                method: 'GET',
-                params: new URLSearchParams({
-                  all_contacts: 'true',
-                  limit: '10000' // Fetch a large batch
-                })
-              });
+              console.log(`[DEBUG] Fetching ${oldContactIds.length} contacts by oldContactId using dedicated endpoint...`);
               
-              // Handle different response formats
-              if (Array.isArray(allContactsResponse)) {
-                allContacts = allContactsResponse;
-              } else if (allContactsResponse?.contacts && Array.isArray(allContactsResponse.contacts)) {
-                allContacts = allContactsResponse.contacts;
-              } else if (allContactsResponse && typeof allContactsResponse === 'object') {
-                const possibleArrays = Object.values(allContactsResponse).filter((val: any) => Array.isArray(val));
-                if (possibleArrays.length > 0) {
-                  allContacts = possibleArrays[0] as any[];
+              // Process in batches to avoid very large requests
+              const CONTACT_BATCH_SIZE = 500; // Process in batches of 500
+              for (let j = 0; j < oldContactIds.length; j += CONTACT_BATCH_SIZE) {
+                const batch = oldContactIds.slice(j, j + CONTACT_BATCH_SIZE);
+                
+                try {
+                  const response = await apiCall('/api/contacts/by-old-ids/', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      oldContactIds: batch
+                    })
+                  });
+                  
+                  if (response?.contacts && Array.isArray(response.contacts)) {
+                    response.contacts.forEach((contact: any) => {
+                      const oldId = contact.oldContactId;
+                      if (oldId !== null && oldId !== undefined && oldId !== '') {
+                        const oldIdStr = String(oldId).trim();
+                        if (oldIdStr) {
+                          const contactInfo = {
+                            contactId: contact.contactId,
+                            teleoperatorId: contact.teleoperatorId || null
+                          };
+                          
+                          // Store with string key
+                          contactsByOldId[oldIdStr] = contactInfo;
+                          
+                          // Also store numeric version if applicable (for "231111" vs 231111 matching)
+                          if (!isNaN(Number(oldIdStr))) {
+                            const numericKey = String(Number(oldIdStr));
+                            if (numericKey !== oldIdStr) {
+                              contactsByOldId[numericKey] = contactInfo;
+                            }
+                          }
+                        }
+                      }
+                    });
+                    
+                    console.log(`[DEBUG] Batch ${Math.floor(j / CONTACT_BATCH_SIZE) + 1}: Found ${response.contacts.length} contacts`);
+                  }
+                } catch (batchError: any) {
+                  console.error(`[ERROR] Error fetching batch ${Math.floor(j / CONTACT_BATCH_SIZE) + 1}:`, batchError);
+                  // Continue with next batch
                 }
               }
               
-              console.log(`[DEBUG] Fetched ${allContacts.length} total contacts`);
-              
-              // Build lookup map from all contacts
-              allContacts.forEach((contact: any) => {
-                const oldId = contact.oldContactId || contact.old_contact_id;
-                if (oldId !== null && oldId !== undefined && oldId !== '') {
-                  const oldIdStr = String(oldId).trim();
-                  if (oldIdStr) {
-                    const contactInfo = {
-                      contactId: contact.id,
-                      teleoperatorId: contact.teleoperatorId || contact.teleoperator_id || null
-                    };
-                    
-                    // Store with string key
-                    contactsByOldId[oldIdStr] = contactInfo;
-                    
-                    // Also store numeric version if applicable (for "231111" vs 231111 matching)
-                    if (!isNaN(Number(oldIdStr))) {
-                      const numericKey = String(Number(oldIdStr));
-                      if (numericKey !== oldIdStr) {
-                        contactsByOldId[numericKey] = contactInfo;
-                      }
-                    }
-                  }
-                }
-              });
-              
               console.log(`[DEBUG] Built lookup map with ${Object.keys(contactsByOldId).length} contacts`);
               
-              // Check which oldContactIds were found (try both string and numeric versions)
+              // Check which oldContactIds were found
               const foundIds = oldContactIds.filter(id => {
                 const idTrimmed = id.trim();
                 return contactsByOldId[idTrimmed] || 
@@ -439,182 +439,10 @@ export function EventsMigrationPage() {
               console.log(`[DEBUG] Found ${foundIds.length} contacts, missing ${missingIds.length}`);
               if (missingIds.length > 0) {
                 console.log(`[DEBUG] Missing oldContactIds (first 20):`, missingIds.slice(0, 20));
-                
-                // Show sample contacts with oldContactId to compare formats
-                const sampleContacts = allContacts
-                  .filter((c: any) => {
-                    const oldId = c.oldContactId || c.old_contact_id;
-                    return oldId !== null && oldId !== undefined && oldId !== '';
-                  })
-                  .slice(0, 10)
-                  .map((c: any) => {
-                    const oldId = c.oldContactId || c.old_contact_id;
-                    return {
-                      id: c.id,
-                      oldContactId: oldId,
-                      oldContactIdType: typeof oldId,
-                      oldContactIdString: String(oldId),
-                      oldContactIdNumeric: !isNaN(Number(oldId)) ? Number(oldId) : null,
-                      firstName: c.firstName || c.fname,
-                      lastName: c.lastName || c.lname
-                    };
-                  });
-                console.log(`[DEBUG] Sample contacts with oldContactId:`, sampleContacts);
-                
-                // Show what we're looking for
-                console.log(`[DEBUG] Looking for oldContactIds (first 10):`, 
-                  oldContactIds.slice(0, 10).map(id => ({
-                    original: id,
-                    trimmed: id.trim(),
-                    numeric: !isNaN(Number(id.trim())) ? Number(id.trim()) : null
-                  }))
-                );
               }
-            } catch (allContactsError: any) {
-              console.warn(`[DEBUG] Failed to fetch all contacts, falling back to individual queries:`, allContactsError);
-              
-              // Fallback: Fetch contacts by oldContactId in parallel batches
-              const CONTACT_BATCH_SIZE = 20; // Process in parallel batches
-              for (let j = 0; j < oldContactIds.length; j += CONTACT_BATCH_SIZE) {
-                const batch = oldContactIds.slice(j, j + CONTACT_BATCH_SIZE);
-              
-                // Query each oldContactId in parallel for better performance
-                const contactPromises = batch.map(async (oldId) => {
-                  try {
-                    const oldIdTrimmed = oldId.trim();
-                  
-                    // Try with all_contacts=true to bypass permission filtering (for migration purposes)
-                    // This ensures we can find contacts even if user doesn't have direct access
-                    let response;
-                    try {
-                      response = await apiCall('/api/contacts/', {
-                        method: 'GET',
-                        params: new URLSearchParams({
-                          filter_oldContactId: oldIdTrimmed,
-                          all_contacts: 'true', // Bypass permission filtering for migration
-                          limit: '1000' // Increase limit to get more results
-                        })
-                      });
-                    } catch (apiError: any) {
-                      console.error(`API call failed for oldContactId "${oldIdTrimmed}":`, apiError);
-                      // Try without all_contacts as fallback
-                      try {
-                        response = await apiCall('/api/contacts/', {
-                          method: 'GET',
-                          params: new URLSearchParams({
-                            filter_oldContactId: oldIdTrimmed,
-                            limit: '1000'
-                          })
-                        });
-                      } catch (fallbackError: any) {
-                        console.error(`Fallback API call also failed for oldContactId "${oldIdTrimmed}":`, fallbackError);
-                        return null;
-                      }
-                    }
-                    
-                    // Handle different response formats
-                    let contactsList: any[] = [];
-                    if (Array.isArray(response)) {
-                      contactsList = response;
-                    } else if (response?.contacts && Array.isArray(response.contacts)) {
-                      contactsList = response.contacts;
-                    } else if (response && typeof response === 'object') {
-                      // Try to find contacts array in response
-                      const possibleArrays = Object.values(response).filter((val: any) => Array.isArray(val));
-                      if (possibleArrays.length > 0) {
-                        contactsList = possibleArrays[0] as any[];
-                      }
-                    }
-                    
-                    console.log(`[DEBUG] Searching for oldContactId "${oldIdTrimmed}". Found ${contactsList.length} contacts in response.`);
-                    
-                    if (contactsList.length > 0) {
-                      // Find exact match (since filter uses contains, we need to check for exact match)
-                      // Try multiple matching strategies:
-                      // 1. Exact string match (trimmed)
-                      // 2. Numeric match (if both are numeric)
-                      // 3. Case-insensitive match
-                      const oldIdNumeric = !isNaN(Number(oldIdTrimmed)) ? Number(oldIdTrimmed) : null;
-                      
-                      const contact = contactsList.find((c: any) => {
-                        if (!c.oldContactId && !c.old_contact_id) return false;
-                        
-                        // Try both camelCase and snake_case field names
-                        const contactOldId = String(c.oldContactId || c.old_contact_id || '').trim();
-                        
-                        if (!contactOldId) return false;
-                        
-                        // Exact string match
-                        if (contactOldId === oldIdTrimmed) {
-                          console.log(`[DEBUG] Found exact match for "${oldIdTrimmed}":`, contact);
-                          return true;
-                        }
-                        
-                        // Numeric match (if both are numeric)
-                        if (oldIdNumeric !== null) {
-                          const contactOldIdNumeric = !isNaN(Number(contactOldId)) ? Number(contactOldId) : null;
-                          if (contactOldIdNumeric !== null && contactOldIdNumeric === oldIdNumeric) {
-                            console.log(`[DEBUG] Found numeric match for "${oldIdTrimmed}":`, contact);
-                            return true;
-                          }
-                        }
-                        
-                        // Case-insensitive match
-                        if (contactOldId.toLowerCase() === oldIdTrimmed.toLowerCase()) {
-                          console.log(`[DEBUG] Found case-insensitive match for "${oldIdTrimmed}":`, contact);
-                          return true;
-                        }
-                        
-                        return false;
-                      });
-                      
-                      if (contact) {
-                        return { 
-                          oldId: oldIdTrimmed, 
-                          contactId: contact.id,
-                          teleoperatorId: contact.teleoperatorId || contact.teleoperator_id || null
-                        };
-                      }
-                      
-                      // Log for debugging if contact not found
-                      console.warn(`[DEBUG] Contact not found for oldContactId "${oldIdTrimmed}". Found ${contactsList.length} contacts in response.`);
-                      console.warn(`[DEBUG] Sample oldContactIds from response:`, 
-                        contactsList.slice(0, 10).map((c: any) => ({
-                          id: c.id,
-                          oldContactId: c.oldContactId || c.old_contact_id,
-                          fullName: `${c.fname || ''} ${c.lname || ''}`.trim()
-                        })));
-                    } else {
-                      console.warn(`[DEBUG] No contacts found in response for oldContactId "${oldIdTrimmed}". Response:`, response);
-                    }
-                    
-                    return null;
-                  } catch (error: any) {
-                    console.error(`[ERROR] Error fetching contact for oldContactId ${oldId}:`, error);
-                    // Log more details about the error
-                    if (error?.error) {
-                      console.error(`[ERROR] Error details:`, error.error);
-                    }
-                    if (error?.message) {
-                      console.error(`[ERROR] Error message:`, error.message);
-                    }
-                    if (error?.response) {
-                      console.error(`[ERROR] Error response:`, error.response);
-                    }
-                    return null;
-                  }
-                });
-                
-                const results = await Promise.all(contactPromises);
-                results.forEach(result => {
-                  if (result) {
-                    contactsByOldId[result.oldId] = {
-                      contactId: result.contactId,
-                      teleoperatorId: result.teleoperatorId
-                    };
-                  }
-                });
-              }
+            } catch (error: any) {
+              console.error('[ERROR] Error fetching contacts by oldContactId:', error);
+              toast.warning('Erreur lors de la récupération des contacts par ancien ID. Vérifiez la console pour plus de détails.');
             }
           }
         } catch (error) {

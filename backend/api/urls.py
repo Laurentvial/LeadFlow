@@ -24,12 +24,13 @@ urlpatterns = [
     path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
     path('contacts/integration-update/', api_views.contacts_integration_update, name='contacts-integration-update'),
     path('contacts/migration/missing/', api_views.contacts_migration_missing, name='contacts-migration-missing'),
+    path('contacts/by-old-ids/', api_views.contacts_by_old_ids, name='contacts-by-old-ids'),
+    # TEMPORARY: Delete all contacts endpoint - REMOVE AFTER USE (must be before generic contact_id route)
+    path('contacts/delete-all/', api_views.delete_all_contacts, name='delete-all-contacts'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
     path('contacts/<str:contact_id>/delete/', api_views.contact_delete, name='contact-delete'),
     path('contacts/<str:contact_id>/logs/', api_views.contact_logs, name='contact-logs'),
     path('contacts/<str:contact_id>/documents/', api_views.contact_documents, name='contact-documents'),
-    # TEMPORARY: Delete all contacts endpoint - REMOVE AFTER USE
-    path('contacts/delete-all/', api_views.delete_all_contacts, name='delete-all-contacts'),
     # Documents endpoints
     path('documents/upload/', api_views.document_upload, name='document-upload'),
     path('documents/create/', api_views.document_create, name='document-create'),

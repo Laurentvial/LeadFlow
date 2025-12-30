@@ -5181,6 +5181,93 @@ def contacts_integration_update(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def contacts_by_old_ids(request):
+    """
+    Get contacts by a list of oldContactIds for migration purposes.
+    Accepts a list of oldContactIds and returns matching contacts with their IDs and teleoperatorIds.
+    Bypasses pagination limits for migration efficiency.
+    """
+    try:
+        old_contact_ids = request.data.get('oldContactIds', [])
+        
+        if not old_contact_ids or not isinstance(old_contact_ids, list):
+            return Response({'error': 'oldContactIds must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Normalize oldContactIds (trim whitespace, convert to string)
+        normalized_ids = [str(id).strip() for id in old_contact_ids if id is not None and str(id).strip()]
+        
+        if not normalized_ids:
+            return Response({'contacts': []}, status=status.HTTP_200_OK)
+        
+        # Build query conditions for exact matches (try both string and numeric versions)
+        from django.db.models import Q
+        q_conditions = Q()
+        
+        for old_id in normalized_ids:
+            # Exact string match
+            q_conditions |= Q(old_contact_id=old_id)
+            # Also try numeric match if applicable (for cases where DB has "123" and CSV has "123")
+            try:
+                # If it's numeric, also try matching the numeric string version
+                numeric_id = str(int(old_id))
+                if numeric_id != old_id:
+                    q_conditions |= Q(old_contact_id=numeric_id)
+            except (ValueError, TypeError):
+                pass
+        
+        # Query contacts with matching old_contact_ids
+        # Use select_related to optimize teleoperator access
+        contacts = Contact.objects.filter(
+            old_contact_id__isnull=False
+        ).filter(q_conditions).select_related(
+            'teleoperator',
+            'teleoperator__user_details'
+        ).distinct()
+        
+        # Build response with contactId and teleoperatorId
+        result = []
+        for contact in contacts:
+            # Normalize old_contact_id for matching
+            contact_old_id = str(contact.old_contact_id).strip() if contact.old_contact_id else None
+            
+            # Check if this contact matches any of the requested IDs
+            matches = False
+            for requested_id in normalized_ids:
+                # Exact match
+                if contact_old_id == requested_id:
+                    matches = True
+                    break
+                # Numeric match (for cases where DB has "123" and CSV has "123")
+                try:
+                    numeric_requested = str(int(requested_id))
+                    if contact_old_id == numeric_requested:
+                        matches = True
+                        break
+                except (ValueError, TypeError):
+                    pass
+            
+            if matches:
+                # Get teleoperatorId (UserDetails ID, not Django User ID)
+                teleoperator_id = None
+                if contact.teleoperator and contact.teleoperator.user_details:
+                    teleoperator_id = contact.teleoperator.user_details.id
+                
+                result.append({
+                    'oldContactId': contact.old_contact_id,
+                    'contactId': contact.id,
+                    'teleoperatorId': teleoperator_id
+                })
+        
+        return Response({'contacts': result}, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in contacts_by_old_ids: {error_details}")
+        return Response({'error': str(e), 'details': error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def contacts_migration_missing(request):
     """Check CSV file for old IDs not in database and return missing rows as CSV"""
     if 'file' not in request.FILES:
@@ -7699,11 +7786,6 @@ def event_list(request):
 def event_create(request):
     serializer = EventSerializer(data=request.data)
     if serializer.is_valid():
-        # Generate event ID
-        event_id = uuid.uuid4().hex[:12]
-        while Event.objects.filter(id=event_id).exists():
-            event_id = uuid.uuid4().hex[:12]
-        
         # Get contact if contactId provided
         contact = None
         contact_id = request.data.get('contactId')
@@ -7712,6 +7794,38 @@ def event_create(request):
                 contact = Contact.objects.get(id=contact_id)
             except Contact.DoesNotExist:
                 pass
+        
+        # Check for duplicate event: same date, same hour, same contact
+        # Use validated_data to get properly parsed datetime
+        validated_datetime = serializer.validated_data.get('datetime')
+        if validated_datetime and contact:
+            try:
+                # Ensure datetime is timezone-aware
+                if timezone.is_naive(validated_datetime):
+                    validated_datetime = timezone.make_aware(validated_datetime, timezone.utc)
+                
+                # Extract date and hour
+                event_date = validated_datetime.date()
+                event_hour = validated_datetime.hour
+                
+                # Check if an event already exists with the same contact, date, and hour
+                existing_event = Event.objects.filter(
+                    contactId=contact,
+                    datetime__date=event_date,
+                    datetime__hour=event_hour
+                ).first()
+                
+                if existing_event:
+                    # Return existing event instead of creating a duplicate
+                    return Response(EventSerializer(existing_event).data, status=status.HTTP_200_OK)
+            except (ValueError, AttributeError, TypeError) as e:
+                # If datetime parsing fails, continue with normal creation
+                pass
+        
+        # Generate event ID
+        event_id = uuid.uuid4().hex[:12]
+        while Event.objects.filter(id=event_id).exists():
+            event_id = uuid.uuid4().hex[:12]
         
         # Get user if userId provided, otherwise use current user
         # userId can be either UserDetails ID or DjangoUser ID (for backward compatibility)

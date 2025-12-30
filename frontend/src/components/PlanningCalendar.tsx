@@ -1311,7 +1311,7 @@ export function PlanningCalendar() {
                                 justifyContent: 'space-between'
                               }}
                             >
-                              <div>
+                              <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                                 <div className="planning-event-time" style={{ color: '#1e293b' }}>
                                   <Clock className="planning-icon-sm" style={{ color: '#1e293b' }} />
                                   {time}
@@ -1327,7 +1327,7 @@ export function PlanningCalendar() {
                                       }
                                     }}
                                     style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default', color: '#1e293b' }}
-                                    title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                    title={event.contactName || event.clientName || undefined}
                                   >
                                     {event.contactName || event.clientName}
                                   </div>
@@ -1335,7 +1335,7 @@ export function PlanningCalendar() {
                                 {eventUserId && (
                                   <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px', minWidth: 0 }}>
                                     <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
-                                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getUserName(eventUserId)}</span>
+                                    <span title={getUserName(eventUserId)}>{getUserName(eventUserId)}</span>
                                   </div>
                                 )}
                               </div>
