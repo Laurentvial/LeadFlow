@@ -16,6 +16,7 @@ import { NotesMigrationPage } from './components/NotesMigrationPage';
 import { LogsMigrationPage } from './components/LogsMigrationPage';
 import { EventsMigrationPage } from './components/EventsMigrationPage';
 import { ContactIntegrationPage } from './components/ContactIntegrationPage';
+import { CsvComparePage } from './components/CsvComparePage';
 import { ContactDetail } from './components/ContactDetail';
 import Settings from './components/Settings';
 import Mails from './components/Mails';
@@ -165,6 +166,15 @@ function App() {
                             <PermissionProtectedRoute component="contacts" action="create">
                                 <Layout>
                                     <MissingContactsPage />
+                                </Layout>
+                            </PermissionProtectedRoute>
+                        </ProtectedRoute>
+                    } />
+                    <Route path="/contacts/migration/compare" element={
+                        <ProtectedRoute>
+                            <PermissionProtectedRoute component="contacts" action="create">
+                                <Layout>
+                                    <CsvComparePage />
                                 </Layout>
                             </PermissionProtectedRoute>
                         </ProtectedRoute>

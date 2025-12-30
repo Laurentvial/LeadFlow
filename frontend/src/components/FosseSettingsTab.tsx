@@ -61,6 +61,8 @@ const AVAILABLE_COLUMNS = [
   { id: 'postalCode', label: 'Code postal' },
   { id: 'city', label: 'Ville' },
   { id: 'nationality', label: 'Nationalité' },
+  { id: 'autreInformations', label: 'Autre information' },
+  { id: 'dateInscription', label: 'Date d\'inscription' },
   { id: 'campaign', label: 'Campagne' },
   { id: 'teleoperator', label: 'Téléopérateur' },
   { id: 'confirmateur', label: 'Confirmateur' },

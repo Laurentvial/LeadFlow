@@ -69,7 +69,7 @@ export function CsvImport() {
   const [error, setError] = useState<string | null>(null);
   const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
-  const [includeFirstRow, setIncludeFirstRow] = useState(false);
+  const [firstRowIsHeader, setFirstRowIsHeader] = useState(false);
   const [autreInformationsOpen, setAutreInformationsOpen] = useState(false);
   const autreInformationsRef = useRef<HTMLDivElement>(null);
   const autreInformationsButtonRef = useRef<HTMLButtonElement>(null);
@@ -291,20 +291,21 @@ export function CsvImport() {
         }
 
         // Extract headers
-        if (includeFirstRow) {
-          // If including first row, generate generic column names
-          const firstRowLength = jsonData[0]?.length || 0;
-          headers = Array.from({ length: firstRowLength }, (_, idx) => `Column${idx + 1}`);
-        } else {
+        if (firstRowIsHeader) {
           // First row is headers
           headers = jsonData[0].map((h, idx) => {
             const cleaned = String(h || '').trim();
             return cleaned || `Column${idx + 1}`;
           });
+        } else {
+          // If first row is not header, generate generic column names to match backend behavior
+          // Backend generates Column1, Column2, etc. when includeFirstRow is true
+          const firstRowLength = jsonData[0]?.length || 0;
+          headers = Array.from({ length: firstRowLength }, (_, idx) => `Column${idx + 1}`);
         }
 
-        // Process rows - start from row 0 if includeFirstRow is true, otherwise start from row 1
-        const startRow = includeFirstRow ? 0 : 1;
+        // Process rows - start from row 1 if firstRowIsHeader is true, otherwise start from row 0
+        const startRow = firstRowIsHeader ? 1 : 0;
         for (let i = startRow; i < jsonData.length; i++) {
           const values = jsonData[i];
           const row: any = {};
@@ -365,22 +366,23 @@ export function CsvImport() {
         };
         
         // Extract headers
-        if (includeFirstRow) {
-          // If including first row, generate generic column names based on first row length
-          const firstRowValues = parseCSVLine(lines[0]);
-          headers = Array.from({ length: firstRowValues.length }, (_, idx) => `Column${idx + 1}`);
-        } else {
+        const firstRowValues = parseCSVLine(lines[0]);
+        if (firstRowIsHeader) {
           // Use first row values as column headers for mapping
-          const firstRowValues = parseCSVLine(lines[0]);
           headers = firstRowValues.map((h, idx) => {
             const cleaned = h.replace(/^"|"$/g, '').trim();
             // If header is empty, generate a name
             return cleaned || `Column${idx + 1}`;
           });
+        } else {
+          // If first row is not header, generate generic column names to match backend behavior
+          // Backend generates Column1, Column2, etc. when includeFirstRow is true
+          const numColumns = firstRowValues.length;
+          headers = Array.from({ length: numColumns }, (_, idx) => `Column${idx + 1}`);
         }
         
-        // Process data rows - start from row 0 if includeFirstRow is true, otherwise start from row 1
-        const startRow = includeFirstRow ? 0 : 1;
+        // Process data rows - start from row 1 if firstRowIsHeader is true, otherwise start from row 0
+        const startRow = firstRowIsHeader ? 1 : 0;
         for (let i = startRow; i < lines.length; i++) {
           const values = parseCSVLine(lines[i]);
           const row: any = {};
@@ -461,7 +463,7 @@ export function CsvImport() {
       formData.append('file', csvFile);
       formData.append('columnMapping', JSON.stringify(columnMapping));
       formData.append('defaultStatusId', defaultStatusId);
-      formData.append('includeFirstRow', includeFirstRow ? 'true' : 'false');
+      formData.append('includeFirstRow', (!firstRowIsHeader) ? 'true' : 'false');
       if (defaultSourceId) {
         formData.append('defaultSourceId', defaultSourceId);
       }
@@ -519,7 +521,7 @@ export function CsvImport() {
     setImportResults(null);
     setError(null);
     setIsLoading(false);
-    setIncludeFirstRow(false);
+    setFirstRowIsHeader(false);
     setAutreInformationsOpen(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -672,12 +674,12 @@ export function CsvImport() {
                   </p>
                   <div className="flex items-center gap-2 mb-4">
                     <Checkbox
-                      id="include-first-row"
-                      checked={includeFirstRow}
-                      onCheckedChange={(checked) => setIncludeFirstRow(checked === true)}
+                      id="first-row-is-header"
+                      checked={firstRowIsHeader}
+                      onCheckedChange={(checked) => setFirstRowIsHeader(checked === true)}
                     />
-                    <Label htmlFor="include-first-row" className="text-sm cursor-pointer">
-                      Inclure la première ligne dans l'import (par défaut, la première ligne est considérée comme en-tête)
+                    <Label htmlFor="first-row-is-header" className="text-sm cursor-pointer">
+                      La première ligne est un en-tête (par défaut, la première ligne est importée)
                     </Label>
                   </div>
                   <input

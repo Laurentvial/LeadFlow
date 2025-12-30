@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -788,6 +788,8 @@ export function ContactList({
     { id: 'postalCode', label: 'Code postal', defaultVisible: false },
     { id: 'city', label: 'Ville', defaultVisible: false },
     { id: 'nationality', label: 'Nationalité', defaultVisible: false },
+    { id: 'autreInformations', label: 'Autre information', defaultVisible: true },
+    { id: 'dateInscription', label: 'Date d\'inscription', defaultVisible: false },
     { id: 'campaign', label: 'Campagne', defaultVisible: false },
     { id: 'teleoperator', label: 'Téléopérateur', defaultVisible: true },
     { id: 'assignedAt', label: 'Attribué le', defaultVisible: true },
@@ -1213,8 +1215,8 @@ export function ContactList({
   };
   
   const handleResetColumns = () => {
-    // Reset to the specified default columns only
-    const defaultOrderColumns = ['createdAt', 'fullName', 'source', 'phone', 'mobile', 'email', 'status', 'updatedAt', 'notes'];
+    // Reset to columns with defaultVisible: true
+    const defaultOrderColumns = allColumns.filter(col => col.defaultVisible).map(col => col.id);
     // Set visibility to only the default columns
     saveVisibleColumns(defaultOrderColumns);
     // Reset order: default columns first, then all other columns
@@ -2186,6 +2188,33 @@ export function ContactList({
     loadContactNotes();
   }, [isStatusModalOpen, selectedContact?.id]);
   
+  // Helper function to copy text to clipboard
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    if (!text || text === '-') {
+      toast.error('Aucun contenu à copier');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${fieldName} copié dans le presse-papiers`);
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        toast.success(`${fieldName} copié dans le presse-papiers`);
+      } catch (fallbackErr) {
+        toast.error('Erreur lors de la copie');
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
   // Helper function to render cell content based on column id
   const renderCell = (contact: any, columnId: string) => {
     // Helper to stop propagation for interactive elements
@@ -2210,20 +2239,52 @@ export function ContactList({
           </td>
         );
       case 'fullName':
+        const fullNameValue = contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-';
         return (
           <td key={columnId} onClick={stopPropagation} style={{ textAlign: 'left' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem', overflow: 'hidden', minWidth: 0 }}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openContactDetail(contact.id);
-                }}
-                className="contacts-name-link"
-                title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, textAlign: 'left' }}
-              >
-                {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%', minWidth: 0 }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openContactDetail(contact.id);
+                  }}
+                  className="contacts-name-link"
+                  title={fullNameValue}
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, textAlign: 'left' }}
+                >
+                  {fullNameValue}
+                </button>
+                {fullNameValue !== '-' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(fullNameValue, 'Nom complet');
+                    }}
+                    title="Copier le nom complet"
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      padding: '2px',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#6b7280',
+                      flexShrink: 0,
+                      marginLeft: '2px'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = '#3b82f6';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = '#6b7280';
+                    }}
+                  >
+                    <Copy size={14} />
+                  </button>
+                )}
+              </div>
               {lastOpenedContactId === contact.id && (
                 <span 
                   style={{
@@ -2244,28 +2305,136 @@ export function ContactList({
           </td>
         );
       case 'firstName':
-        return <td key={columnId} title={contact.firstName || ''}>{truncateText(contact.firstName || '-')}</td>;
+        const firstNameValue = contact.firstName || '-';
+        return (
+          <td key={columnId} title={firstNameValue || ''}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%', minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {truncateText(firstNameValue)}
+              </span>
+              {firstNameValue !== '-' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyToClipboard(firstNameValue, 'Prénom');
+                  }}
+                  title="Copier le prénom"
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    padding: '2px',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#6b7280',
+                    flexShrink: 0,
+                    marginLeft: '2px'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#3b82f6';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#6b7280';
+                  }}
+                >
+                  <Copy size={14} />
+                </button>
+              )}
+            </div>
+          </td>
+        );
       case 'lastName':
-        return <td key={columnId} title={contact.lastName || ''}>{truncateText(contact.lastName || '-')}</td>;
+        const lastNameValue = contact.lastName || '-';
+        return (
+          <td key={columnId} title={lastNameValue || ''}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%', minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {truncateText(lastNameValue)}
+              </span>
+              {lastNameValue !== '-' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyToClipboard(lastNameValue, 'Nom');
+                  }}
+                  title="Copier le nom"
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    padding: '2px',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#6b7280',
+                    flexShrink: 0,
+                    marginLeft: '2px'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#3b82f6';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#6b7280';
+                  }}
+                >
+                  <Copy size={14} />
+                </button>
+              )}
+            </div>
+          </td>
+        );
       case 'civility':
         return <td key={columnId} title={contact.civility || ''}>{truncateText(contact.civility || '-')}</td>;
       case 'phone':
         const phoneNumber = formatPhoneNumber(contact.phone);
         const phoneTelLink = contact.phone ? `tel:${String(contact.phone)}` : '';
+        const phoneValue = phoneNumber || '-';
         return (
           <td key={columnId} onClick={stopPropagation} title={phoneNumber || ''}>
-            {phoneNumber ? (
-              <a 
-                href={phoneTelLink}
-                className="contacts-name-link"
-                onClick={(e) => e.stopPropagation()}
-                style={{ textDecoration: 'underline', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%' }}
-              >
-                {phoneNumber}
-              </a>
-            ) : (
-              '-'
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%', minWidth: 0 }}>
+              {phoneNumber ? (
+                <a 
+                  href={phoneTelLink}
+                  className="contacts-name-link"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ textDecoration: 'underline', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                >
+                  {phoneNumber}
+                </a>
+              ) : (
+                <span>-</span>
+              )}
+              {phoneValue !== '-' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyToClipboard(phoneValue, 'Téléphone');
+                  }}
+                  title="Copier le téléphone"
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    padding: '2px',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#6b7280',
+                    flexShrink: 0,
+                    marginLeft: '2px'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#3b82f6';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#6b7280';
+                  }}
+                >
+                  <Copy size={14} />
+                </button>
+              )}
+            </div>
           </td>
         );
       case 'mobile':
@@ -2315,21 +2484,53 @@ export function ContactList({
         const emailStatus = contact.emailVerificationStatus || 'not_verified';
         const statusLabel = getEmailStatusLabel(emailStatus);
         const statusColor = getEmailStatusColor(emailStatus);
+        const emailValue = contact.email || '-';
         
         return (
           <td key={columnId} className="contacts-table-email" onClick={stopPropagation}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', overflow: 'hidden', minWidth: 0 }}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openContactDetail(contact.id);
-                }}
-                className="contacts-name-link"
-                title={contact.email || ''}
-                style={{ textAlign: 'left', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
-              >
-                {contact.email || '-'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', width: '100%', minWidth: 0 }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openContactDetail(contact.id);
+                  }}
+                  className="contacts-name-link"
+                  title={emailValue}
+                  style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                >
+                  {emailValue}
+                </button>
+                {emailValue !== '-' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(emailValue, 'Email');
+                    }}
+                    title="Copier l'email"
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      padding: '2px',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#6b7280',
+                      flexShrink: 0,
+                      marginLeft: '2px'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = '#3b82f6';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = '#6b7280';
+                    }}
+                  >
+                    <Copy size={14} />
+                  </button>
+                )}
+              </div>
               {contact.email && (
                 <span 
                   style={{ 

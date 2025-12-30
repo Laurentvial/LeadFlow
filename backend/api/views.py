@@ -28,7 +28,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 import uuid
 from datetime import datetime, date, timedelta
 from django.utils import timezone
-from django.db.models import Count, Q, Sum, F, Case, When, IntegerField
+from django.db.models import Count, Q, Sum, F, Case, When, IntegerField, Value
 from django.db.models.functions import Cast, MD5, Substr, Coalesce, Concat
 from django.db.models import CharField, Value
 import boto3
@@ -836,12 +836,13 @@ class ContactView(generics.ListAPIView):
         from .models import Log
         
         # Annotate with most recent log date to avoid N+1 queries
+        # Explicitly set output_field to ensure proper datetime type for sorting
         latest_log = Log.objects.filter(
             contact_id=OuterRef('pk')
         ).order_by('-created_at').values('created_at')[:1]
         
         queryset = queryset.annotate(
-            last_log_date=Subquery(latest_log)
+            last_log_date=Subquery(latest_log, output_field=models.DateTimeField())
         )
         
         queryset = queryset.prefetch_related(
@@ -1457,17 +1458,25 @@ class ContactView(generics.ListAPIView):
             elif order_param == 'created_at_desc':
                 queryset = queryset.order_by('-created_at')
             elif order_param == 'updated_at_asc':
-                # Use last_log_date annotation if available, otherwise fallback to updated_at
-                # Coalesce automatically infers output field from its arguments
-                queryset = queryset.order_by().annotate(
-                    sort_date=Coalesce(F('last_log_date'), F('updated_at'))
-                ).order_by('sort_date', 'updated_at')
+                # Sort by updated_at only (modification date)
+                # Put NULL values last using Case/When, use -created_at as secondary sort for consistency
+                queryset = queryset.annotate(
+                    updated_at_null_order=Case(
+                        When(updated_at__isnull=True, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('updated_at_null_order', 'updated_at', '-created_at')
             elif order_param == 'updated_at_desc':
-                # Use last_log_date annotation if available, otherwise fallback to updated_at
-                # Coalesce automatically infers output field from its arguments
-                queryset = queryset.order_by().annotate(
-                    sort_date=Coalesce(F('last_log_date'), F('updated_at'))
-                ).order_by('-sort_date', '-updated_at')
+                # Sort by updated_at only (modification date, newest first)
+                # Put NULL values last using Case/When, use -created_at as secondary sort for consistency
+                queryset = queryset.annotate(
+                    updated_at_null_order=Case(
+                        When(updated_at__isnull=True, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('updated_at_null_order', '-updated_at', '-created_at')
             elif order_param == 'email_asc':
                 queryset = queryset.order_by('email')
             elif order_param == 'assigned_at_asc':
@@ -1680,13 +1689,14 @@ class FosseContactView(generics.ListAPIView):
         
         # Annotate with most recent log date to avoid N+1 queries
         # This annotation is needed for updated_at ordering in _apply_filters_fosse
+        # Explicitly set output_field to ensure proper datetime type for sorting
         from django.db.models import Prefetch, Subquery, OuterRef
         latest_log = Log.objects.filter(
             contact_id=OuterRef('pk')
         ).order_by('-created_at').values('created_at')[:1]
         
         queryset = queryset.annotate(
-            last_log_date=Subquery(latest_log)
+            last_log_date=Subquery(latest_log, output_field=models.DateTimeField())
         )
         
         # Prefetch related team_memberships for teleoperator's user_details
@@ -2004,12 +2014,11 @@ class FosseContactView(generics.ListAPIView):
                                         if date_range.get('to'):
                                             queryset = queryset.filter(created_at__lte=date_range.get('to'))
                                     elif column_id == 'updatedAt':
-                                        # For updatedAt, we need to check the last log date
-                                        # This is already annotated in get_queryset
+                                        # Filter by updated_at (modification date)
                                         if date_range.get('from'):
-                                            queryset = queryset.filter(last_log_date__gte=date_range.get('from'))
+                                            queryset = queryset.filter(updated_at__gte=date_range.get('from'))
                                         if date_range.get('to'):
-                                            queryset = queryset.filter(last_log_date__lte=date_range.get('to'))
+                                            queryset = queryset.filter(updated_at__lte=date_range.get('to'))
                 except FosseSettings.DoesNotExist:
                     pass
         except (UserDetails.DoesNotExist, Exception):
