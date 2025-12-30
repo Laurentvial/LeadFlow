@@ -1306,52 +1306,60 @@ export function PlanningCalendar() {
                                 color: userColor,
                                 borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
                                 paddingLeft: '0.5rem',
-                                position: 'relative'
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'space-between'
                               }}
                             >
-                              <div className="planning-event-time">
-                                <Clock className="planning-icon-sm" />
-                                {time}
-                              </div>
-                              {(event.contactName || event.clientName) && (
-                                <div 
-                                  className="planning-event-client"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const contactId = event.clientId_read || event.contactId;
-                                    if (contactId) {
-                                      window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
-                                    }
-                                  }}
-                                  style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
-                                  title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
-                                >
-                                  {event.contactName || event.clientName}
+                              <div>
+                                <div className="planning-event-time" style={{ color: '#1e293b' }}>
+                                  <Clock className="planning-icon-sm" style={{ color: '#1e293b' }} />
+                                  {time}
                                 </div>
-                              )}
+                                {(event.contactName || event.clientName) && (
+                                  <div 
+                                    className="planning-event-client"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const contactId = event.clientId_read || event.contactId;
+                                      if (contactId) {
+                                        window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+                                      }
+                                    }}
+                                    style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default', color: '#1e293b' }}
+                                    title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                  >
+                                    {event.contactName || event.clientName}
+                                  </div>
+                                )}
+                                {eventUserId && (
+                                  <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px', minWidth: 0 }}>
+                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
+                                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getUserName(eventUserId)}</span>
+                                  </div>
+                                )}
+                              </div>
                               {canDelete && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteEvent(event.id);
-                                  }}
-                                  style={{ 
-                                    padding: '2px 4px',
-                                    fontSize: '0.7rem',
-                                    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                                    color: '#dc2626'
-                                  }}
-                                >
-                                  Supprimer
-                                </Button>
-                              )}
-                              {eventUserId && (
-                                <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
-                                  <span>{getUserName(eventUserId)}</span>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="opacity-70 hover:opacity-100"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteEvent(event.id);
+                                    }}
+                                    style={{ 
+                                      padding: '2px 4px',
+                                      fontSize: '0.7rem',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                      color: '#dc2626',
+                                      minWidth: 'auto',
+                                      height: 'auto'
+                                    }}
+                                  >
+                                    Supprimer
+                                  </Button>
                                 </div>
                               )}
                             </div>
@@ -1425,52 +1433,60 @@ export function PlanningCalendar() {
                                   color: userColor,
                                   borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
                                   paddingLeft: '0.5rem',
-                                  position: 'relative'
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'space-between'
                                 }}
                               >
-                                <div className="planning-event-time">
-                                  <Clock className="planning-icon-sm" />
-                                  {time}
-                                </div>
-                                {(event.contactName || event.clientName) && (
-                                  <div 
-                                    className="planning-event-client"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const contactId = event.clientId_read || event.contactId;
-                                      if (contactId) {
-                                        window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
-                                      }
-                                    }}
-                                    style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
-                                    title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
-                                  >
-                                    {event.contactName || event.clientName}
+                                <div>
+                                  <div className="planning-event-time" style={{ color: '#1e293b' }}>
+                                    <Clock className="planning-icon-sm" style={{ color: '#1e293b' }} />
+                                    {time}
                                   </div>
-                                )}
+                                  {(event.contactName || event.clientName) && (
+                                    <div 
+                                      className="planning-event-client"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const contactId = event.clientId_read || event.contactId;
+                                        if (contactId) {
+                                          window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+                                        }
+                                      }}
+                                      style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default', color: '#1e293b' }}
+                                      title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
+                                    >
+                                      {event.contactName || event.clientName}
+                                    </div>
+                                  )}
+                                  {eventUserId && (
+                                    <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                      <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
+                                      <span>{getUserName(eventUserId)}</span>
+                                    </div>
+                                  )}
+                                </div>
                                 {canDelete && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteEvent(event.id);
-                                    }}
-                                    style={{ 
-                                      padding: '2px 4px',
-                                      fontSize: '0.7rem',
-                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                                      color: '#dc2626'
-                                    }}
-                                  >
-                                    Supprimer
-                                  </Button>
-                                )}
-                                {eventUserId && (
-                                  <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
-                                    <span>{getUserName(eventUserId)}</span>
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="opacity-70 hover:opacity-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteEvent(event.id);
+                                      }}
+                                      style={{ 
+                                        padding: '2px 4px',
+                                        fontSize: '0.7rem',
+                                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                        color: '#dc2626',
+                                        minWidth: 'auto',
+                                        height: 'auto'
+                                      }}
+                                    >
+                                      Supprimer
+                                    </Button>
                                   </div>
                                 )}
                               </div>
@@ -1555,7 +1571,7 @@ export function PlanningCalendar() {
                                   position: 'relative'
                                 }}
                               >
-                                <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
+                                <div className="planning-day-event-time" style={{ color: '#1e293b' }}>{time}</div>
                                 {(() => {
                                   const contactName = getEventClientName(event);
                                   const hasContactName = contactName && contactName.trim() !== '';
@@ -1572,16 +1588,16 @@ export function PlanningCalendar() {
                                               window.open(`/contacts/${contactId}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
                                             }
                                           }}
-                                          style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default' }}
+                                          style={{ cursor: (event.clientId_read || event.contactId) ? 'pointer' : 'default', color: '#1e293b' }}
                                           title={(event.clientId_read || event.contactId) ? 'Cliquer pour ouvrir les détails du contact' : undefined}
                                         >
                                           {contactName}
                                         </div>
                                       )}
                                       {eventUserId ? (
-                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
-                                          <User className="w-3 h-3" style={{ flexShrink: 0 }} />
-                                          <span>{getUserName(eventUserId)}</span>
+                                        <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#1e293b', marginTop: hasContactName ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400, minWidth: 0 }}>
+                                          <User className="w-3 h-3" style={{ flexShrink: 0, color: '#1e293b' }} />
+                                          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getUserName(eventUserId)}</span>
                                         </div>
                                       ) : (
                                         <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', marginTop: hasContactName ? '6px' : '0', fontStyle: 'italic' }}>
@@ -1598,7 +1614,7 @@ export function PlanningCalendar() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
+                                    className="absolute top-1/2 right-0 -translate-y-1/2 opacity-70 hover:opacity-100"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleDeleteEvent(event.id);
@@ -1607,7 +1623,11 @@ export function PlanningCalendar() {
                                       padding: '2px 4px',
                                       fontSize: '0.7rem',
                                       backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                                      color: '#dc2626'
+                                      color: '#dc2626',
+                                      zIndex: 10,
+                                      minWidth: 'auto',
+                                      height: 'auto',
+                                      transform: 'translateY(-50%)'
                                     }}
                                   >
                                     Supprimer

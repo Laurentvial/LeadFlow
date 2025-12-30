@@ -2029,17 +2029,17 @@ export function PlanningAdministrateur() {
                                 position: 'relative'
                               }}
                             >
-                              <div className="planning-event-time">
-                                <Clock className="planning-icon-sm" />
+                              <div className="planning-event-time" style={{ color: '#1e293b' }}>
+                                <Clock className="planning-icon-sm" style={{ color: '#1e293b' }} />
                                 {time}
                               </div>
                               {(event.contactName || event.clientName) && (
-                                <div className="planning-event-client">{event.contactName || event.clientName}</div>
+                                <div className="planning-event-client" style={{ color: '#1e293b' }}>{event.contactName || event.clientName}</div>
                               )}
                               {eventUserId && (
-                                <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
-                                  <span>{getUserName(eventUserId)}</span>
+                                <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px', minWidth: 0 }}>
+                                  <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
+                                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getUserName(eventUserId)}</span>
                                 </div>
                               )}
                             </div>
@@ -2116,40 +2116,48 @@ export function PlanningAdministrateur() {
                                   color: userColor,
                                   borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
                                   paddingLeft: '0.5rem',
-                                  position: 'relative'
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'space-between'
                                 }}
                               >
-                                <div className="planning-event-time">
-                                  <Clock className="planning-icon-sm" />
-                                  {time}
-                                </div>
-                                {(event.contactName || event.clientName) && (
-                                  <div className="planning-event-client">{event.contactName || event.clientName}</div>
-                                )}
-                                {eventUserId && (
-                                  <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                    <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0 }} />
-                                    <span>{getUserName(eventUserId)}</span>
+                                <div>
+                                  <div className="planning-event-time" style={{ color: '#1e293b' }}>
+                                    <Clock className="planning-icon-sm" style={{ color: '#1e293b' }} />
+                                    {time}
                                   </div>
-                                )}
+                                  {(event.contactName || event.clientName) && (
+                                    <div className="planning-event-client" style={{ color: '#1e293b' }}>{event.contactName || event.clientName}</div>
+                                  )}
+                                  {eventUserId && (
+                                    <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                      <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
+                                      <span>{getUserName(eventUserId)}</span>
+                                    </div>
+                                  )}
+                                </div>
                                 {canDelete && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="absolute bottom-0 right-0 opacity-70 hover:opacity-100"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteEvent(event.id);
-                                    }}
-                                    style={{ 
-                                      padding: '2px 4px',
-                                      fontSize: '0.7rem',
-                                      backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                                      color: '#dc2626'
-                                    }}
-                                  >
-                                    Supprimer
-                                  </Button>
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="opacity-70 hover:opacity-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteEvent(event.id);
+                                      }}
+                                      style={{ 
+                                        padding: '2px 4px',
+                                        fontSize: '0.7rem',
+                                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                        color: '#dc2626',
+                                        minWidth: 'auto',
+                                        height: 'auto'
+                                      }}
+                                    >
+                                      Supprimer
+                                    </Button>
+                                  </div>
                                 )}
                               </div>
                             );
@@ -2265,7 +2273,7 @@ export function PlanningAdministrateur() {
                                   position: 'relative'
                                 }}
                               >
-                                <div className="planning-day-event-time" style={{ color: userColor }}>{time}</div>
+                                <div className="planning-day-event-time" style={{ color: '#1e293b' }}>{time}</div>
                                 {(() => {
                                   const contactName = getEventClientName(event);
                                   const hasContactName = contactName && contactName.trim() !== '';
@@ -2273,13 +2281,13 @@ export function PlanningAdministrateur() {
                                   return (
                                     <>
                                       {hasContactName && (
-                                        <div className="planning-day-event-client">{contactName}</div>
+                                        <div className="planning-day-event-client" style={{ color: '#1e293b' }}>{contactName}</div>
                                       )}
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: hasContactName ? '6px' : '0' }}>
                                         {eventUserId ? (
-                                          <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400 }}>
-                                            <User className="w-3 h-3" style={{ flexShrink: 0 }} />
-                                            <span>{getUserName(eventUserId)}</span>
+                                          <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 400, minWidth: 0 }}>
+                                            <User className="w-3 h-3" style={{ flexShrink: 0, color: '#1e293b' }} />
+                                            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getUserName(eventUserId)}</span>
                                           </div>
                                         ) : (
                                           <div className="planning-day-event-user" style={{ fontSize: '0.875rem', color: '#94a3b8', fontStyle: 'italic' }}>

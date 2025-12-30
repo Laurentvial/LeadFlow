@@ -3188,9 +3188,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('firstName') ? 'editable' : ''}`}
-                    onClick={canEditField('firstName') ? () => startEditing('firstName', contact.firstName) : undefined}
+                    onClick={canEditField('firstName') ? () => startEditing('firstName', localContact.firstName) : undefined}
                   >
-                    {contact.firstName || '-'}
+                    {localContact.firstName || '-'}
                   </div>
                 )}
               </div>
@@ -3220,9 +3220,9 @@ export function ContactInfoTab({
                 ) : (
                   <div 
                     className={`contact-field-display ${canEditField('lastName') ? 'editable' : ''}`}
-                    onClick={canEditField('lastName') ? () => startEditing('lastName', contact.lastName) : undefined}
+                    onClick={canEditField('lastName') ? () => startEditing('lastName', localContact.lastName) : undefined}
                   >
-                    {contact.lastName || '-'}
+                    {localContact.lastName || '-'}
                   </div>
                 )}
               </div>
