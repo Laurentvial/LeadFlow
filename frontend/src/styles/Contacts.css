@@ -118,10 +118,14 @@
 .contacts-table {
   font-size: 0.875rem;
   border-collapse: collapse;
-  table-layout: auto; /* Permet au tableau de s'adapter au contenu */
+  table-layout: auto; /* Auto layout by default, switches to fixed when column widths are set */
   /* Le tableau peut être plus large que le wrapper, ce qui active le scroll horizontal */
   width: max-content;
   min-width: 100%; /* Au minimum, prend toute la largeur du wrapper */
+}
+
+.contacts-table.table-layout-fixed {
+  table-layout: fixed; /* Fixed layout for column resizing when widths are set */
 }
 
 .contacts-table thead {
@@ -145,6 +149,23 @@
   text-transform: uppercase;
   color: #64748b;
   vertical-align: top;
+  position: relative;
+  overflow: hidden;
+}
+
+.contacts-column-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 20;
+  user-select: none;
+}
+
+.contacts-column-resize-handle:hover {
+  background-color: #cbd5e1;
 }
 
 .contacts-column-header-button {
@@ -188,6 +209,37 @@
   padding: 0.75rem 0.5rem;
   white-space: nowrap;
   font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* max-width: 0 is only applied via inline styles when column widths are set */
+}
+
+.contacts-table td > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.contacts-table td > a,
+.contacts-table td > button {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contacts-table td > div {
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.contacts-table td > div > button,
+.contacts-table td > div > a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .contacts-table-id {

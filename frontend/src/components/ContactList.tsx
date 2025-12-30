@@ -688,6 +688,84 @@ export function ContactList({
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
   const hoverTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   
+  // Column resizing state
+  const getInitialColumnWidths = () => {
+    const storageKey = getStorageKey('column-widths');
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  };
+  
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(getInitialColumnWidths());
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null);
+  const resizeRef = useRef<{ columnId: string | null; startX: number; startWidth: number } | null>(null);
+  
+  // Save column widths to localStorage
+  React.useEffect(() => {
+    const storageKey = getStorageKey('column-widths');
+    localStorage.setItem(storageKey, JSON.stringify(columnWidths));
+  }, [columnWidths, apiEndpoint]);
+  
+  // Column resize handlers
+  const handleResizeMove = React.useCallback((e: MouseEvent) => {
+    if (!resizeRef.current) return;
+    
+    const { columnId, startX, startWidth } = resizeRef.current;
+    const diff = e.clientX - startX;
+    const newWidth = Math.max(50, startWidth + diff); // Minimum width of 50px
+    
+    setColumnWidths(prev => ({
+      ...prev,
+      [columnId]: newWidth
+    }));
+  }, []);
+  
+  const handleResizeEnd = React.useCallback(() => {
+    resizeRef.current = null;
+    setResizingColumn(null);
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, [handleResizeMove]);
+  
+  const handleResizeStart = React.useCallback((e: React.MouseEvent, columnId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const th = e.currentTarget.parentElement as HTMLElement;
+    const currentWidth = th.offsetWidth;
+    
+    resizeRef.current = {
+      columnId,
+      startX: e.clientX,
+      startWidth: currentWidth
+    };
+    
+    setResizingColumn(columnId);
+    
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [handleResizeMove, handleResizeEnd]);
+  
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [handleResizeMove, handleResizeEnd]);
+  
   // Define all available columns
   const allColumns = [
     { id: 'createdAt', label: 'Créé le', defaultVisible: true },
@@ -1976,8 +2054,9 @@ export function ContactList({
         filterText = filterLabels.join(',');
       } else if (typeof filterValue === 'object' && filterValue !== null && 'from' in filterValue) {
         // Date range filter
-        const from = filterValue.from || '';
-        const to = filterValue.to || '';
+        const dateRange = filterValue as { from?: string; to?: string };
+        const from = dateRange.from || '';
+        const to = dateRange.to || '';
         if (from && to) {
           filterText = `du ${from} au ${to}`;
         } else if (from) {
@@ -2133,7 +2212,7 @@ export function ContactList({
       case 'fullName':
         return (
           <td key={columnId} onClick={stopPropagation}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', minWidth: 0 }}>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2141,6 +2220,7 @@ export function ContactList({
                 }}
                 className="contacts-name-link"
                 title={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: '1 1 auto' }}
               >
                 {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
               </button>
@@ -2153,7 +2233,8 @@ export function ContactList({
                     backgroundColor: '#dbeafe',
                     padding: '2px 8px',
                     borderRadius: '4px',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0
                   }}
                 >
                   Dernier ouvert
@@ -2178,7 +2259,7 @@ export function ContactList({
                 href={phoneTelLink}
                 className="contacts-name-link"
                 onClick={(e) => e.stopPropagation()}
-                style={{ textDecoration: 'underline', cursor: 'pointer' }}
+                style={{ textDecoration: 'underline', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%' }}
               >
                 {phoneNumber}
               </a>
@@ -2197,7 +2278,7 @@ export function ContactList({
                 href={mobileTelLink}
                 className="contacts-name-link"
                 onClick={(e) => e.stopPropagation()}
-                style={{ textDecoration: 'underline', cursor: 'pointer' }}
+                style={{ textDecoration: 'underline', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%' }}
               >
                 {truncateText(mobileNumber)}
               </a>
@@ -2237,7 +2318,7 @@ export function ContactList({
         
         return (
           <td key={columnId} className="contacts-table-email" onClick={stopPropagation}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', overflow: 'hidden', minWidth: 0 }}>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2245,7 +2326,7 @@ export function ContactList({
                 }}
                 className="contacts-name-link"
                 title={contact.email || ''}
-                style={{ textAlign: 'left', width: '100%' }}
+                style={{ textAlign: 'left', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
               >
                 {contact.email || '-'}
               </button>
@@ -3390,7 +3471,7 @@ export function ContactList({
             </div>
           ) : (
         <div className={`contacts-table-wrapper ${fullscreen ? 'contacts-table-wrapper-fullscreen' : ''}`}>
-              <table className="contacts-table">
+              <table className={`contacts-table ${Object.keys(columnWidths).length > 0 ? 'table-layout-fixed' : ''}`}>
                 <thead>
                   <tr>
                     {canCreate && (
@@ -3407,8 +3488,18 @@ export function ContactList({
                         />
                       </th>
                     )}
-                    {getOrderedVisibleColumns().map((columnId) => (
-                      <th key={columnId} style={{ position: 'relative' }}>
+                    {getOrderedVisibleColumns().map((columnId) => {
+                      const columnWidth = columnWidths[columnId];
+                      return (
+                      <th 
+                        key={columnId} 
+                        style={{ 
+                          position: 'relative',
+                          width: columnWidth ? `${columnWidth}px` : undefined,
+                          minWidth: columnWidth ? `${columnWidth}px` : undefined,
+                          maxWidth: columnWidth ? `${columnWidth}px` : undefined
+                        }}
+                      >
                         {isFilterForced(columnId) ? (
                           // If filter is forced, just show a button without popover
                           <button
@@ -4024,8 +4115,49 @@ export function ContactList({
                           </PopoverContent>
                         </Popover>
                         )}
+                        <div
+                          className="contacts-column-resize-handle"
+                          onMouseDown={(e) => handleResizeStart(e, columnId)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: '8px',
+                            cursor: 'col-resize',
+                            zIndex: 20,
+                            marginRight: '-4px',
+                            paddingRight: '4px',
+                            paddingLeft: '4px'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (resizingColumn !== columnId) {
+                              e.currentTarget.style.backgroundColor = 'rgba(203, 213, 225, 0.3)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (resizingColumn !== columnId) {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }
+                          }}
+                        >
+                          {resizingColumn === columnId && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                right: '4px',
+                                top: 0,
+                                bottom: 0,
+                                width: '2px',
+                                backgroundColor: '#3b82f6'
+                              }}
+                            />
+                          )}
+                        </div>
                       </th>
-                    ))}
+                    );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -4072,7 +4204,26 @@ export function ContactList({
                             />
                           </td>
                         )}
-                        {getOrderedVisibleColumns().map((columnId) => renderCell(contact, columnId))}
+                        {getOrderedVisibleColumns().map((columnId) => {
+                          const columnWidth = columnWidths[columnId];
+                          const cell = renderCell(contact, columnId);
+                          // Clone the cell element and add width style
+                          if (cell && columnWidth) {
+                            return React.cloneElement(cell, {
+                              key: columnId,
+                              style: {
+                                ...cell.props.style,
+                                width: `${columnWidth}px`,
+                                minWidth: `${columnWidth}px`,
+                                maxWidth: `${columnWidth}px`,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }
+                            });
+                          }
+                          // When no column width is set, return cell as-is (table-layout: auto will handle sizing)
+                          return cell;
+                        })}
                       </tr>
                     ))
                   ) : (
