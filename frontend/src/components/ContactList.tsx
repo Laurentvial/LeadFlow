@@ -3474,20 +3474,18 @@ export function ContactList({
               <table className={`contacts-table ${Object.keys(columnWidths).length > 0 ? 'table-layout-fixed' : ''}`}>
                 <thead>
                   <tr>
-                    {canCreate && (
-                      <th style={{ width: '40px' }}>
-                        <input
-                          type="checkbox"
-                          checked={allSelected}
-                          ref={(input) => {
-                            if (input) input.indeterminate = someSelected;
-                          }}
-                          onChange={handleSelectAll}
-                          className="contacts-checkbox"
-                          disabled={displayedContacts.length === 0}
-                        />
-                      </th>
-                    )}
+                    <th style={{ width: '40px' }}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        ref={(input) => {
+                          if (input) input.indeterminate = someSelected;
+                        }}
+                        onChange={handleSelectAll}
+                        className="contacts-checkbox"
+                        disabled={displayedContacts.length === 0}
+                      />
+                    </th>
                     {getOrderedVisibleColumns().map((columnId) => {
                       const columnWidth = columnWidths[columnId];
                       return (
@@ -4191,19 +4189,17 @@ export function ContactList({
                           cursor: 'pointer'
                         }}
                       >
-                        {canCreate && (
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={selectedContacts.has(contact.id)}
-                              onChange={(e) => {
-                                e.stopPropagation();
-                                handleSelectContact(contact.id);
-                              }}
-                              className="contacts-checkbox"
-                            />
-                          </td>
-                        )}
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedContacts.has(contact.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleSelectContact(contact.id);
+                            }}
+                            className="contacts-checkbox"
+                          />
+                        </td>
                         {getOrderedVisibleColumns().map((columnId) => {
                           const columnWidth = columnWidths[columnId];
                           const cell = renderCell(contact, columnId);
@@ -4228,7 +4224,7 @@ export function ContactList({
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={getOrderedVisibleColumns().length + (canCreate ? 1 : 0)} style={{ textAlign: 'center', padding: '40px' }}>
+                      <td colSpan={getOrderedVisibleColumns().length + 1} style={{ textAlign: 'center', padding: '40px' }}>
                         <p className="contacts-empty">Aucun contact trouvé</p>
                       </td>
                     </tr>
@@ -4476,7 +4472,7 @@ export function ContactList({
                 </Button>
               </div>
               <div className="contacts-bulk-actions-buttons">
-                {canEditInformationsTab && (
+                {canCreate && (
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
