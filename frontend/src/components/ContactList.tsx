@@ -4366,14 +4366,23 @@ export function ContactList({
                         onClick={(e) => {
                           // Only open if clicking on the row itself, not on interactive elements
                           const target = e.target as HTMLElement;
+                          
+                          // Check if user is selecting text (has a text selection)
+                          const selection = window.getSelection();
+                          if (selection && selection.toString().length > 0) {
+                            return; // Don't open contact detail when selecting text
+                          }
+                          
                           // Check if click is on an interactive element
                           if (
                             target.tagName === 'INPUT' ||
                             target.tagName === 'BUTTON' ||
                             target.tagName === 'SELECT' ||
+                            target.tagName === 'A' ||
                             target.closest('button') ||
                             target.closest('select') ||
                             target.closest('input') ||
+                            target.closest('a') ||
                             target.closest('[role="button"]') ||
                             target.closest('[data-radix-popper-content-wrapper]') ||
                             target.closest('.contacts-checkbox') ||

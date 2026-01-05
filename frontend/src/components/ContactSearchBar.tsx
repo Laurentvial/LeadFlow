@@ -163,7 +163,14 @@ export function ContactSearchBar() {
               <div
                 key={contact.id}
                 className="contact-search-result-item"
-                onClick={() => handleContactClick(contact.id)}
+                onClick={(e) => {
+                  // Check if user is selecting text (has a text selection)
+                  const selection = window.getSelection();
+                  if (selection && selection.toString().length > 0) {
+                    return; // Don't open contact detail when selecting text
+                  }
+                  handleContactClick(contact.id);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
