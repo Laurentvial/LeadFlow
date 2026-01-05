@@ -1361,11 +1361,12 @@ export function ContactList({
       
       // Only apply status_type filter if no specific status filter is active
       // This prevents conflicts between status_type and specific status filters
+      // Don't apply status_type filter on fosse page
       const hasStatusFilter = filtersToUse.status && (
         (Array.isArray(filtersToUse.status) && filtersToUse.status.length > 0) ||
         (typeof filtersToUse.status === 'string' && filtersToUse.status !== '')
       );
-      if (appliedStatusType !== 'all' && !hasStatusFilter) {
+      if (!isFossePage && appliedStatusType !== 'all' && !hasStatusFilter) {
         queryParams.append('status_type', appliedStatusType);
       }
       
@@ -1456,6 +1457,18 @@ export function ContactList({
     }
     loadData();
   }, [loadData, isFossePage, fosseSettings, fosseSettingsLoading, currentUser?.role, userLoading]); // Reload when loadData changes (which depends on filters and itemsPerPage)
+
+  // Sync status filter type with contact type filter
+  // Only sync statusColumnFilterType (for status column), not previousStatusColumnFilterType (for previousStatus column)
+  // Users can independently control previousStatusColumnFilterType via the UI buttons
+  useEffect(() => {
+    if (appliedStatusType === 'client') {
+      setStatusColumnFilterType('client');
+    } else if (appliedStatusType === 'lead') {
+      setStatusColumnFilterType('lead');
+    }
+    // When appliedStatusType is 'all', keep the current statusColumnFilterType (don't reset it)
+  }, [appliedStatusType]);
 
   // Load note categories
   useEffect(() => {
@@ -1614,6 +1627,9 @@ export function ContactList({
     setPendingColumnFilters({});
     setAppliedSearchTerm('');
     setAppliedStatusType('all');
+    // Reset status filter type to default (lead)
+    setStatusColumnFilterType('lead');
+    setPreviousStatusColumnFilterType('lead');
     
     // If on Fosse page, preserve forced 'defined' filters when resetting
     if (isFossePage && fosseSettings) {
@@ -1990,8 +2006,8 @@ export function ContactList({
       activeFilters.push(`Recherche égale à ${appliedSearchTerm}`);
     }
     
-    // Add status type filter if not 'all'
-    if (appliedStatusType !== 'all') {
+    // Add status type filter if not 'all' (only show on non-fosse pages)
+    if (!isFossePage && appliedStatusType !== 'all') {
       const statusTypeLabel = appliedStatusType === 'lead' ? 'Lead' : 'Client';
       activeFilters.push(`Type de contact égale à ${statusTypeLabel}`);
     }
@@ -4575,26 +4591,28 @@ export function ContactList({
               </div>
             </div>
 
-            <div className="contacts-filter-section">
-              <Label>Type de contact</Label>
-              <Select 
-                value={appliedStatusType} 
-                onValueChange={(value) => {
-                  const statusType = value as 'all' | 'lead' | 'client';
-                  setAppliedStatusType(statusType);
-                  setPendingStatusType(statusType);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent style={{ zIndex: 10001 }}>
-                  <SelectItem value="all">Tous</SelectItem>
-                  <SelectItem value="lead">Lead</SelectItem>
-                  <SelectItem value="client">Client</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {!isFossePage && (
+              <div className="contacts-filter-section">
+                <Label>Type de contact</Label>
+                <Select 
+                  value={appliedStatusType} 
+                  onValueChange={(value) => {
+                    const statusType = value as 'all' | 'lead' | 'client';
+                    setAppliedStatusType(statusType);
+                    setPendingStatusType(statusType);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={{ zIndex: 10001 }}>
+                    <SelectItem value="all">Tous</SelectItem>
+                    <SelectItem value="lead">Lead</SelectItem>
+                    <SelectItem value="client">Client</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="contacts-filter-section">
               <Label>Ordre</Label>
@@ -4672,7 +4690,7 @@ export function ContactList({
                     <strong>Filtre en cours :</strong> ({activeFiltersText})
                   </span>
                 </div>
-                {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || appliedStatusType !== 'all') && (
+                {(Object.keys(appliedColumnFilters).length > 0 || appliedSearchTerm || (!isFossePage && appliedStatusType !== 'all')) && (
                   <Button 
                     variant="outline" 
                     size="sm"
@@ -4680,7 +4698,7 @@ export function ContactList({
                     title="Réinitialiser les filtres"
                   >
                     <X className="w-4 h-4 mr-2" />
-                    Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (appliedStatusType !== 'all' ? 1 : 0)})
+                    Réinitialiser filtres ({Object.keys(appliedColumnFilters).length + (appliedSearchTerm ? 1 : 0) + (!isFossePage && appliedStatusType !== 'all' ? 1 : 0)})
                   </Button>
                 )}
               </div>
