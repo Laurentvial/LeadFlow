@@ -563,6 +563,7 @@ export function ContactList({
   const [bulkStatusId, setBulkStatusId] = useState('');
   const [isBulkStatusChanging, setIsBulkStatusChanging] = useState(false);
   const [lastOpenedContactId, setLastOpenedContactId] = useState<string | null>(null);
+  const [hoveredContactId, setHoveredContactId] = useState<string | null>(null);
   
   // Modals state
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
@@ -4360,9 +4361,27 @@ export function ContactList({
                 </thead>
                 <tbody>
                   {displayedContacts.length > 0 ? (
-                    displayedContacts.map((contact) => (
+                    displayedContacts.map((contact, index) => {
+                      // Determine background color: prioritize hover, then last opened contact, then alternate colors
+                      const isHovered = hoveredContactId === contact.id;
+                      const isLastOpened = lastOpenedContactId === contact.id;
+                      const isEvenRow = index % 2 === 0;
+                      
+                      let backgroundColor: string;
+                      if (isHovered) {
+                        // Hover color takes priority
+                        backgroundColor = '#e0e7ff'; // Light blue for hover
+                      } else if (isLastOpened) {
+                        backgroundColor = '#eff6ff'; // Light blue for last opened
+                      } else {
+                        backgroundColor = isEvenRow ? 'transparent' : '#f9fafb'; // Light gray for odd rows
+                      }
+                      
+                      return (
                       <tr 
                         key={contact.id}
+                        onMouseEnter={() => setHoveredContactId(contact.id)}
+                        onMouseLeave={() => setHoveredContactId(null)}
                         onClick={(e) => {
                           // Only open if clicking on the row itself, not on interactive elements
                           const target = e.target as HTMLElement;
@@ -4393,9 +4412,10 @@ export function ContactList({
                           openContactDetail(contact.id);
                         }}
                         style={{
-                          backgroundColor: lastOpenedContactId === contact.id ? '#eff6ff' : 'transparent',
-                          borderLeft: lastOpenedContactId === contact.id ? '3px solid #3b82f6' : 'none',
-                          cursor: 'pointer'
+                          backgroundColor: backgroundColor,
+                          borderLeft: isLastOpened ? '3px solid #3b82f6' : 'none',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.15s ease'
                         }}
                       >
                         <td onClick={(e) => e.stopPropagation()}>
@@ -4430,7 +4450,8 @@ export function ContactList({
                           return cell;
                         })}
                       </tr>
-                    ))
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan={getOrderedVisibleColumns().length + 1} style={{ textAlign: 'center', padding: '40px' }}>
