@@ -1840,7 +1840,6 @@ export function ContactInfoTab({
         if (!clientFormData.emailClient) errors.emailClient = true;
         if (!clientFormData.telephoneClient) errors.telephoneClient = true;
         if (!clientFormData.contrat) errors.contrat = true;
-        if (!clientFormData.sourceId) errors.sourceId = true;
         if (clientFormData.montantEncaisse === '') errors.montantEncaisse = true;
         if (clientFormData.bonus === '') errors.bonus = true;
         if (!clientFormData.paiement) errors.paiement = true;
@@ -5333,13 +5332,13 @@ export function ContactInfoTab({
                       </div>
 
                       <div className="modal-form-field">
-                        <Label htmlFor="client-source" style={fieldErrors.sourceId ? { color: '#ef4444' } : {}}>Source <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-source">Source</Label>
                         <Select
                           value={clientFormData.sourceId || 'none'}
                           onValueChange={(value) => updateFormField('sourceId', value === 'none' ? '' : value)}
                           disabled={isSavingClientForm || !canEditFieldInModal('sourceId', selectedStatusId)}
                         >
-                          <SelectTrigger id="client-source" className={fieldErrors.sourceId ? 'border-red-500' : ''}>
+                          <SelectTrigger id="client-source">
                             <SelectValue placeholder="Sélectionner une source" />
                           </SelectTrigger>
                           <SelectContent style={{ zIndex: 10010 }}>
