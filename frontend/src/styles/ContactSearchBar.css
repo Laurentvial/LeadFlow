@@ -1,0 +1,129 @@
+.contact-search-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 500px;
+  min-width: 250px;
+}
+
+.contact-search-icon {
+  position: absolute;
+  left: 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted-foreground);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.contact-search-input {
+  padding-left: 2.5rem;
+  padding-right: 2.5rem;
+  width: 100%;
+}
+
+.contact-search-loader {
+  position: absolute;
+  right: 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted-foreground);
+  animation: spin 1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.contact-search-popover {
+  padding: 0.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 10010 !important;
+}
+
+.contact-search-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.contact-search-loader-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0 auto 0.5rem;
+  color: var(--muted-foreground);
+  animation: spin 1s linear infinite;
+}
+
+.contact-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.contact-search-result-item {
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  outline: none;
+}
+
+.contact-search-result-item:hover,
+.contact-search-result-item:focus {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.contact-search-result-name {
+  font-weight: var(--font-weight-medium);
+  font-size: 0.875rem;
+  color: var(--foreground);
+  margin-bottom: 0.25rem;
+}
+
+.contact-search-result-item:hover .contact-search-result-name,
+.contact-search-result-item:focus .contact-search-result-name {
+  color: var(--accent-foreground);
+}
+
+.contact-search-result-email {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin-bottom: 0.125rem;
+}
+
+.contact-search-result-item:hover .contact-search-result-email,
+.contact-search-result-item:focus .contact-search-result-email {
+  color: var(--accent-foreground);
+  opacity: 0.9;
+}
+
+.contact-search-result-phone {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.contact-search-result-item:hover .contact-search-result-phone,
+.contact-search-result-item:focus .contact-search-result-phone {
+  color: var(--accent-foreground);
+  opacity: 0.9;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .contact-search-trigger {
+    max-width: 200px;
+    min-width: 150px;
+  }
+}
+

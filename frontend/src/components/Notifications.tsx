@@ -89,8 +89,12 @@ export default function Notifications() {
       
       // Switch to read tab if no more unread notifications
       // Note: websocket update will also handle this, but this provides immediate feedback
-      if (newUnreadCount === 0 && activeTab === 'unread') {
-        setActiveTab('read');
+      if (newUnreadCount === 0) {
+        if (activeTab === 'unread') {
+          setActiveTab('read');
+        }
+        // Close modal when all notifications are read
+        setIsOpen(false);
       }
     } catch (error: any) {
       console.error('Error marking notification as read:', error);
@@ -113,6 +117,8 @@ export default function Notifications() {
       setUnreadCount(0);
       // Switch to read tab after marking all as read
       setActiveTab('read');
+      // Close modal when all notifications are read
+      setIsOpen(false);
     } catch (error: any) {
       console.error('Error marking all notifications as read:', error);
     }
@@ -234,18 +240,26 @@ export default function Notifications() {
           if (message.unread_count !== undefined) {
             setUnreadCount(message.unread_count);
             // Switch to read tab if no more unread notifications
-            if (message.unread_count === 0 && activeTab === 'unread') {
-              setActiveTab('read');
+            if (message.unread_count === 0) {
+              if (activeTab === 'unread') {
+                setActiveTab('read');
+              }
+              // Close modal when all notifications are read
+              setIsOpen(false);
             }
           }
         }
       } else if (message.type === 'unread_count_updated') {
-        setUnreadCount(message.unread_count || 0);
+        const newUnreadCount = message.unread_count || 0;
+        setUnreadCount(newUnreadCount);
         // Switch to read tab if no more unread notifications
-        if (message.unread_count === 0 && activeTab === 'unread') {
-          setActiveTab('read');
+        if (newUnreadCount === 0) {
+          if (activeTab === 'unread') {
+            setActiveTab('read');
+          }
+          // Close modal when all notifications are read
+          setIsOpen(false);
         }
-        setUnreadCount(message.unread_count || 0);
       } else if (message.type === 'connection_established') {
         setUnreadCount(message.unread_count || 0);
         // Reload notifications when connection is established

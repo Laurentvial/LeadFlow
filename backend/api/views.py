@@ -866,16 +866,23 @@ class ContactView(generics.ListAPIView):
         # Apply search filter
         search = request.query_params.get('search', '').strip()
         if search:
-            # Search in combined full name (same logic as fullName filter) and email
+            # Remove spaces from search value for phone number matching
+            phone_search = ''.join(str(search).split())
+            
+            # Search in combined full name, email, and phone numbers
             queryset = queryset.annotate(
                 full_name_search=Concat(
                     Coalesce('fname', Value('')), 
                     Value(' '), 
                     Coalesce('lname', Value(''))
-                )
+                ),
+                phone_str=Cast('phone', CharField()),
+                mobile_str=Cast('mobile', CharField())
             ).filter(
                 models.Q(full_name_search__icontains=search) |
-                models.Q(email__icontains=search)
+                models.Q(email__icontains=search) |
+                models.Q(phone_str__contains=phone_search) |
+                models.Q(mobile_str__contains=phone_search)
             )
         
         # Apply team filter (filter by teleoperator's team)

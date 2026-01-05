@@ -11,6 +11,7 @@ import {
 import { Bell, User, LogOut } from 'lucide-react';
 import React from 'react';
 import Notifications from './Notifications';
+import { ContactSearchBar } from './ContactSearchBar';
 import '../styles/Header.css';
 
 interface HeaderProps {
@@ -51,6 +52,11 @@ export function Header({ user }: HeaderProps) {
               <img src="/images/logo.png" alt="Logo" className="header-logo-img" style={{ maxHeight: 100, maxWidth: 140 }} />
               <p className="header-subtitle">Outil de prospecting et de gestion de clients</p>
             </div>
+          </div>
+          
+          {/* Contact Search - Center */}
+          <div className="header-search">
+            <ContactSearchBar />
           </div>
           
           <div className="header-actions">

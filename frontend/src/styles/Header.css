@@ -15,11 +15,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
 }
 
 .header-brand {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 /* .header-logo {
@@ -58,10 +60,19 @@
   line-height: 1.5;
 }
 
+.header-search {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-shrink: 0;
 }
 
 .header-button {
