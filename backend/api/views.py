@@ -4772,7 +4772,13 @@ def csv_import_contacts(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def contacts_integration_update(request):
-    """Update existing contacts with timestamp fields from CSV using old_contact_id mapping"""
+    """
+    Update existing contacts with timestamp fields from CSV using old_contact_id mapping.
+    
+    IMPORTANT: This function ONLY matches contacts by old_contact_id, NEVER by email.
+    Each CSV row must have a valid old_contact_id that exists in the database.
+    If a contact is not found by old_contact_id, the row will be skipped with an error.
+    """
     if 'file' not in request.FILES:
         return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -4895,11 +4901,22 @@ def contacts_integration_update(request):
             return None
         
         # Pre-load all contacts with old_contact_id into a dictionary for fast lookup
+        # IMPORTANT: Only match by old_contact_id, NEVER by email
         contacts_by_old_id = {}
         contacts_with_old_id = Contact.objects.filter(old_contact_id__isnull=False).exclude(old_contact_id='')
+        duplicate_old_ids = set()
         for contact in contacts_with_old_id:
             old_id_key = str(contact.old_contact_id).strip()
+            if old_id_key in contacts_by_old_id:
+                # Track duplicate old_contact_id values (shouldn't happen but handle gracefully)
+                duplicate_old_ids.add(old_id_key)
             contacts_by_old_id[old_id_key] = contact
+        
+        # Log warning if duplicates found
+        if duplicate_old_ids:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Found {len(duplicate_old_ids)} duplicate old_contact_id values: {list(duplicate_old_ids)[:10]}")
         
         # Pre-load users and sources for efficient lookup
         from api.models import UserDetails, Source
@@ -4964,7 +4981,17 @@ def contacts_integration_update(request):
                 
                 old_contact_id_value = str(old_contact_id_value).strip()
                 
-                # Find contact by old_contact_id
+                # Find contact by old_contact_id ONLY - NEVER use email for matching
+                # This ensures we update the correct contact based on old_contact_id
+                # If duplicate old_contact_id values exist, reject the update to prevent wrong contact updates
+                if old_contact_id_value in duplicate_old_ids:
+                    results['errors'].append({
+                        'row': row_num,
+                        'error': f'Multiple contacts found with old_contact_id: {old_contact_id_value}. Please ensure old_contact_id values are unique in the database before importing.'
+                    })
+                    results['failed'] += 1
+                    continue
+                
                 contact = contacts_by_old_id.get(old_contact_id_value)
                 if not contact:
                     results['errors'].append({

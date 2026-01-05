@@ -1910,13 +1910,21 @@ export function ContactInfoTab({
         // Update status (non-client default status)
         console.log('[Status Update] Processing non-client default status...');
         // If status is an event status, also update teleoperator
+        // BUT only if contact doesn't already have a teleoperator assigned
         const updatePayload: any = {
           statusId: selectedStatusId || ''
         };
         
-        if (isEventStatus && eventTeleoperatorId) {
+        // Only assign teleoperator if:
+        // 1. Status is an event status
+        // 2. eventTeleoperatorId is provided
+        // 3. Contact doesn't already have a teleoperatorId (is null/empty)
+        const hasExistingTeleoperator = contact?.teleoperatorId && String(contact.teleoperatorId).trim() !== '';
+        if (isEventStatus && eventTeleoperatorId && !hasExistingTeleoperator) {
           console.log('[Status Update] Adding teleoperator to update payload:', eventTeleoperatorId);
           updatePayload.teleoperatorId = eventTeleoperatorId || null;
+        } else if (isEventStatus && eventTeleoperatorId && hasExistingTeleoperator) {
+          console.log('[Status Update] Skipping teleoperator assignment - contact already has teleoperatorId:', contact?.teleoperatorId);
         }
         
         console.log('[Status Update] Updating contact status:', updatePayload);
