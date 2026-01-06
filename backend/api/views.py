@@ -1696,10 +1696,27 @@ class ContactView(generics.ListAPIView):
             # Capture page_size for use in class definition
             pagination_page_size = page_size
             
+            # Custom pagination class that skips count for very large page sizes to prevent timeout
             class ContactPagination(PageNumberPagination):
                 page_size = pagination_page_size
                 page_size_query_param = 'page_size'
                 max_page_size = MAX_PAGE_SIZE
+                
+                def get_paginated_response(self, data):
+                    # For very large page sizes, skip count to prevent timeout
+                    # Return approximate count based on results length
+                    if self.page_size >= 1000:
+                        # Skip count query - use approximate count
+                        approximate_total = len(data) if self.page.number == 1 else None
+                        return Response({
+                            'count': approximate_total if approximate_total else 0,
+                            'next': self.get_next_link(),
+                            'previous': self.get_previous_link(),
+                            'results': data
+                        })
+                    else:
+                        # Normal pagination with count for smaller page sizes
+                        return super().get_paginated_response(data)
             
             # Get base queryset
             queryset = self.get_queryset()
@@ -1714,16 +1731,24 @@ class ContactView(generics.ListAPIView):
             # Use pagination
             self.pagination_class = ContactPagination
             
-            # PERFORMANCE FIX: Don't call queryset.count() here - it's slow for large datasets
-            # DRF's pagination already handles counting efficiently, so we rely on that
-            # For very large datasets, optimize by deferring heavy fields
-            # Only calculate count if needed for debugging (disabled by default)
+            # PERFORMANCE FIX: Optimize query for large page sizes
+            # For very large datasets, use only() to fetch only necessary fields
             try:
-                # Optimize: Use defer() to skip heavy fields for large page sizes
-                # This reduces memory usage and serialization time
-                # Note: notes and logs are prefetched separately, so deferring them here is safe
-                if page_size >= 500:
-                    queryset = queryset.defer('notes', 'logs')
+                # For large page sizes, optimize by fetching only essential fields
+                # This dramatically reduces query time and memory usage
+                if page_size >= 1000:
+                    # Fetch only fields needed by serializer for list view
+                    # Skip heavy fields like notes, logs (prefetched separately anyway)
+                    queryset = queryset.only(
+                        'id', 'fname', 'lname', 'email', 'phone', 'mobile',
+                        'created_at', 'updated_at', 'assigned_at',
+                        'status_id', 'source_id', 'teleoperator_id', 'confirmateur_id', 'creator_id',
+                        'platform_id', 'address', 'address_complement', 'postal_code', 'city',
+                        'campaign', 'montant_encaisse', 'bonus', 'paiement', 'contrat',
+                        'nom_de_scene', 'date_pro_tr', 'potentiel', 'produit',
+                        'civility', 'birth_date', 'birth_place', 'nationality',
+                        'email_verification_status'
+                    ).defer('notes', 'logs')
                 
                 response = super().list(request, *args, **kwargs)
                 
