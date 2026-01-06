@@ -1693,31 +1693,6 @@ class ContactView(generics.ListAPIView):
             if page_size < 1:
                 page_size = 100
             
-            # Capture page_size for use in class definition
-            pagination_page_size = page_size
-            
-            # Custom pagination class that skips count for very large page sizes to prevent timeout
-            class ContactPagination(PageNumberPagination):
-                page_size = pagination_page_size
-                page_size_query_param = 'page_size'
-                max_page_size = MAX_PAGE_SIZE
-                
-                def get_paginated_response(self, data):
-                    # For very large page sizes, skip count to prevent timeout
-                    # Return approximate count based on results length
-                    if self.page_size >= 1000:
-                        # Skip count query - use approximate count
-                        approximate_total = len(data) if self.page.number == 1 else None
-                        return Response({
-                            'count': approximate_total if approximate_total else 0,
-                            'next': self.get_next_link(),
-                            'previous': self.get_previous_link(),
-                            'results': data
-                        })
-                    else:
-                        # Normal pagination with count for smaller page sizes
-                        return super().get_paginated_response(data)
-            
             # Get base queryset
             queryset = self.get_queryset()
             
@@ -1728,27 +1703,54 @@ class ContactView(generics.ListAPIView):
             # This ensures DRF pagination uses the filtered queryset for counting
             self._filtered_queryset = queryset
             
-            # Use pagination
+            # PERFORMANCE FIX: For very large page sizes (1000+), skip pagination count to prevent timeout
+            # Use direct slicing instead of DRF pagination which requires count()
+            if page_size >= 1000:
+                # Optimize query by fetching only essential fields
+                queryset = queryset.only(
+                    'id', 'fname', 'lname', 'email', 'phone', 'mobile',
+                    'created_at', 'updated_at', 'assigned_at',
+                    'status_id', 'source_id', 'teleoperator_id', 'confirmateur_id', 'creator_id',
+                    'platform_id', 'address', 'address_complement', 'postal_code', 'city',
+                    'campaign', 'montant_encaisse', 'bonus', 'paiement', 'contrat',
+                    'nom_de_scene', 'date_pro_tr', 'potentiel', 'produit',
+                    'civility', 'birth_date', 'birth_place', 'nationality',
+                    'email_verification_status'
+                ).defer('notes', 'logs')
+                
+                # Apply pagination manually without count (direct slicing)
+                offset = (page - 1) * page_size
+                paginated_queryset = list(queryset[offset:offset + page_size])
+                
+                # Serialize the results
+                serializer = self.get_serializer(paginated_queryset, many=True, context={'request': request})
+                
+                # Return response without total count (skipped to prevent timeout)
+                # Approximate count: if we got fewer results than requested, we're on the last page
+                result_count = len(serializer.data)
+                approximate_total = result_count if page == 1 and result_count < page_size else None
+                
+                return Response({
+                    'contacts': serializer.data,
+                    'total': approximate_total if approximate_total is not None else result_count,
+                    'next': None if result_count < page_size else f'?page={page + 1}&page_size={page_size}',
+                    'previous': None if page == 1 else f'?page={page - 1}&page_size={page_size}',
+                    'page': page,
+                    'page_size': page_size
+                })
+            
+            # For smaller page sizes, use normal pagination with count
+            class ContactPagination(PageNumberPagination):
+                page_size = page_size
+                page_size_query_param = 'page_size'
+                max_page_size = MAX_PAGE_SIZE
+            
             self.pagination_class = ContactPagination
             
-            # PERFORMANCE FIX: Optimize query for large page sizes
-            # For very large datasets, use only() to fetch only necessary fields
             try:
-                # For large page sizes, optimize by fetching only essential fields
-                # This dramatically reduces query time and memory usage
-                if page_size >= 1000:
-                    # Fetch only fields needed by serializer for list view
-                    # Skip heavy fields like notes, logs (prefetched separately anyway)
-                    queryset = queryset.only(
-                        'id', 'fname', 'lname', 'email', 'phone', 'mobile',
-                        'created_at', 'updated_at', 'assigned_at',
-                        'status_id', 'source_id', 'teleoperator_id', 'confirmateur_id', 'creator_id',
-                        'platform_id', 'address', 'address_complement', 'postal_code', 'city',
-                        'campaign', 'montant_encaisse', 'bonus', 'paiement', 'contrat',
-                        'nom_de_scene', 'date_pro_tr', 'potentiel', 'produit',
-                        'civility', 'birth_date', 'birth_place', 'nationality',
-                        'email_verification_status'
-                    ).defer('notes', 'logs')
+                # For medium page sizes (500-999), still optimize with defer
+                if page_size >= 500:
+                    queryset = queryset.defer('notes', 'logs')
                 
                 response = super().list(request, *args, **kwargs)
                 
