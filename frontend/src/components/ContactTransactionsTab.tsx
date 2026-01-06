@@ -111,9 +111,9 @@ export function ContactTransactionsTab({ contactId }: ContactTransactionsTabProp
 
   function getStatusColor(status: string): React.CSSProperties {
     const colors: { [key: string]: React.CSSProperties } = {
-      'pending': { backgroundColor: '#dbeafe', color: '#000000' }, // blue-100 - En attente
-      'completed': { backgroundColor: '#bbf7d0', color: '#000000' }, // green-200 - Terminé
-      'cancelled': { backgroundColor: '#fee2e2', color: '#000000' }, // red-100 - Annulé
+      'pending': { backgroundColor: '#fef3c7', color: '#000000' }, // yellow-100 - En attente
+      'completed': { backgroundColor: '#d1fae5', color: '#000000' }, // green-100 - Terminé
+      'cancelled': { backgroundColor: '#f3f4f6', color: '#000000' }, // gray-100 - Annulé
       'failed': { backgroundColor: '#f3e8ff', color: '#000000' }, // purple-100 - Échoué
       'to_verify': { backgroundColor: '#ffedd5', color: '#000000' } // orange-100 - A vérifier
     };
