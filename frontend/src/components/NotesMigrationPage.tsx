@@ -441,7 +441,49 @@ export function NotesMigrationPage() {
 
                 {importResults.errors && importResults.errors.length > 0 && (
                   <div className="mt-6">
-                    <h3 className="font-semibold mb-2">Erreurs:</h3>
+                    <h3 className="font-semibold mb-4">Erreurs:</h3>
+                    
+                    {/* Error counts by reason */}
+                    {(() => {
+                      const errorCounts: { [reason: string]: number } = {};
+                      importResults.errors.forEach((error: any) => {
+                        const errorMsg = String(error.error || '').toLowerCase();
+                        let reason = 'Autre';
+                        
+                        // Categorize errors based on backend error messages
+                        if (errorMsg.includes('contact not found with old_contact_id') || 
+                            (errorMsg.includes('contact') && errorMsg.includes('not found') && errorMsg.includes('old_contact_id'))) {
+                          reason = 'Contact avec ancien ID introuvable';
+                        } else if (errorMsg.includes('note with id') && errorMsg.includes('already exists') ||
+                                   (errorMsg.includes('note') && errorMsg.includes('already exists') && errorMsg.includes('database'))) {
+                          reason = 'ID Note déjà existant';
+                        } else if (errorMsg.includes('old_contact_id is required')) {
+                          reason = 'Ancien ID Contact requis';
+                        } else if (errorMsg.includes('text is required')) {
+                          reason = 'Texte requis';
+                        }
+                        
+                        errorCounts[reason] = (errorCounts[reason] || 0) + 1;
+                      });
+                      
+                      return (
+                        <div className="mb-4">
+                          <h4 className="text-sm font-medium text-slate-700 mb-3">Répartition des erreurs:</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {Object.entries(errorCounts).map(([reason, count]) => (
+                              <div key={reason} className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-medium text-red-800">{reason}:</span>
+                                  <span className="text-lg font-bold text-red-600">{count}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Error details list */}
                     <div className="max-h-64 overflow-y-auto border rounded p-4">
                       {importResults.errors.map((error: any, index: number) => (
                         <div key={index} className="mb-2 text-sm text-red-600">

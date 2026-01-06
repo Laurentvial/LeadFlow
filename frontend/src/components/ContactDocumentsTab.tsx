@@ -39,6 +39,7 @@ const DOCUMENT_TYPES = [
   { value: 'JUSTIFICATIF_DOMICILE', label: 'Justificatif de domicile' },
   { value: 'SELFIE', label: 'Selfie' },
   { value: 'RIB', label: 'RIB' },
+  { value: 'CONTRAT', label: 'Contrat' },
 ];
 
 export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {

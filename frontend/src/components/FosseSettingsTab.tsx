@@ -28,7 +28,7 @@ interface FosseSettings {
   roleName: string;
   forcedColumns: string[];
   forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
-  defaultOrder: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
+  defaultOrder: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'date_lead_to_client_asc' | 'date_lead_to_client_desc' | 'email_asc' | 'random';
   defaultStatusId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2065,7 +2065,7 @@ export function FosseSettingsTab() {
                             <Select
                               value={setting?.defaultOrder || 'created_at_desc'}
                               disabled={isSaving || !setting}
-                              onValueChange={(value: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random') => {
+                              onValueChange={(value: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'date_lead_to_client_asc' | 'date_lead_to_client_desc' | 'email_asc' | 'random') => {
                                 if (setting) {
                                   updateSettings(role.id, { defaultOrder: value });
                                   // Reload preview with new order (use 'created_at_desc' if 'none' is selected)
@@ -2092,6 +2092,8 @@ export function FosseSettingsTab() {
                                 <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
                                 <SelectItem value="assigned_at_asc">Date d'attribution (ancien à nouveau)</SelectItem>
                                 <SelectItem value="assigned_at_desc">Date d'attribution (nouveau à ancien)</SelectItem>
+                                <SelectItem value="date_lead_to_client_asc">Date de passage client (ancien à nouveau)</SelectItem>
+                                <SelectItem value="date_lead_to_client_desc">Date de passage client (nouveau à ancien)</SelectItem>
                                 <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
                                 <SelectItem value="random">Aléatoire</SelectItem>
                               </SelectContent>

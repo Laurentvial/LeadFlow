@@ -176,7 +176,7 @@ export default function Notifications() {
       case 'email':
         return '📧';
       case 'contact':
-        return '👤';
+        return '✅';
       case 'event':
         return '📅';
       default:

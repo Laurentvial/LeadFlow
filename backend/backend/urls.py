@@ -4,7 +4,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.conf.urls.static import static
-from api.views import UserCreateView, CustomTokenObtainPairView
+from api import views
 from rest_framework_simplejwt.views import TokenRefreshView
 
 def health_check(request):
@@ -24,7 +24,7 @@ urlpatterns = [
     path('health/', health_check, name='health_check'),
     path('cors-test/', cors_test, name='cors_test'),
     path('admin/', admin.site.urls),
-    path('api/token/', CustomTokenObtainPairView.as_view(), name='get_token'),
+    path('api/token/', views.CustomTokenObtainPairView.as_view(), name='get_token'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='refresh'),
     path("api-auth/", include('rest_framework.urls')),
     path('api/', include('api.urls')),

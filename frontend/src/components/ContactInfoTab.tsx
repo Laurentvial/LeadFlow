@@ -820,6 +820,7 @@ export function ContactInfoTab({
   const justifUploadRef = useRef<HTMLInputElement>(null);
   const selfieUploadRef = useRef<HTMLInputElement>(null);
   const ribUploadRef = useRef<HTMLInputElement>(null);
+  const contratUploadRef = useRef<HTMLInputElement>(null);
 
   // Helper function to get status display text for a contact
   // The ONLY condition to see the status name is to have "view" permission for that status
@@ -1308,10 +1309,12 @@ export function ContactInfoTab({
   
   // Helper function to prefill client form with contact data
   const prefillClientForm = React.useCallback((contactData: any) => {
-    // Prefill teleoperatorId with current user if they are a teleoperateur
-    const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
-      ? currentUser.id 
-      : (contactData.teleoperatorId || contactData.managerId || '');
+    // Prefill teleoperatorId: preserve existing teleoperator if contact already has one,
+    // otherwise use current user if they are a teleoperateur
+    const existingTeleoperatorId = contactData.teleoperatorId || contactData.managerId || '';
+    const defaultTeleoperatorId = existingTeleoperatorId 
+      ? existingTeleoperatorId
+      : (currentUser?.isTeleoperateur === true ? currentUser.id : '');
     
     setClientFormData({
       platformId: contactData.platformId || '',
@@ -4141,6 +4144,54 @@ export function ContactInfoTab({
                       className="h-8 text-xs"
                     >
                       {uploadingDocument === 'RIB' ? (
+                        'Upload...'
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Importer
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Contrat */}
+              <div className="flex items-center justify-between p-3 border border-slate-200">
+                <Label className="text-sm font-normal">
+                  Contrat
+                </Label>
+                {hasDocument('CONTRAT') ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <div className="flex-shrink-0">
+                    <input
+                      type="file"
+                      id={`contrat-upload-${contactId}`}
+                      ref={contratUploadRef}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleDocumentUpload('CONTRAT', file);
+                          if (e.target) {
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        contratUploadRef.current?.click();
+                      }}
+                      disabled={uploadingDocument === 'CONTRAT'}
+                      className="h-8 text-xs"
+                    >
+                      {uploadingDocument === 'CONTRAT' ? (
                         'Upload...'
                       ) : (
                         <>

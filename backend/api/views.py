@@ -189,6 +189,158 @@ def send_event_notification(event, notification_type='assigned', minutes_before=
         print(traceback.format_exc())
 
 
+def send_contact_notification(contact, notification_type='nouveau_client'):
+    """
+    Send contact notification via WebSocket to users who can see the contact.
+    
+    Args:
+        contact: Contact instance
+        notification_type: Type of notification (e.g., 'nouveau_client')
+    """
+    try:
+        # Get all users who can see this contact based on data_access permissions
+        users_to_notify = []
+        
+        # Get contact's assigned users
+        contact_users = []
+        if contact.teleoperator:
+            contact_users.append(contact.teleoperator)
+        if contact.confirmateur:
+            contact_users.append(contact.confirmateur)
+        if contact.creator:
+            contact_users.append(contact.creator)
+        
+        # Get all users with their roles and data_access
+        all_user_details = UserDetails.objects.select_related('role_id', 'django_user').all()
+        
+        for user_details in all_user_details:
+            user = user_details.django_user
+            if not user_details.role:
+                continue
+                
+            data_access = user_details.role.data_access
+            
+            # Check if user can see this contact
+            can_see_contact = False
+            
+            if data_access == 'all':
+                # User can see all contacts
+                can_see_contact = True
+            elif data_access == 'own_only':
+                # User can only see contacts where they are teleoperator or confirmateur
+                if user in contact_users:
+                    can_see_contact = True
+            elif data_access == 'team_only':
+                # User can see contacts from their team
+                team_member = user_details.team_memberships.select_related('team').first()
+                if team_member:
+                    team = team_member.team
+                    # Get all users in the same team
+                    team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                    # Check if contact's teleoperator/confirmateur/creator is in the same team
+                    if (contact.teleoperator and contact.teleoperator.id in team_user_ids) or \
+                       (contact.confirmateur and contact.confirmateur.id in team_user_ids) or \
+                       (contact.creator and contact.creator.id in team_user_ids) or \
+                       (user in contact_users):
+                        can_see_contact = True
+                else:
+                    # User has no team, fall back to own_only behavior
+                    if user in contact_users:
+                        can_see_contact = True
+            
+            if can_see_contact:
+                users_to_notify.append(user)
+        
+        # Remove duplicates
+        users_to_notify = list(set(users_to_notify))
+        
+        if not users_to_notify:
+            return  # No users to notify
+        
+        # Build notification message
+        contact_name = f"{contact.fname} {contact.lname}".strip() or "Contact"
+        title = 'Nouveau client'
+        message = f"Le contact {contact_name} est devenu un nouveau client"
+        
+        # Create database notifications for each user
+        # The signal handler will automatically send them via WebSocket
+        for user in users_to_notify:
+            try:
+                notification_id = uuid.uuid4().hex[:12]
+                while Notification.objects.filter(id=notification_id).exists():
+                    notification_id = uuid.uuid4().hex[:12]
+                
+                Notification.objects.create(
+                    id=notification_id,
+                    user=user,
+                    type='contact',
+                    title=title,
+                    message=message,
+                    contact_id=contact.id,
+                    is_read=False,
+                    data={
+                        'notification_type': notification_type,
+                    }
+                )
+            except Exception as e:
+                import traceback
+                print(f"Error creating notification for contact {contact.id} to user {user.id}: {str(e)}")
+                print(traceback.format_exc())
+                
+    except Exception as e:
+        import traceback
+        print(f"Error sending contact notification: {str(e)}")
+        print(traceback.format_exc())
+
+
+def send_confirmateur_assignment_notification(contact, confirmateur_user):
+    """
+    Send notification to confirmateur when they are assigned to a contact with client_default=True status.
+    
+    Args:
+        contact: Contact instance
+        confirmateur_user: Django User instance of the confirmateur
+    """
+    try:
+        # Check if contact has a status with client_default=True
+        if not contact.status or not contact.status.client_default:
+            return  # Contact doesn't have client_default status, no notification needed
+        
+        # Build notification message
+        contact_name = f"{contact.fname} {contact.lname}".strip() or "Contact"
+        title = 'Nouveau client'
+        message = f"Nouveau client vous a été assigné: {contact_name}"
+        
+        # Create database notification
+        # The signal handler will automatically send it via WebSocket
+        try:
+            notification_id = uuid.uuid4().hex[:12]
+            while Notification.objects.filter(id=notification_id).exists():
+                notification_id = uuid.uuid4().hex[:12]
+            
+            Notification.objects.create(
+                id=notification_id,
+                user=confirmateur_user,
+                type='contact',
+                title=title,
+                message=message,
+                contact_id=contact.id,
+                is_read=False,
+                data={
+                    'notification_type': 'confirmateur_assigned',
+                }
+            )
+        except Exception as e:
+            import traceback
+            print(f"Error creating notification for confirmateur {confirmateur_user.id} for contact {contact.id}: {str(e)}")
+            print(traceback.format_exc())
+            
+    except Exception as e:
+        import traceback
+        print(f"Error sending confirmateur assignment notification: {str(e)}")
+        print(traceback.format_exc())
+
+
 def get_client_ip(request):
     """Extract client IP address from request, checking multiple headers"""
     # Check various headers that might contain the real client IP
@@ -1490,6 +1642,26 @@ class ContactView(generics.ListAPIView):
                 queryset = queryset.order_by('assigned_at')
             elif order_param == 'assigned_at_desc':
                 queryset = queryset.order_by('-assigned_at')
+            elif order_param == 'date_lead_to_client_asc':
+                # Sort by date_lead_to_client ascending (oldest first)
+                # Put NULL values last using Case/When
+                queryset = queryset.annotate(
+                    date_lead_to_client_null_order=Case(
+                        When(date_lead_to_client__isnull=True, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('date_lead_to_client_null_order', 'date_lead_to_client', '-created_at')
+            elif order_param == 'date_lead_to_client_desc':
+                # Sort by date_lead_to_client descending (newest first)
+                # Put NULL values last using Case/When
+                queryset = queryset.annotate(
+                    date_lead_to_client_null_order=Case(
+                        When(date_lead_to_client__isnull=True, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('date_lead_to_client_null_order', '-date_lead_to_client', '-created_at')
             elif order_param == 'random':
                 queryset = queryset.order_by('?')
             else:
@@ -2420,6 +2592,26 @@ class FosseContactView(generics.ListAPIView):
                     queryset = queryset.order_by('assigned_at')
                 elif order_to_apply == 'assigned_at_desc':
                     queryset = queryset.order_by('-assigned_at')
+                elif order_to_apply == 'date_lead_to_client_asc':
+                    # Sort by date_lead_to_client ascending (oldest first)
+                    # Put NULL values last using Case/When
+                    queryset = queryset.annotate(
+                        date_lead_to_client_null_order=Case(
+                            When(date_lead_to_client__isnull=True, then=Value(1)),
+                            default=Value(0),
+                            output_field=IntegerField()
+                        )
+                    ).order_by('date_lead_to_client_null_order', 'date_lead_to_client', '-created_at')
+                elif order_to_apply == 'date_lead_to_client_desc':
+                    # Sort by date_lead_to_client descending (newest first)
+                    # Put NULL values last using Case/When
+                    queryset = queryset.annotate(
+                        date_lead_to_client_null_order=Case(
+                            When(date_lead_to_client__isnull=True, then=Value(1)),
+                            default=Value(0),
+                            output_field=IntegerField()
+                        )
+                    ).order_by('date_lead_to_client_null_order', '-date_lead_to_client', '-created_at')
                 elif order_to_apply == 'random':
                     queryset = queryset.order_by('?')
                 else:
@@ -3241,6 +3433,22 @@ def contacts_bulk_create(request):
                 # Update status
                 status_id = contact_data.get('statusId')
                 if status_id and status_id in statuses_dict:
+                    # Get old status type directly from database to ensure we have the correct value
+                    old_status_type = None
+                    if existing_contact.status_id:
+                        old_status = Status.objects.filter(id=existing_contact.status_id).values_list('type', flat=True).first()
+                        if old_status:
+                            old_status_type = old_status
+                    
+                    # Get new status type directly from database
+                    new_status_type = Status.objects.filter(id=status_id).values_list('type', flat=True).first()
+                    
+                    # If moving from lead to client, set date_lead_to_client (only if not already set)
+                    if old_status_type == 'lead' and new_status_type == 'client':
+                        if not existing_contact.date_lead_to_client:
+                            from django.utils import timezone as tz
+                            existing_contact.date_lead_to_client = tz.now()
+                    
                     existing_contact.status = statuses_dict[status_id]
                 elif 'statusId' in contact_data and not status_id:
                     existing_contact.status = None
@@ -6576,6 +6784,12 @@ def contact_detail(request, contact_id):
         return Response({'contact': serializer.data})
     
     if request.method == 'PATCH':
+        # Track if we need to send client notification
+        should_send_client_notification = False
+        # Track if we need to send confirmateur assignment notification
+        should_send_confirmateur_notification = False
+        new_confirmateur_user = None
+        
         try:
             # Get old value BEFORE any modifications
             try:
@@ -6681,9 +6895,60 @@ def contact_detail(request, contact_id):
                     try:
                         status_obj = Status.objects.filter(id=status_id).first()
                         if status_obj:
+                            # Get old status type directly from database to ensure we have the correct value
+                            old_status_type = None
+                            print(f"[DEBUG] Checking old status - contact.status_id={contact.status_id}, contact.status={contact.status}")
+                            if contact.status_id:
+                                old_status = Status.objects.filter(id=contact.status_id).values_list('type', flat=True).first()
+                                print(f"[DEBUG] Queried old status type from DB: {old_status}")
+                                if old_status:
+                                    old_status_type = old_status
+                            else:
+                                print(f"[DEBUG] No old status_id, contact has no current status")
+                            
+                            # Get new status type directly from database
+                            new_status_type = Status.objects.filter(id=status_id).values_list('type', flat=True).first()
+                            
+                            # Debug logging with print statements for visibility
+                            print(f"[DEBUG] Status change for contact {contact.id}:")
+                            print(f"  - old_status_id={contact.status_id}")
+                            print(f"  - old_type={old_status_type}")
+                            print(f"  - new_status_id={status_id}")
+                            print(f"  - new_type={new_status_type}")
+                            print(f"  - current date_lead_to_client={contact.date_lead_to_client}")
+                            
+                            # If moving from lead to client, set date_lead_to_client (only if not already set)
+                            if old_status_type == 'lead' and new_status_type == 'client':
+                                print(f"[DEBUG] Condition met: lead -> client transition")
+                                if not contact.date_lead_to_client:
+                                    from django.utils import timezone as tz
+                                    contact.date_lead_to_client = tz.now()
+                                    print(f"[DEBUG] Set date_lead_to_client={contact.date_lead_to_client} for contact {contact.id}")
+                                else:
+                                    print(f"[DEBUG] date_lead_to_client already set to {contact.date_lead_to_client}, skipping")
+                            else:
+                                print(f"[DEBUG] Condition NOT met: old_type={old_status_type}, new_type={new_status_type}")
+                            
+                            # Check if new status is client_default=True
+                            old_status_obj = None
+                            if contact.status_id:
+                                old_status_obj = Status.objects.filter(id=contact.status_id).first()
+                            
+                            # Check if new status has client_default=True
+                            is_new_client_default = status_obj.client_default if status_obj else False
+                            is_old_client_default = old_status_obj.client_default if old_status_obj else False
+                            
+                            # Track if we need to send notification (will send after contact is saved)
+                            if is_new_client_default and not is_old_client_default:
+                                should_send_client_notification = True
+                            
                             contact.status = status_obj
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Log the exception instead of silently passing
+                        import logging
+                        import traceback
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error updating contact status: {str(e)}\n{traceback.format_exc()}")
                 else:
                     contact.status = None
             
@@ -6921,6 +7186,11 @@ def contact_detail(request, contact_id):
                             if hasattr(contact, '_confirmateur_cache'):
                                 delattr(contact, '_confirmateur_cache')
                             
+                            # Check if confirmateur was assigned (from null) and contact has client_default status
+                            if old_confirmateur_django_id is None and contact.status and contact.status.client_default:
+                                should_send_confirmateur_notification = True
+                                new_confirmateur_user = confirmateur_user
+                            
                             # Automation: If confirmateur was null and we're assigning one,
                             # assign all upcoming events to this confirmateur
                             # Check old_confirmateur_django_id directly (database value) to ensure it was null
@@ -7100,6 +7370,17 @@ def contact_detail(request, contact_id):
                 
                 # Verify assigned_at was saved
                 contact.refresh_from_db()
+                
+                # Send notification if contact moved to client_default status
+                if should_send_client_notification:
+                    print(f"[DEBUG] Contact {contact.id} moved to client_default status, sending notification")
+                    send_contact_notification(contact, notification_type='nouveau_client')
+                
+                # Send notification if confirmateur was assigned to contact with client_default status
+                if should_send_confirmateur_notification and new_confirmateur_user:
+                    print(f"[DEBUG] Confirmateur {new_confirmateur_user.id} assigned to contact {contact.id} with client_default status, sending notification")
+                    send_confirmateur_assignment_notification(contact, new_confirmateur_user)
+                
                 # Django automatically handles transaction commits - no manual commit needed
             except ValueError as e:
                 # Handle ValueError specifically (e.g., invalid phone/mobile format)
@@ -7897,8 +8178,9 @@ def event_create(request):
         event.refresh_from_db()
         
         # Send notification to assigned user
-        if event.userId:
-            send_event_notification(event, notification_type='assigned')
+        # Commented out: "nouvel evenement assigne" notification
+        # if event.userId:
+        #     send_event_notification(event, notification_type='assigned')
         
         # Create log entry for event creation
         # Use event.contactId after saving to ensure we have the correct contact reference
@@ -8020,8 +8302,9 @@ def event_update(request, event_id):
         event.refresh_from_db()
         
         # Send notification if user was assigned or changed
-        if event.userId and (old_user_details_id != new_user_details_id or old_user_details_id is None):
-            send_event_notification(event, notification_type='assigned')
+        # Commented out: "nouvel evenement assigne" notification
+        # if event.userId and (old_user_details_id != new_user_details_id or old_user_details_id is None):
+        #     send_event_notification(event, notification_type='assigned')
         
         # Create log entry for event update
         contact_for_log = contact or contact_before_update

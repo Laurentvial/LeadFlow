@@ -51,7 +51,7 @@ export interface ContactListProps {
   canViewGeneral?: boolean;
 }
 
-export function ContactList({
+function ContactList({
   onSelectContact,
   apiEndpoint,
   pageTitle = 'Contacts',
@@ -652,10 +652,12 @@ export function ContactList({
   
   // Helper function to prefill client form with contact data
   const prefillClientForm = React.useCallback((contact: any) => {
-    // Prefill teleoperatorId with current user if they are a teleoperateur
-    const defaultTeleoperatorId = currentUser?.isTeleoperateur === true 
-      ? currentUser.id 
-      : (contact.teleoperatorId || contact.managerId || '');
+    // Prefill teleoperatorId: preserve existing teleoperator if contact already has one,
+    // otherwise use current user if they are a teleoperateur
+    const existingTeleoperatorId = contact.teleoperatorId || contact.managerId || '';
+    const defaultTeleoperatorId = existingTeleoperatorId 
+      ? existingTeleoperatorId
+      : (currentUser?.isTeleoperateur === true ? currentUser.id : '');
     
     setClientFormData({
       platformId: contact.platformId || '',
@@ -791,6 +793,7 @@ export function ContactList({
     { id: 'nationality', label: 'Nationalité', defaultVisible: false },
     { id: 'autreInformations', label: 'Autre information', defaultVisible: true },
     { id: 'dateInscription', label: 'Date d\'inscription', defaultVisible: false },
+    { id: 'dateLeadToClient', label: 'Date passage client', defaultVisible: false },
     { id: 'campaign', label: 'Campagne', defaultVisible: false },
     { id: 'teleoperator', label: 'Téléopérateur', defaultVisible: true },
     { id: 'assignedAt', label: 'Attribué le', defaultVisible: true },
@@ -843,7 +846,7 @@ export function ContactList({
   const [fosseSettings, setFosseSettings] = useState<{
     forcedColumns: string[];
     forcedFilters: Record<string, { type: 'open' | 'defined'; values?: string[]; value?: string; dateRange?: { from?: string; to?: string } }>;
-    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
+    defaultOrder?: 'none' | 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'date_lead_to_client_asc' | 'date_lead_to_client_desc' | 'email_asc' | 'random';
   } | null>(null);
   const [fosseSettingsLoading, setFosseSettingsLoading] = useState(false);
   
@@ -2589,6 +2592,18 @@ export function ContactList({
         return <td key={columnId} title={contact.autreInformations || ''}>{truncateText(contact.autreInformations || '-')}</td>;
       case 'dateInscription':
         return <td key={columnId} title={contact.dateInscription || ''}>{truncateText(contact.dateInscription || '-')}</td>;
+      case 'dateLeadToClient':
+        return (
+          <td key={columnId}>
+            {contact.dateLeadToClient 
+              ? new Date(contact.dateLeadToClient).toLocaleString('fr-FR', {
+                  dateStyle: 'short',
+                  timeStyle: 'short'
+                })
+              : '-'
+            }
+          </td>
+        );
       case 'campaign':
         return <td key={columnId} title={contact.campaign || ''}>{truncateText(contact.campaign || '-')}</td>;
       case 'createdAt':
@@ -4628,7 +4643,7 @@ export function ContactList({
                 value={isFossePage && fosseSettings?.defaultOrder && fosseSettings.defaultOrder !== 'none' ? fosseSettings.defaultOrder : selectedOrder}
                 disabled={isFossePage && fosseSettings?.defaultOrder !== undefined && fosseSettings.defaultOrder !== 'none'}
                 onValueChange={(value) => {
-                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'email_asc' | 'random';
+                  const orderValue = value as 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'date_lead_to_client_asc' | 'date_lead_to_client_desc' | 'email_asc' | 'random';
                   setSelectedOrder(orderValue);
                 }}
               >
@@ -4642,6 +4657,8 @@ export function ContactList({
                   <SelectItem value="updated_at_desc">Date de modification (nouveau à ancien)</SelectItem>
                   <SelectItem value="assigned_at_asc">Date d'attribution (ancien à nouveau)</SelectItem>
                   <SelectItem value="assigned_at_desc">Date d'attribution (nouveau à ancien)</SelectItem>
+                  <SelectItem value="date_lead_to_client_asc">Date de passage client (ancien à nouveau)</SelectItem>
+                  <SelectItem value="date_lead_to_client_desc">Date de passage client (nouveau à ancien)</SelectItem>
                   <SelectItem value="email_asc">Email (ordre alphabétique)</SelectItem>
                   <SelectItem value="random">Aléatoire</SelectItem>
                 </SelectContent>

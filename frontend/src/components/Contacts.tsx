@@ -1,5 +1,5 @@
 import React from 'react';
-import { ContactList } from './ContactList';
+import ContactList from './ContactList';
 import { useHasPermission } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
 

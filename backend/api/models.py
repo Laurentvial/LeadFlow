@@ -91,6 +91,7 @@ class Contact(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
     assigned_at = models.DateTimeField(null=True, blank=True, db_index=True)  # Date/time when teleoperator was last assigned
+    date_lead_to_client = models.DateTimeField(null=True, blank=True)  # Date/time when lead became a client
     
     class Meta:
         indexes = [
@@ -283,6 +284,8 @@ class FosseSettings(models.Model):
         ('updated_at_desc', 'Date de modification (nouveau à ancien)'),
         ('assigned_at_asc', 'Date d\'attribution (ancien à nouveau)'),
         ('assigned_at_desc', 'Date d\'attribution (nouveau à ancien)'),
+        ('date_lead_to_client_asc', 'Date de passage client (ancien à nouveau)'),
+        ('date_lead_to_client_desc', 'Date de passage client (nouveau à ancien)'),
         ('email_asc', 'Email (ordre alphabétique)'),
         ('random', 'Aléatoire'),
     ]
@@ -301,8 +304,8 @@ class FosseSettings(models.Model):
     # }
     forced_filters = models.JSONField(default=dict, blank=True)
     
-    # Default ordering: 'default' (by creation date) or 'random' (random order)
-    default_order = models.CharField(max_length=20, choices=ORDER_CHOICES, default='default')
+    # Default ordering: 'none' (customizable) or one of the ORDER_CHOICES
+    default_order = models.CharField(max_length=30, choices=ORDER_CHOICES, default='none')
     
     # Default status to set when a contact becomes unassigned (both teleoperator and confirmateur are null)
     default_status = models.ForeignKey('Status', on_delete=models.SET_NULL, null=True, blank=True, related_name='fosse_settings_default')
@@ -414,6 +417,7 @@ class Document(models.Model):
         ('JUSTIFICATIF_DOMICILE', 'Justificatif de domicile'),
         ('SELFIE', 'Selfie'),
         ('RIB', 'RIB'),
+        ('CONTRAT', 'Contrat'),
     ]
     
     id = models.CharField(max_length=12, default="", unique=True, primary_key=True)

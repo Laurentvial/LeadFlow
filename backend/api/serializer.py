@@ -575,6 +575,7 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['nationality'] = ret.get('nationality', '') or ''
         ret['autreInformations'] = ret.get('autre_informations', '') or ''
         ret['dateInscription'] = ret.get('date_d_inscription', '') or ''
+        ret['dateLeadToClient'] = instance.date_lead_to_client.isoformat() if instance.date_lead_to_client else None
         
         # Confirmateur fields
         ret['platformId'] = instance.platform_id if hasattr(instance, 'platform_id') else (instance.platform.id if instance.platform else None)
