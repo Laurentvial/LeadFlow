@@ -7316,8 +7316,9 @@ def contact_detail(request, contact_id):
             if 'confirmateur_telephone' in request.data:
                 confirmateur_telephone_value = request.data.get('confirmateur_telephone')
                 # Handle None, empty string, or whitespace-only strings
+                # Note: CharField without null=True cannot store None, so use empty string instead
                 if confirmateur_telephone_value is None or (isinstance(confirmateur_telephone_value, str) and not confirmateur_telephone_value.strip()):
-                    contact.confirmateur_telephone = None
+                    contact.confirmateur_telephone = ''
                 else:
                     try:
                         # Remove spaces and convert to int (if it's a phone number)
@@ -7325,16 +7326,17 @@ def contact_detail(request, contact_id):
                         if cleaned:
                             contact.confirmateur_telephone = cleaned  # Keep as string for phone numbers
                         else:
-                            contact.confirmateur_telephone = None
+                            contact.confirmateur_telephone = ''
                     except (ValueError, TypeError):
                         # If conversion fails, keep as string
-                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else None
+                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else ''
             elif 'confirmateurTelephone' in request.data:
                 # Handle camelCase version from frontend
                 confirmateur_telephone_value = request.data.get('confirmateurTelephone')
                 # Handle None, empty string, or whitespace-only strings
+                # Note: CharField without null=True cannot store None, so use empty string instead
                 if confirmateur_telephone_value is None or (isinstance(confirmateur_telephone_value, str) and not confirmateur_telephone_value.strip()):
-                    contact.confirmateur_telephone = None
+                    contact.confirmateur_telephone = ''
                 else:
                     try:
                         # Remove spaces and convert to int (if it's a phone number)
@@ -7342,10 +7344,10 @@ def contact_detail(request, contact_id):
                         if cleaned:
                             contact.confirmateur_telephone = cleaned  # Keep as string for phone numbers
                         else:
-                            contact.confirmateur_telephone = None
+                            contact.confirmateur_telephone = ''
                     except (ValueError, TypeError):
                         # If conversion fails, keep as string
-                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else None
+                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else ''
             
             # CRITICAL: Ensure phone and mobile are None (not empty strings) before saving
             # This prevents ValueError when saving to BigIntegerField

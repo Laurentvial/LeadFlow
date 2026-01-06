@@ -92,10 +92,30 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
+  position: relative;
+}
+
+.planning-content-grid.sidebar-hidden {
+  grid-template-columns: 1fr;
+}
+
+.planning-content-grid.with-sidebar {
+  grid-template-columns: 1fr 400px;
+}
+
+/* Appointments Sidebar */
+.planning-appointments-sidebar {
+  transition: all 0.3s ease;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
 }
 
 @media (max-width: 1024px) {
   .planning-content-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .planning-content-grid.with-sidebar {
     grid-template-columns: 1fr;
   }
   
@@ -545,6 +565,51 @@ input[type="time"] {
 .time-input-24h::-moz-datetime-edit-meridiem-field,
 input[type="time"]::-moz-datetime-edit-meridiem-field {
   display: none !important;
+}
+
+/* Drag and Drop Styles */
+.planning-event-draggable {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.planning-event-draggable:active {
+  cursor: grabbing;
+}
+
+.planning-event-draggable.dragging {
+  opacity: 0.5;
+}
+
+.planning-drop-target {
+  background-color: #dbeafe !important;
+  border-color: #3b82f6 !important;
+  border-width: 2px !important;
+  border-style: dashed !important;
+}
+
+.planning-calendar-day.planning-drop-target {
+  background-color: #dbeafe;
+  border-color: #3b82f6;
+  border-width: 2px;
+  border-style: dashed;
+}
+
+.planning-week-day.planning-drop-target {
+  background-color: #dbeafe;
+  border-color: #3b82f6;
+  border-width: 2px;
+  border-style: dashed;
+}
+
+.planning-day-hour.planning-drop-target {
+  background-color: #dbeafe;
+  border-color: #3b82f6;
+  border-width: 2px;
+  border-style: dashed;
 }
 
 /* Responsive adjustments */

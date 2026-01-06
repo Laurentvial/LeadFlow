@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { DateInput } from './ui/date-input';
-import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, X, Send, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Clock, User, Pencil, X, Send, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { handleModalOverlayClick } from '../utils/modal';
 import { useUser } from '../contexts/UserContext';
@@ -34,7 +34,11 @@ export function PlanningCalendar() {
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<number | null>(null); // Selected day for filtering
-  const [view, setView] = useState<'month' | 'week' | 'day'>('day'); // Calendar view mode
+  // Load view preference from localStorage, default to 'day'
+  const [view, setView] = useState<'month' | 'week' | 'day'>(() => {
+    const savedView = localStorage.getItem('planning-view');
+    return (savedView === 'month' || savedView === 'week' || savedView === 'day') ? savedView : 'day';
+  });
   const [currentMonthYear, setCurrentMonthYear] = useState<string>(''); // Track current month/year for reloading
   const dayHoursRef = useRef<HTMLDivElement>(null); // Ref for day hours container
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -52,7 +56,11 @@ export function PlanningCalendar() {
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientSearchFocused, setClientSearchFocused] = useState(false);
   const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [isAppointmentsSidebarVisible, setIsAppointmentsSidebarVisible] = useState(false); // Hidden by default
   const [clientSearchResults, setClientSearchResults] = useState<any[]>([]);
+  const [draggedEvent, setDraggedEvent] = useState<any>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [editClientSearchQuery, setEditClientSearchQuery] = useState('');
   const [editClientSearchFocused, setEditClientSearchFocused] = useState(false);
   const [editClientSearchLoading, setEditClientSearchLoading] = useState(false);
@@ -231,6 +239,17 @@ export function PlanningCalendar() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upcomingEvents, pastEvents]);
+
+  // Save view preference to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('planning-view', view);
+  }, [view]);
+
+  // Wrapper function to update view and save to localStorage
+  const updateView = (newView: 'month' | 'week' | 'day') => {
+    setView(newView);
+    localStorage.setItem('planning-view', newView);
+  };
 
   async function loadData(upcomingPage: number = 1, pastPage: number = 1, appendUpcoming: boolean = false, appendPast: boolean = false) {
     if (upcomingPage === 1 && pastPage === 1) {
@@ -559,17 +578,103 @@ export function PlanningCalendar() {
     }
   }
 
+  // Drag and Drop handlers
+  function handleDragStart(e: React.DragEvent, event: any) {
+    if (!canEdit) {
+      e.preventDefault();
+      return;
+    }
+    setIsDragging(true);
+    setDraggedEvent(event);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', event.id);
+    // Add visual feedback
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.classList.add('dragging');
+      e.currentTarget.style.opacity = '0.5';
+    }
+  }
+
+  function handleDragEnd(e: React.DragEvent) {
+    // Reset visual feedback
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.classList.remove('dragging');
+      e.currentTarget.style.opacity = '1';
+    }
+    // Use setTimeout to prevent click event from firing after drag
+    setTimeout(() => {
+      setIsDragging(false);
+      setDraggedEvent(null);
+      setDragOverTarget(null);
+    }, 0);
+  }
+
+  function handleDragOver(e: React.DragEvent, targetId: string) {
+    if (!canEdit || !draggedEvent) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverTarget(targetId);
+  }
+
+  function handleDragLeave() {
+    setDragOverTarget(null);
+  }
+
+  async function handleDrop(e: React.DragEvent, targetDate: Date, targetHour?: number) {
+    e.preventDefault();
+    if (!canEdit || !draggedEvent) return;
+
+    setDragOverTarget(null);
+
+    // Calculate new datetime
+    const newDate = normalizeDate(targetDate);
+    const hour = targetHour !== undefined ? targetHour : new Date(draggedEvent.datetime).getHours();
+    const minute = new Date(draggedEvent.datetime).getMinutes();
+    
+    // Clamp hour to 8-23 range
+    const clampedHour = Math.max(8, Math.min(23, hour));
+    
+    // Round minute to nearest 5-minute increment
+    let roundedMinute = Math.round(minute / 5) * 5;
+    if (roundedMinute === 60) roundedMinute = 55;
+
+    newDate.setHours(clampedHour, roundedMinute, 0, 0);
+    const newDateTime = newDate.toISOString();
+
+    try {
+      await apiCall(`/api/events/${draggedEvent.id}/update/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          datetime: newDateTime,
+          contactId: draggedEvent.clientId_read || draggedEvent.contactId,
+          userId: draggedEvent.userId_read || draggedEvent.userId || currentUser?.id || null
+        }),
+      });
+      
+      loadData();
+      toast.success('Événement déplacé avec succès');
+    } catch (error) {
+      console.error('Error moving event:', error);
+      toast.error('Erreur lors du déplacement de l\'événement');
+    } finally {
+      setDraggedEvent(null);
+    }
+  }
+
   const daysInMonth = new Date(
     selectedDate.getFullYear(),
     selectedDate.getMonth() + 1,
     0
   ).getDate();
 
-  const firstDayOfMonth = new Date(
+  // Calculate first day of month, converting to Monday-first week format
+  // Sunday (0) becomes 6, Monday (1) becomes 0, etc.
+  const firstDayOfMonthRaw = new Date(
     selectedDate.getFullYear(),
     selectedDate.getMonth(),
     1
   ).getDay();
+  const firstDayOfMonth = (firstDayOfMonthRaw + 6) % 7; // Convert to Monday-first (Monday=0, Sunday=6)
 
   const monthNames = [
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -720,12 +825,18 @@ export function PlanningCalendar() {
     const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
     const dateStr = formatDateLocal(date);
     const allEvents = [...upcomingEvents, ...pastEvents];
-    return allEvents.filter(event => {
-      if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime);
-      const eventDateStr = formatDateLocal(eventDate);
-      return eventDateStr === dateStr;
-    });
+    return allEvents
+      .filter(event => {
+        if (!event.datetime) return false;
+        const eventDate = new Date(event.datetime);
+        const eventDateStr = formatDateLocal(eventDate);
+        return eventDateStr === dateStr;
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.datetime).getTime();
+        const dateB = new Date(b.datetime).getTime();
+        return dateA - dateB; // Sort chronologically (earliest first)
+      });
   }
 
   // Get events for a specific date
@@ -734,33 +845,47 @@ export function PlanningCalendar() {
     const normalizedDate = normalizeDate(date);
     const dateStr = formatDateLocal(normalizedDate);
     const allEvents = [...upcomingEvents, ...pastEvents];
-    return allEvents.filter(event => {
-      if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime);
-      const eventDateStr = formatDateLocal(eventDate);
-      return eventDateStr === dateStr;
-    });
+    return allEvents
+      .filter(event => {
+        if (!event.datetime) return false;
+        const eventDate = new Date(event.datetime);
+        const eventDateStr = formatDateLocal(eventDate);
+        return eventDateStr === dateStr;
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.datetime).getTime();
+        const dateB = new Date(b.datetime).getTime();
+        return dateA - dateB; // Sort chronologically (earliest first)
+      });
   }
 
   // Get events for a specific hour in a day
   function getEventsForHour(date: Date, hour: number) {
     const events = getEventsForDate(date);
-    return events.filter(event => {
-      if (!event.datetime) return false;
-      const eventDate = new Date(event.datetime);
-      return eventDate.getHours() === hour;
-    });
+    return events
+      .filter(event => {
+        if (!event.datetime) return false;
+        const eventDate = new Date(event.datetime);
+        return eventDate.getHours() === hour;
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.datetime).getTime();
+        const dateB = new Date(b.datetime).getTime();
+        return dateA - dateB; // Sort chronologically (earliest first)
+      });
   }
 
   // Get week days (Monday to Sunday)
   function getWeekDays(): Date[] {
     const startOfWeek = new Date(selectedDate);
     const day = startOfWeek.getDay();
-    // Convert Sunday (0) to 7, then subtract 1 to get days from Monday (1) to Sunday (0)
+    // Convert Sunday (0) to 6, Monday (1) to 0, etc. to get days from Monday
     // This gives us: Monday=0, Tuesday=1, ..., Sunday=6
     const daysFromMonday = day === 0 ? 6 : day - 1;
     const diff = startOfWeek.getDate() - daysFromMonday; // Get Monday of the week
-    const monday = new Date(startOfWeek.setDate(diff));
+    
+    // Create a new date object for Monday to avoid mutating selectedDate
+    const monday = new Date(startOfWeek.getFullYear(), startOfWeek.getMonth(), diff);
     
     const weekDays: Date[] = [];
     for (let i = 0; i < 7; i++) {
@@ -1188,7 +1313,7 @@ export function PlanningCalendar() {
       </div>
 
       {/* Calendar and Events List Side by Side */}
-      <div className="planning-content-grid">
+      <div className={`planning-content-grid ${isAppointmentsSidebarVisible ? 'with-sidebar' : 'sidebar-hidden'}`}>
         <Card>
           <CardHeader>
             <div className="planning-calendar-header">
@@ -1202,7 +1327,7 @@ export function PlanningCalendar() {
                     variant={view === 'month' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
-                      setView('month');
+                      updateView('month');
                       setSelectedDay(null);
                     }}
                   >
@@ -1212,7 +1337,7 @@ export function PlanningCalendar() {
                     variant={view === 'week' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
-                      setView('week');
+                      updateView('week');
                       setSelectedDay(null);
                     }}
                   >
@@ -1222,7 +1347,7 @@ export function PlanningCalendar() {
                     variant={view === 'day' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
-                      setView('day');
+                      updateView('day');
                       setSelectedDay(null);
                     }}
                   >
@@ -1249,6 +1374,24 @@ export function PlanningCalendar() {
                   onClick={goToNextPeriod}
                 >
                   →
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsAppointmentsSidebarVisible(!isAppointmentsSidebarVisible)}
+                  title={isAppointmentsSidebarVisible ? "Masquer la liste" : "Afficher la liste"}
+                >
+                  {isAppointmentsSidebarVisible ? (
+                    <>
+                      <ChevronRight className="w-4 h-4 mr-1" />
+                      Voir la liste des RDV
+                    </>
+                  ) : (
+                    <>
+                      <ChevronLeft className="w-4 h-4 mr-1" />
+                      Voir la liste des RDV
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -1277,14 +1420,23 @@ export function PlanningCalendar() {
                   return (
                     <div
                       key={day}
-                      className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
+                      className={`planning-calendar-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''} ${dragOverTarget === `day-${day}` ? 'planning-drop-target' : ''}`}
                       onClick={() => {
                         // Redirect to day view for the clicked day
                         const clickedDate = normalizeDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day));
                         setSelectedDate(clickedDate);
-                        setView('day');
+                        updateView('day');
                         setSelectedDay(null);
                       }}
+                      onDragOver={canEdit ? (e) => {
+                        e.preventDefault();
+                        handleDragOver(e, `day-${day}`);
+                      } : undefined}
+                      onDragLeave={canEdit ? handleDragLeave : undefined}
+                      onDrop={canEdit ? (e) => {
+                        const targetDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
+                        handleDrop(e, targetDate);
+                      } : undefined}
                       style={{ cursor: 'pointer' }}
                     >
                       <div className="planning-day-number">{day}</div>
@@ -1300,7 +1452,10 @@ export function PlanningCalendar() {
                           return (
                             <div 
                               key={event.id} 
-                              className="planning-event-badge"
+                              className={`planning-event-badge ${canEdit ? 'planning-event-draggable' : ''}`}
+                              draggable={canEdit}
+                              onDragStart={canEdit ? (e) => handleDragStart(e, event) : undefined}
+                              onDragEnd={canEdit ? handleDragEnd : undefined}
                               style={{ 
                                 backgroundColor: lightColor,
                                 color: userColor,
@@ -1308,7 +1463,8 @@ export function PlanningCalendar() {
                                 paddingLeft: '0.5rem',
                                 display: 'flex',
                                 flexDirection: 'column',
-                                justifyContent: 'space-between'
+                                justifyContent: 'space-between',
+                                cursor: canEdit ? 'grab' : 'default'
                               }}
                             >
                               <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1400,16 +1556,26 @@ export function PlanningCalendar() {
                     return (
                       <div
                         key={index}
-                        className={`planning-week-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''}`}
-                        onClick={() => {
-                          // Redirect to day view for the clicked day
-                          setSelectedDate(normalizeDate(date));
-                          setView('day');
-                          setSelectedDay(null);
-                        }}
-                        style={{ cursor: 'pointer' }}
+                        className={`planning-week-day ${isToday ? 'planning-calendar-day-today' : ''} ${isSelected ? 'planning-calendar-day-selected' : ''} ${dragOverTarget === `week-day-${index}` ? 'planning-drop-target' : ''}`}
+                        onDragOver={canEdit ? (e) => {
+                          e.preventDefault();
+                          handleDragOver(e, `week-day-${index}`);
+                        } : undefined}
+                        onDragLeave={canEdit ? handleDragLeave : undefined}
+                        onDrop={canEdit ? (e) => {
+                          handleDrop(e, normalizeDate(date));
+                        } : undefined}
                       >
-                        <div className="planning-week-day-header">
+                        <div 
+                          className="planning-week-day-header"
+                          onClick={() => {
+                            // Redirect to day view for the clicked day
+                            setSelectedDate(normalizeDate(date));
+                            updateView('day');
+                            setSelectedDay(null);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        >
                           <div className="planning-week-day-name">
                             {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'][(date.getDay() + 6) % 7]}
                           </div>
@@ -1427,7 +1593,16 @@ export function PlanningCalendar() {
                             return (
                               <div 
                                 key={event.id} 
-                                className="planning-event-badge"
+                                className={`planning-event-badge ${canEdit ? 'planning-event-draggable' : ''}`}
+                                draggable={canEdit}
+                                onDragStart={canEdit ? (e) => handleDragStart(e, event) : undefined}
+                                onDragEnd={canEdit ? handleDragEnd : undefined}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (canEdit && !isDragging) {
+                                    handleEditEvent(event);
+                                  }
+                                }}
                                 style={{ 
                                   backgroundColor: lightColor,
                                   color: userColor,
@@ -1435,7 +1610,8 @@ export function PlanningCalendar() {
                                   paddingLeft: '0.5rem',
                                   display: 'flex',
                                   flexDirection: 'column',
-                                  justifyContent: 'space-between'
+                                  justifyContent: 'space-between',
+                                  cursor: canEdit ? 'grab' : 'default'
                                 }}
                               >
                                 <div>
@@ -1522,7 +1698,7 @@ export function PlanningCalendar() {
                       <div
                         key={hour}
                         data-hour={hour}
-                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''} ${canCreate ? 'planning-day-hour-clickable' : ''}`}
+                        className={`planning-day-hour ${isCurrentHour ? 'planning-day-hour-current' : ''} ${canCreate ? 'planning-day-hour-clickable' : ''} ${dragOverTarget === `hour-${hour}` ? 'planning-drop-target' : ''}`}
                         onClick={canCreate ? (e) => {
                           // Only open modal if clicking on the hour row itself or empty space, not on an event
                           const target = e.target as HTMLElement;
@@ -1538,6 +1714,14 @@ export function PlanningCalendar() {
                             prefilledDateTimeRef.current = prefilledData;
                             setIsModalOpen(true);
                           }
+                        } : undefined}
+                        onDragOver={canEdit ? (e) => {
+                          e.preventDefault();
+                          handleDragOver(e, `hour-${hour}`);
+                        } : undefined}
+                        onDragLeave={canEdit ? handleDragLeave : undefined}
+                        onDrop={canEdit ? (e) => {
+                          handleDrop(e, normalizeDate(selectedDate), hour);
                         } : undefined}
                         style={canCreate ? { cursor: 'pointer' } : undefined}
                       >
@@ -1562,10 +1746,13 @@ export function PlanningCalendar() {
                             return (
                               <div
                                 key={event.id}
-                                className={`planning-day-event ${!canEdit ? 'planning-day-event-disabled' : ''}`}
-                                onClick={canEdit ? () => handleEditEvent(event) : undefined}
+                                className={`planning-day-event ${!canEdit ? 'planning-day-event-disabled' : ''} ${canEdit ? 'planning-event-draggable' : ''}`}
+                                draggable={canEdit}
+                                onDragStart={canEdit ? (e) => handleDragStart(e, event) : undefined}
+                                onDragEnd={canEdit ? handleDragEnd : undefined}
+                                onClick={canEdit && !isDragging ? () => handleEditEvent(event) : undefined}
                                 style={{ 
-                                  cursor: canEdit ? 'pointer' : 'default',
+                                  cursor: canEdit ? 'grab' : 'default',
                                   backgroundColor: lightColor,
                                   borderLeft: `${roleStyle.borderWidth} ${roleStyle.borderStyle} ${userColor}`,
                                   position: 'relative'
@@ -1646,23 +1833,36 @@ export function PlanningCalendar() {
           </CardContent>
         </Card>
 
-        {/* Events List */}
-        <Card>
+        {/* Events List Sidebar */}
+        {isAppointmentsSidebarVisible && (
+        <Card className="planning-appointments-sidebar">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>
-                Liste des rendez-vous
-                {(selectedDay !== null || view === 'day') && (
-                  <span className="text-sm font-normal text-slate-500 ml-2">
-                    ({view === 'day' ? selectedDate.getDate() : selectedDay}/{selectedDate.getMonth() + 1}/{selectedDate.getFullYear()})
-                  </span>
-                )}
-                {view === 'week' && selectedDay === null && (
-                  <span className="text-sm font-normal text-slate-500 ml-2">
-                    (Semaine)
-                  </span>
-                )}
-              </CardTitle>
+              <div className="flex items-center gap-2 flex-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsAppointmentsSidebarVisible(false)}
+                  className="p-1 h-auto"
+                  style={{ minWidth: 'auto' }}
+                  title="Masquer la liste"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                <CardTitle>
+                  Liste des rendez-vous
+                  {(selectedDay !== null || view === 'day') && (
+                    <span className="text-sm font-normal text-slate-500 ml-2">
+                      ({view === 'day' ? selectedDate.getDate() : selectedDay}/{selectedDate.getMonth() + 1}/{selectedDate.getFullYear()})
+                    </span>
+                  )}
+                  {view === 'week' && selectedDay === null && (
+                    <span className="text-sm font-normal text-slate-500 ml-2">
+                      (Semaine)
+                    </span>
+                  )}
+                </CardTitle>
+              </div>
               {(selectedDay !== null || view === 'day') && (
                 <Button
                   variant="outline"
@@ -1670,7 +1870,7 @@ export function PlanningCalendar() {
                   onClick={() => {
                     setSelectedDay(null);
                     if (view === 'day') {
-                      setView('month');
+                      updateView('month');
                     }
                   }}
                 >
@@ -1836,6 +2036,7 @@ export function PlanningCalendar() {
             })()}
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
   );
