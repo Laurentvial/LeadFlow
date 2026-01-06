@@ -1684,10 +1684,10 @@ class ContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 1000 per page)
+            # Ensure reasonable page size (max 500 per page)
             # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
             # The queryset is optimized with select_related/prefetch_related to minimize database queries
-            MAX_PAGE_SIZE = 1000
+            MAX_PAGE_SIZE = 500
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
@@ -1703,43 +1703,7 @@ class ContactView(generics.ListAPIView):
             # This ensures DRF pagination uses the filtered queryset for counting
             self._filtered_queryset = queryset
             
-            # PERFORMANCE FIX: For very large page sizes (1000+), skip pagination count to prevent timeout
-            # Use direct slicing instead of DRF pagination which requires count()
-            if page_size >= 1000:
-                # Optimize query by fetching only essential fields
-                queryset = queryset.only(
-                    'id', 'fname', 'lname', 'email', 'phone', 'mobile',
-                    'created_at', 'updated_at', 'assigned_at',
-                    'status_id', 'source_id', 'teleoperator_id', 'confirmateur_id', 'creator_id',
-                    'platform_id', 'address', 'address_complement', 'postal_code', 'city',
-                    'campaign', 'montant_encaisse', 'bonus', 'paiement', 'contrat',
-                    'nom_de_scene', 'date_pro_tr', 'potentiel', 'produit',
-                    'civility', 'birth_date', 'birth_place', 'nationality',
-                    'email_verification_status'
-                ).defer('notes', 'logs')
-                
-                # Apply pagination manually without count (direct slicing)
-                offset = (page - 1) * page_size
-                paginated_queryset = list(queryset[offset:offset + page_size])
-                
-                # Serialize the results
-                serializer = self.get_serializer(paginated_queryset, many=True, context={'request': request})
-                
-                # Return response without total count (skipped to prevent timeout)
-                # Approximate count: if we got fewer results than requested, we're on the last page
-                result_count = len(serializer.data)
-                approximate_total = result_count if page == 1 and result_count < page_size else None
-                
-                return Response({
-                    'contacts': serializer.data,
-                    'total': approximate_total if approximate_total is not None else result_count,
-                    'next': None if result_count < page_size else f'?page={page + 1}&page_size={page_size}',
-                    'previous': None if page == 1 else f'?page={page - 1}&page_size={page_size}',
-                    'page': page,
-                    'page_size': page_size
-                })
-            
-            # For smaller page sizes, use normal pagination with count
+            # Use normal pagination with count
             # Create pagination class with captured page_size using closure
             def create_pagination_class(page_size_value):
                 class ContactPagination(PageNumberPagination):
@@ -1775,8 +1739,8 @@ class ContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 1000)
-                MAX_LIMIT = 1000
+                # Ensure limit is reasonable (max 500)
+                MAX_LIMIT = 500
                 if limit > MAX_LIMIT:
                     limit = MAX_LIMIT
                 if limit < 1:
@@ -1818,7 +1782,7 @@ class ContactView(generics.ListAPIView):
         class DefaultContactPagination(PageNumberPagination):
             page_size = 50  # Default page size matching frontend default
             page_size_query_param = 'page_size'
-            max_page_size = 1000  # Max 1000 per page
+            max_page_size = 500  # Max 500 per page
         
         self.pagination_class = DefaultContactPagination
         queryset = self.get_queryset()
@@ -2716,9 +2680,9 @@ class FosseContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 1000 per page)
+            # Ensure reasonable page size (max 500 per page)
             # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
-            MAX_PAGE_SIZE = 1000
+            MAX_PAGE_SIZE = 500
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
@@ -2778,8 +2742,8 @@ class FosseContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 1000)
-                MAX_LIMIT = 1000
+                # Ensure limit is reasonable (max 500)
+                MAX_LIMIT = 500
                 if limit > MAX_LIMIT:
                     limit = MAX_LIMIT
                 if limit < 1:
