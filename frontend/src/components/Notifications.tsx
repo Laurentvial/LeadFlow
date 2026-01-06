@@ -28,6 +28,7 @@ export default function Notifications() {
   const { currentUser } = useUser();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [todayAssignedCount, setTodayAssignedCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'unread' | 'read'>('unread');
@@ -69,6 +70,17 @@ export default function Notifications() {
       setUnreadCount(data.unread_count || 0);
     } catch (error: any) {
       console.error('Error loading unread count:', error);
+    }
+  }, []);
+
+  // Load today's assigned contacts count
+  const loadTodayAssignedCount = useCallback(async () => {
+    try {
+      const data = await apiCall('/api/contacts/assigned-today-count/');
+      setTodayAssignedCount(data.count || 0);
+    } catch (error: any) {
+      console.error('Error loading today\'s assigned contacts count:', error);
+      setTodayAssignedCount(0);
     }
   }, []);
 
@@ -138,11 +150,12 @@ export default function Notifications() {
       // Navigate to email
       window.location.href = `/mails?email=${notification.email_id}`;
     } else if (notification.type === 'contact' && notification.contact_id) {
-      // Navigate to contact
-      window.location.href = `/contacts?contact=${notification.contact_id}`;
+      // Navigate to contact detail page (same format as ContactSearchBar)
+      // This handles all contact notifications including "Nouveau client"
+      window.open(`/contacts/${notification.contact_id}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
     } else if (notification.type === 'event' && notification.event_id) {
-      // Navigate to planning calendar
-      window.location.href = '/planning';
+      // Navigate to planning calendar in a new tab
+      window.open('/planning', '_blank');
     }
     
     // Don't close modal if there are still unread notifications
@@ -279,7 +292,8 @@ export default function Notifications() {
   // Initial load
   useEffect(() => {
     loadNotifications();
-  }, [loadNotifications]);
+    loadTodayAssignedCount();
+  }, [loadNotifications, loadTodayAssignedCount]);
 
   // Auto-refresh notifications periodically (like WhatsApp)
   useEffect(() => {
@@ -291,10 +305,12 @@ export default function Notifications() {
       loadNotifications(true);
       // Also refresh unread count separately for accuracy
       loadUnreadCount();
+      // Refresh today's assigned contacts count
+      loadTodayAssignedCount();
     }, 10000); // Refresh every 10 seconds (less frequent than chat since notifications are less time-sensitive)
 
     return () => clearInterval(interval);
-  }, [loading, loadNotifications, loadUnreadCount]);
+  }, [loading, loadNotifications, loadUnreadCount, loadTodayAssignedCount]);
 
   // Set default tab when modal opens
   useEffect(() => {
@@ -315,22 +331,37 @@ export default function Notifications() {
 
   return (
     <div className="notifications-container">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={() => {
-          // Always allow toggling - users can open/close whenever they want
-          setIsOpen(!isOpen);
-        }}
-        className="notifications-button"
-      >
-        <Bell className="h-5 w-5" />
-        {unreadCount > 0 && (
-          <Badge className="notifications-badge">
-            {unreadCount > 99 ? '99+' : unreadCount}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {todayAssignedCount > 0 && (
+          <Badge style={{ 
+            fontSize: '14px', 
+            backgroundColor: '#22c55e',
+            color: '#ffffff',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+            padding: '4px 12px',
+            borderRadius: '12px'
+          }}>
+            {todayAssignedCount} contact{todayAssignedCount > 1 ? 's' : ''} aujourd'hui
           </Badge>
         )}
-      </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            // Always allow toggling - users can open/close whenever they want
+            setIsOpen(!isOpen);
+          }}
+          className="notifications-button"
+        >
+          <Bell className="h-5 w-5" />
+          {unreadCount > 0 && (
+            <Badge className="notifications-badge">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </Badge>
+          )}
+        </Button>
+      </div>
 
       {isOpen && (
         <div className="notifications-dropdown">

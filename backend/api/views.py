@@ -1904,6 +1904,9 @@ class FosseContactView(generics.ListAPIView):
     
     def _apply_filters_fosse(self, queryset, request):
         """Helper method to apply all filters to a Fosse queryset"""
+        # Track if full_name_search annotation has been applied to avoid double annotation
+        full_name_search_annotated = False
+        
         # Apply forced filters from FosseSettings (server-side enforcement)
         user = request.user
         default_order = None
@@ -2176,14 +2179,17 @@ class FosseContactView(generics.ListAPIView):
                                 elif column_id == 'fullName':
                                     # Search in the combined full name string (first name + space + last name)
                                     # Handle NULL values with Coalesce to avoid NULL results
-                                    # Use unique annotation name to avoid conflicts
-                                    queryset = queryset.annotate(
-                                        full_name_search=Concat(
-                                            Coalesce('fname', Value('')), 
-                                            Value(' '), 
-                                            Coalesce('lname', Value(''))
+                                    # Track that annotation was applied to avoid double annotation
+                                    if not full_name_search_annotated:
+                                        queryset = queryset.annotate(
+                                            full_name_search=Concat(
+                                                Coalesce('fname', Value('')), 
+                                                Value(' '), 
+                                                Coalesce('lname', Value(''))
+                                            )
                                         )
-                                    ).filter(full_name_search__icontains=value)
+                                        full_name_search_annotated = True
+                                    queryset = queryset.filter(full_name_search__icontains=value)
                             date_range = config.get('dateRange')
                             if date_range and isinstance(date_range, dict):
                                 if date_range.get('from') or date_range.get('to'):
@@ -2203,13 +2209,58 @@ class FosseContactView(generics.ListAPIView):
         except (UserDetails.DoesNotExist, Exception):
             pass
         
-        # Apply search filter (annotation already applied above if needed)
+        # Check if we need full_name_search annotation (for search or fullName filter)
+        # MUST be done BEFORE applying search filter
+        # Only apply if not already annotated by forced filters
         search = request.query_params.get('search', '').strip()
+        has_fullname_filter = any(key.startswith('filter_fullName') for key in request.query_params.keys())
+        
+        # Track if phone annotations are needed for search
+        phone_annotations_needed = bool(search)
+        
+        # Apply full_name_search annotation if needed (for search or fullName filter)
+        if (search or has_fullname_filter) and not full_name_search_annotated:
+            # Apply annotation once for both search and fullName filter
+            if search:
+                # Include phone annotations when searching
+                queryset = queryset.annotate(
+                    full_name_search=Concat(
+                        Coalesce('fname', Value('')), 
+                        Value(' '), 
+                        Coalesce('lname', Value(''))
+                    ),
+                    phone_str=Cast('phone', CharField()),
+                    mobile_str=Cast('mobile', CharField())
+                )
+                phone_annotations_needed = False  # Already added
+            else:
+                queryset = queryset.annotate(
+                    full_name_search=Concat(
+                        Coalesce('fname', Value('')), 
+                        Value(' '), 
+                        Coalesce('lname', Value(''))
+                    )
+                )
+            full_name_search_annotated = True
+        
+        # If search exists and phone annotations weren't added above (because full_name_search was already annotated),
+        # add phone annotations separately
+        if phone_annotations_needed:
+            queryset = queryset.annotate(
+                phone_str=Cast('phone', CharField()),
+                mobile_str=Cast('mobile', CharField())
+            )
+        
+        # Apply search filter (annotation must be applied above if needed)
         if search:
-            # Search in combined full name (same logic as fullName filter) and email
+            # Remove spaces from search value for phone number matching
+            phone_search = ''.join(str(search).split())
+            # Search in combined full name, email, and phone numbers (same as regular ContactView)
             queryset = queryset.filter(
                 models.Q(full_name_search__icontains=search) |
-                models.Q(email__icontains=search)
+                models.Q(email__icontains=search) |
+                models.Q(phone_str__contains=phone_search) |
+                models.Q(mobile_str__contains=phone_search)
             )
         
         # Apply team filter (filter by creator's team for Fosse contacts)
@@ -2226,19 +2277,6 @@ class FosseContactView(generics.ListAPIView):
         status_type = request.query_params.get('status_type')
         if status_type and status_type != 'all':
             queryset = queryset.filter(status__type=status_type)
-        
-        # Check if we need full_name_search annotation (for search or fullName filter)
-        search = request.query_params.get('search', '').strip()
-        has_fullname_filter = any(key.startswith('filter_fullName') for key in request.query_params.keys())
-        if search or has_fullname_filter:
-            # Apply annotation once for both search and fullName filter
-            queryset = queryset.annotate(
-                full_name_search=Concat(
-                    Coalesce('fname', Value('')), 
-                    Value(' '), 
-                    Coalesce('lname', Value(''))
-                )
-            )
         
         # Apply column filters (similar to ContactView but with Fosse-specific handling)
         date_range_filters = {}
@@ -2787,6 +2825,37 @@ class FosseContactView(generics.ListAPIView):
             'total': total_count,
             'limit': DEFAULT_LIMIT
         })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def contacts_assigned_today_count(request):
+    """Get count of contacts assigned to current user today"""
+    try:
+        from django.utils import timezone
+        from datetime import datetime, time
+        
+        # Get current user
+        user = request.user
+        
+        # Get today's date range (start of day to end of day)
+        today = timezone.now().date()
+        today_start = timezone.make_aware(datetime.combine(today, time.min))
+        today_end = timezone.make_aware(datetime.combine(today, time.max))
+        
+        # Count contacts assigned to current user today
+        # Filter by teleoperator = current user AND assigned_at is today
+        count = Contact.objects.filter(
+            teleoperator=user,
+            assigned_at__gte=today_start,
+            assigned_at__lte=today_end
+        ).count()
+        
+        return Response({'count': count}, status=status.HTTP_200_OK)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error getting today's assigned contacts count: {e}")
+        return Response({'error': str(e), 'count': 0}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

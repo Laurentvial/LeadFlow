@@ -42,11 +42,49 @@ export function ContactSearchBar() {
     // Debounce the search
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const response = await apiCall(
-          `/api/contacts/?search=${encodeURIComponent(searchQuery.trim())}&page_size=10`
+        // Search both regular contacts and fosse contacts
+        const [regularResponse, fosseResponse] = await Promise.all([
+          apiCall(
+            `/api/contacts/?search=${encodeURIComponent(searchQuery.trim())}&page_size=10`
+          ).catch((err) => {
+            console.error('Error searching regular contacts:', err);
+            return null;
+          }),
+          apiCall(
+            `/api/contacts/fosse/?search=${encodeURIComponent(searchQuery.trim())}&page_size=10`
+          ).catch((err) => {
+            console.error('Error searching fosse contacts:', err);
+            return null;
+          })
+        ]);
+
+        // Extract results from both responses
+        // Regular contacts endpoint returns { contacts: [...], total: ..., ... }
+        // Fosse contacts endpoint returns { contacts: [...], total: ..., ... }
+        const regularResults = Array.isArray(regularResponse?.contacts) 
+          ? regularResponse.contacts 
+          : Array.isArray(regularResponse?.results) 
+          ? regularResponse.results 
+          : Array.isArray(regularResponse) 
+          ? regularResponse 
+          : [];
+        
+        const fosseResults = Array.isArray(fosseResponse?.contacts) 
+          ? fosseResponse.contacts 
+          : Array.isArray(fosseResponse?.results) 
+          ? fosseResponse.results 
+          : Array.isArray(fosseResponse) 
+          ? fosseResponse 
+          : [];
+
+        // Combine results and remove duplicates based on contact ID
+        const allResults = [...regularResults, ...fosseResults];
+        const uniqueResults = allResults.filter((contact, index, self) =>
+          index === self.findIndex((c) => c.id === contact.id)
         );
-        const results = response?.contacts || response || [];
-        setSearchResults(results);
+
+        // Limit to 10 results total
+        setSearchResults(uniqueResults.slice(0, 10));
       } catch (error: any) {
         console.error('Error searching contacts:', error);
         setSearchResults([]);

@@ -25,6 +25,7 @@ urlpatterns = [
     path('contacts/integration-update/', api_views.contacts_integration_update, name='contacts-integration-update'),
     path('contacts/migration/missing/', api_views.contacts_migration_missing, name='contacts-migration-missing'),
     path('contacts/by-old-ids/', api_views.contacts_by_old_ids, name='contacts-by-old-ids'),
+    path('contacts/assigned-today-count/', api_views.contacts_assigned_today_count, name='contacts-assigned-today-count'),
     # TEMPORARY: Delete all contacts endpoint - REMOVE AFTER USE (must be before generic contact_id route)
     path('contacts/delete-all/', api_views.delete_all_contacts, name='delete-all-contacts'),
     path('contacts/<str:contact_id>/', api_views.contact_detail, name='contact-detail'),
