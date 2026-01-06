@@ -2832,22 +2832,19 @@ def contacts_assigned_today_count(request):
     """Get count of contacts assigned to current user today"""
     try:
         from django.utils import timezone
-        from datetime import datetime, time
         
         # Get current user
         user = request.user
         
-        # Get today's date range (start of day to end of day)
+        # Get today's date (based on day only, ignoring time)
         today = timezone.now().date()
-        today_start = timezone.make_aware(datetime.combine(today, time.min))
-        today_end = timezone.make_aware(datetime.combine(today, time.max))
         
         # Count contacts assigned to current user today
-        # Filter by teleoperator = current user AND assigned_at is today
+        # Filter by teleoperator = current user AND assigned_at date is today
+        # Using __date lookup compares only the date part, ignoring time
         count = Contact.objects.filter(
             teleoperator=user,
-            assigned_at__gte=today_start,
-            assigned_at__lte=today_end
+            assigned_at__date=today
         ).count()
         
         return Response({'count': count}, status=status.HTTP_200_OK)
@@ -9547,13 +9544,35 @@ def document_upload(request):
         if not contact_id or not document_type:
             return Response({'error': 'contactId and documentType are required'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Configure S3 client for Impossible Cloud
+        # Validate file size (max 10MB) - reject before starting upload
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        if file.size > MAX_FILE_SIZE:
+            file_size_mb = file.size / 1024 / 1024
+            return Response({
+                'error': f'File too large ({file_size_mb:.2f} MB). Maximum size: 10 MB'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if file is empty
+        if file.size == 0:
+            return Response({'error': 'File is empty'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Configure S3 client for Impossible Cloud with reasonable timeouts
+        # Note: These timeouts apply per HTTP request, not the entire upload
+        # For a 10MB file, the upload should complete within reasonable time
+        from botocore.config import Config
+        s3_config = Config(
+            connect_timeout=10,  # 10 seconds to establish connection
+            read_timeout=30,     # 30 seconds per read operation (allows for slower connections)
+            retries={'max_attempts': 2}  # Allow 2 retries for transient errors
+        )
+        
         s3_client = boto3.client(
             's3',
             endpoint_url=os.getenv('IMPOSSIBLE_CLOUD_ENDPOINT', 'https://eu-central-2.storage.impossibleapi.net'),
             aws_access_key_id=os.getenv('IMPOSSIBLE_CLOUD_ACCESS_KEY'),
             aws_secret_access_key=os.getenv('IMPOSSIBLE_CLOUD_SECRET_KEY'),
-            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2')
+            region_name=os.getenv('IMPOSSIBLE_CLOUD_REGION', 'eu-central-2'),
+            config=s3_config
         )
         
         bucket_name = os.getenv('IMPOSSIBLE_CLOUD_BUCKET', 'leadflow-documents')
@@ -9586,11 +9605,31 @@ def document_upload(request):
     except ClientError as e:
         import traceback
         error_details = traceback.format_exc()
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', str(e))
+        
+        # Check for timeout errors
+        if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+            return Response({
+                'error': 'Upload timeout. File may be too large or connection too slow. Maximum file size: 10 MB'
+            }, status=status.HTTP_408_REQUEST_TIMEOUT)
+        
         print(f"Error uploading to Impossible Cloud: {error_details}")
-        return Response({'error': f'Failed to upload file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'error': f'Failed to upload file: {error_message}',
+            'errorCode': error_code
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
+        
+        # Check for timeout or connection errors
+        error_str = str(e).lower()
+        if 'timeout' in error_str or 'timed out' in error_str:
+            return Response({
+                'error': 'Upload timeout. File may be too large or connection too slow. Maximum file size: 10 MB'
+            }, status=status.HTTP_408_REQUEST_TIMEOUT)
+        
         print(f"Error uploading document: {error_details}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

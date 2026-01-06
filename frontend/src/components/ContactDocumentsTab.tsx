@@ -119,6 +119,22 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
       return;
     }
 
+    // Validate file size (max 10MB)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      const fileSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
+      toast.error(`Le fichier est trop volumineux (${fileSizeMB} MB). Taille maximale: 10 MB`);
+      setSelectedFile(null);
+      return;
+    }
+
+    // Check if file is empty
+    if (selectedFile.size === 0) {
+      toast.error('Le fichier est vide');
+      setSelectedFile(null);
+      return;
+    }
+
     try {
       setUploading(true);
       
@@ -302,14 +318,37 @@ export function ContactDocumentsTab({ contactId }: ContactDocumentsTabProps) {
                 </Select>
               </div>
               <div className="modal-form-field">
-                <Label htmlFor="file-upload">Fichier</Label>
+                <Label htmlFor="file-upload">Fichier (max 10 MB)</Label>
                 <Input
                   id="file-upload"
                   type="file"
                   accept="image/*,.pdf"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    setSelectedFile(file || null);
+                    if (!file) {
+                      setSelectedFile(null);
+                      return;
+                    }
+                    
+                    // Validate file size (max 10MB)
+                    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+                    if (file.size > MAX_FILE_SIZE) {
+                      const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+                      toast.error(`Le fichier est trop volumineux (${fileSizeMB} MB). Taille maximale: 10 MB`);
+                      e.target.value = ''; // Reset file input
+                      setSelectedFile(null);
+                      return;
+                    }
+                    
+                    // Check if file is empty
+                    if (file.size === 0) {
+                      toast.error('Le fichier est vide');
+                      e.target.value = ''; // Reset file input
+                      setSelectedFile(null);
+                      return;
+                    }
+                    
+                    setSelectedFile(file);
                   }}
                   disabled={uploading}
                 />

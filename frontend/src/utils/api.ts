@@ -141,13 +141,37 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     headers['Connection'] = 'keep-alive';
     
     // Add timeout for production to prevent hanging requests
-    // Use longer timeout for CSV import (10 minutes), email sending (60 seconds), contacts list (2 minutes), file uploads (120 seconds) vs regular requests (30 seconds)
+    // Maximum timeout is 10 seconds as requested - file size should be validated before upload
+    // Use longer timeout only for CSV import (10 minutes), email sending (60 seconds), contacts list (dynamic based on page_size) vs regular requests (10 seconds)
     const isImportRequest = endpoint.includes('/csv-import/');
     const isEmailSendRequest = endpoint.includes('/emails/send/') || endpoint.includes('/emails/fetch/');
-    const isContactsListRequest = endpoint.includes('/api/contacts/') && !endpoint.includes('/csv-import');
-    // Detect file upload requests - check for FormData or upload endpoints
-    const isFileUploadRequest = isFormData || endpoint.includes('/upload') || endpoint.includes('/upload-logo/') || endpoint.includes('/document-upload/') || endpoint.includes('/documents/upload/');
-    const timeoutDuration = isImportRequest ? 600000 : (isFileUploadRequest ? 120000 : (isEmailSendRequest ? 60000 : (isContactsListRequest ? 120000 : 30000))); // 10 min for imports, 2 min for file uploads, 60 sec for email operations, 2 min for contacts list, 30 sec otherwise
+    // Only match the actual list endpoint: /api/contacts/ (with optional query params)
+    // Exclude endpoints like /api/contacts/create/, /api/contacts/assigned-today-count/, etc.
+    const isContactsListRequest = (endpoint === '/api/contacts/' || endpoint.startsWith('/api/contacts/?')) && !endpoint.includes('/csv-import');
+    
+    // For contacts list requests, dynamically adjust timeout based on page_size
+    let timeoutDuration = 10000; // Default 10 seconds
+    if (isImportRequest) {
+      timeoutDuration = 600000; // 10 min for imports
+    } else if (isEmailSendRequest) {
+      timeoutDuration = 60000; // 60 sec for email operations
+    } else if (isContactsListRequest) {
+      // Extract page_size from endpoint URL
+      const pageSizeMatch = endpoint.match(/[?&]page_size=(\d+)/);
+      const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : null;
+      
+      // Dynamic timeout based on page_size:
+      // - 10-100 items: 2 minutes (120000ms)
+      // - 200-500 items: 3 minutes (180000ms)
+      // - 1000+ items: 5 minutes (300000ms)
+      if (pageSize && pageSize >= 1000) {
+        timeoutDuration = 300000; // 5 minutes for 1000+ items
+      } else if (pageSize && pageSize >= 200) {
+        timeoutDuration = 180000; // 3 minutes for 200-999 items
+      } else {
+        timeoutDuration = 120000; // 2 minutes for smaller page sizes (default)
+      }
+    }
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
     
@@ -164,7 +188,11 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        const timeoutError = new Error('Délai d\'attente dépassé - veuillez vérifier votre connexion');
+        // Timeout error - file size should have been validated before upload
+        const timeoutMessage = isFormData 
+          ? 'Délai d\'attente dépassé. Le fichier est peut-être trop volumineux. Veuillez vérifier la taille du fichier et réessayer avec un fichier plus petit.'
+          : 'Délai d\'attente dépassé - veuillez vérifier votre connexion';
+        const timeoutError = new Error(timeoutMessage);
         (timeoutError as any).status = 408;
         throw timeoutError;
       }
@@ -272,9 +300,31 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
           retryHeaders['Content-Type'] = 'application/json';
         }
         
-        // Add timeout for retry as well
+        // Add timeout for retry as well - use same logic as initial request
         const retryController = new AbortController();
-        const retryTimeoutDuration = isImportRequest ? 600000 : (isEmailSendRequest ? 60000 : (isContactsListRequest ? 120000 : 30000));
+        // Recalculate timeout duration for retry (same logic as initial request)
+        let retryTimeoutDuration = 10000; // Default 10 seconds
+        if (isImportRequest) {
+          retryTimeoutDuration = 600000; // 10 min for imports
+        } else if (isEmailSendRequest) {
+          retryTimeoutDuration = 60000; // 60 sec for email operations
+        } else if (isContactsListRequest) {
+          // Extract page_size from endpoint URL
+          const pageSizeMatch = endpoint.match(/[?&]page_size=(\d+)/);
+          const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : null;
+          
+          // Dynamic timeout based on page_size:
+          // - 10-100 items: 2 minutes (120000ms)
+          // - 200-500 items: 3 minutes (180000ms)
+          // - 1000+ items: 5 minutes (300000ms)
+          if (pageSize && pageSize >= 1000) {
+            retryTimeoutDuration = 300000; // 5 minutes for 1000+ items
+          } else if (pageSize && pageSize >= 200) {
+            retryTimeoutDuration = 180000; // 3 minutes for 200-999 items
+          } else {
+            retryTimeoutDuration = 120000; // 2 minutes for smaller page sizes (default)
+          }
+        }
         const retryTimeoutId = setTimeout(() => retryController.abort(), retryTimeoutDuration);
         
         try {
@@ -290,7 +340,10 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
         } catch (retryError: any) {
           clearTimeout(retryTimeoutId);
           if (retryError.name === 'AbortError') {
-            const timeoutError = new Error('Délai d\'attente dépassé - veuillez vérifier votre connexion');
+            const timeoutMessage = isFormData 
+              ? 'Délai d\'attente dépassé. Le fichier est peut-être trop volumineux. Veuillez vérifier la taille du fichier et réessayer avec un fichier plus petit.'
+              : 'Délai d\'attente dépassé - veuillez vérifier votre connexion';
+            const timeoutError = new Error(timeoutMessage);
             (timeoutError as any).status = 408;
             throw timeoutError;
           }

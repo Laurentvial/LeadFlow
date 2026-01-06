@@ -1517,9 +1517,33 @@ export function ContactInfoTab({
     }
   }
 
+  // Helper function to validate file before upload
+  function validateFile(file: File): boolean {
+    // Validate file size (max 10MB)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+      toast.error(`Le fichier est trop volumineux (${fileSizeMB} MB). Taille maximale: 10 MB`);
+      return false;
+    }
+
+    // Check if file is empty
+    if (file.size === 0) {
+      toast.error('Le fichier est vide');
+      return false;
+    }
+
+    return true;
+  }
+
   async function handleDocumentUpload(documentType: string, file: File) {
     if (!contactId) {
       toast.error('Contact ID manquant');
+      return;
+    }
+
+    // Validate file before upload
+    if (!validateFile(file)) {
       return;
     }
 
@@ -4792,7 +4816,10 @@ export function ContactInfoTab({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          handleDocumentUpload('CNI', file);
+                          // Validate file before upload
+                          if (validateFile(file)) {
+                            handleDocumentUpload('CNI', file);
+                          }
                           // Reset input
                           if (e.target) {
                             e.target.value = '';
@@ -4841,7 +4868,10 @@ export function ContactInfoTab({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          handleDocumentUpload('JUSTIFICATIF_DOMICILE', file);
+                          // Validate file before upload
+                          if (validateFile(file)) {
+                            handleDocumentUpload('JUSTIFICATIF_DOMICILE', file);
+                          }
                           if (e.target) {
                             e.target.value = '';
                           }
@@ -4889,7 +4919,10 @@ export function ContactInfoTab({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          handleDocumentUpload('SELFIE', file);
+                          // Validate file before upload
+                          if (validateFile(file)) {
+                            handleDocumentUpload('SELFIE', file);
+                          }
                           if (e.target) {
                             e.target.value = '';
                           }
@@ -4937,7 +4970,10 @@ export function ContactInfoTab({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          handleDocumentUpload('RIB', file);
+                          // Validate file before upload
+                          if (validateFile(file)) {
+                            handleDocumentUpload('RIB', file);
+                          }
                           if (e.target) {
                             e.target.value = '';
                           }
@@ -4985,7 +5021,10 @@ export function ContactInfoTab({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          handleDocumentUpload('CONTRAT', file);
+                          // Validate file before upload
+                          if (validateFile(file)) {
+                            handleDocumentUpload('CONTRAT', file);
+                          }
                           if (e.target) {
                             e.target.value = '';
                           }
