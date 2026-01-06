@@ -1788,7 +1788,7 @@ class ContactView(generics.ListAPIView):
         class DefaultContactPagination(PageNumberPagination):
             page_size = 50  # Default page size matching frontend default
             page_size_query_param = 'page_size'
-            max_page_size = 500  # Max 500 to prevent Heroku 30-second timeout
+            max_page_size = 1000  # Max 1000 per page
         
         self.pagination_class = DefaultContactPagination
         queryset = self.get_queryset()
