@@ -2130,10 +2130,12 @@ class TransactionSerializer(serializers.ModelSerializer):
     ribText = serializers.SerializerMethodField()
     createdBy = serializers.SerializerMethodField()
     contactName = serializers.SerializerMethodField()
+    teleoperatorName = serializers.SerializerMethodField()
+    confirmateurName = serializers.SerializerMethodField()
     
     class Meta:
         model = Transaction
-        fields = ['id', 'contactId', 'type', 'status', 'payment_type', 'ribId', 'ribText', 'rib', 'amount', 'date', 'comment', 'created_by', 'createdBy', 'contactName', 'created_at', 'updated_at']
+        fields = ['id', 'contactId', 'type', 'status', 'payment_type', 'ribId', 'ribText', 'rib', 'amount', 'date', 'comment', 'created_by', 'createdBy', 'contactName', 'teleoperatorName', 'confirmateurName', 'created_at', 'updated_at']
         extra_kwargs = {
             'id': {'required': False},
             'created_by': {'read_only': True},
@@ -2155,6 +2157,26 @@ class TransactionSerializer(serializers.ModelSerializer):
         if obj.contact:
             name = f"{obj.contact.fname or ''} {obj.contact.lname or ''}".strip()
             return name if name else None
+        return None
+    
+    def get_teleoperatorName(self, obj):
+        """Get the teleoperator's name from the contact"""
+        if obj.contact and obj.contact.teleoperator:
+            first_name = obj.contact.teleoperator.first_name or ''
+            last_name = obj.contact.teleoperator.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.contact.teleoperator.username or ''
+        return None
+    
+    def get_confirmateurName(self, obj):
+        """Get the confirmateur's name from the contact"""
+        if obj.contact and obj.contact.confirmateur:
+            first_name = obj.contact.confirmateur.first_name or ''
+            last_name = obj.contact.confirmateur.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return obj.contact.confirmateur.username or ''
         return None
     
     def get_ribText(self, obj):

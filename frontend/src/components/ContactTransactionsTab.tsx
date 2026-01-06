@@ -109,21 +109,21 @@ export function ContactTransactionsTab({ contactId }: ContactTransactionsTabProp
     return labels[status] || status;
   }
 
-  function getStatusColor(status: string): string {
-    const colors: { [key: string]: string } = {
-      'pending': 'bg-yellow-100 text-yellow-800',
-      'completed': 'bg-green-100 text-green-800',
-      'cancelled': 'bg-gray-100 text-gray-800',
-      'failed': 'bg-red-100 text-red-800',
-      'to_verify': 'bg-blue-100 text-blue-800'
+  function getStatusColor(status: string): React.CSSProperties {
+    const colors: { [key: string]: React.CSSProperties } = {
+      'pending': { backgroundColor: '#dbeafe', color: '#000000' }, // blue-100 - En attente
+      'completed': { backgroundColor: '#bbf7d0', color: '#000000' }, // green-200 - Terminé
+      'cancelled': { backgroundColor: '#fee2e2', color: '#000000' }, // red-100 - Annulé
+      'failed': { backgroundColor: '#f3e8ff', color: '#000000' }, // purple-100 - Échoué
+      'to_verify': { backgroundColor: '#ffedd5', color: '#000000' } // orange-100 - A vérifier
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return colors[status] || { backgroundColor: '#f3f4f6', color: '#000000' };
   }
 
-  function getTypeColor(type: string): string {
-    if (type === 'Depot') return 'bg-blue-100 text-blue-800';
-    if (type === 'Ouverture') return 'bg-purple-100 text-purple-800';
-    return 'bg-orange-100 text-orange-800'; // Retrait
+  function getTypeColor(type: string): React.CSSProperties {
+    if (type === 'Depot') return { backgroundColor: '#bbf7d0', color: '#000000' }; // green-200 - Depot
+    if (type === 'Ouverture') return { backgroundColor: '#ffedd5', color: '#000000' }; // orange-100 - Ouverture
+    return { backgroundColor: '#dbeafe', color: '#000000' }; // blue-100 - Retrait
   }
 
   return (
@@ -143,15 +143,15 @@ export function ContactTransactionsTab({ contactId }: ContactTransactionsTabProp
               >
                 <div className="space-y-2">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${getTypeColor(transaction.type)}`}>
+                      <span className="px-2 py-1 rounded text-xs font-medium inline-block" style={getTypeColor(transaction.type)}>
                         {transaction.type}
                       </span>
                       {transaction.bonus && (
-                        <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                        <span className="px-2 py-1 rounded text-xs font-medium inline-block" style={{ backgroundColor: '#f3e8ff', color: '#000000' }}>
                           Bonus
                         </span>
                       )}
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(transaction.status)}`}>
+                      <span className="px-2 py-1 rounded text-xs font-medium inline-block" style={getStatusColor(transaction.status)}>
                         {getStatusLabel(transaction.status)}
                       </span>
                     </div>

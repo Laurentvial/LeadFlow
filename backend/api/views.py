@@ -8597,7 +8597,7 @@ def transaction_list(request):
         # User has permission, return transactions for this contact with pagination support
         # Note: Using contact_id=contact_id (not contact=contact_id) to filter by ForeignKey ID value directly
         # This is the correct Django ORM syntax when filtering by ID (string) rather than model instance
-        transactions = Transaction.objects.filter(contact_id=contact_id).select_related('contact', 'created_by').order_by('-date', '-created_at')
+        transactions = Transaction.objects.filter(contact_id=contact_id).select_related('contact', 'contact__teleoperator', 'contact__confirmateur', 'created_by').order_by('-date', '-created_at')
         
         # Apply pagination if requested
         if requested_page or requested_page_size:
@@ -8647,7 +8647,7 @@ def transaction_list(request):
                 
                 if data_access == 'all':
                     # User has access to all contacts, so show all transactions
-                    transactions = Transaction.objects.all().select_related('contact', 'created_by')
+                    transactions = Transaction.objects.all().select_related('contact', 'contact__teleoperator', 'contact__confirmateur', 'created_by')
                 elif data_access == 'team_only':
                     # Get user's team members
                     team_member = user_details.team_memberships.first()
@@ -8667,7 +8667,7 @@ def transaction_list(request):
                         # Return transactions for accessible contacts
                         transactions = Transaction.objects.filter(
                             contact__id__in=accessible_contact_ids
-                        ).select_related('contact', 'created_by')
+                        ).select_related('contact', 'contact__teleoperator', 'contact__confirmateur', 'created_by')
                     else:
                         # User has no team, fall back to own_only behavior
                         is_teleoperateur = user_details.role.is_teleoperateur
@@ -8690,7 +8690,7 @@ def transaction_list(request):
                             ).values_list('id', flat=True)
                         transactions = Transaction.objects.filter(
                             contact__id__in=accessible_contact_ids
-                        ).select_related('contact', 'created_by')
+                        ).select_related('contact', 'contact__teleoperator', 'contact__confirmateur', 'created_by')
                 else:  # own_only
                     # Show transactions where the contact is assigned to the user (teleoperateur or confirmateur)
                     accessible_contact_ids = Contact.objects.filter(
@@ -8700,7 +8700,7 @@ def transaction_list(request):
                     
                     transactions = Transaction.objects.filter(
                         contact__id__in=accessible_contact_ids
-                    ).select_related('contact', 'created_by')
+                    ).select_related('contact', 'contact__teleoperator', 'contact__confirmateur', 'created_by')
             else:
                 # User has no role, show no transactions (safety default)
                 transactions = Transaction.objects.none()
@@ -8731,14 +8731,14 @@ def transaction_list(request):
         if page_size < 1:
             page_size = 20
         
-        def create_transaction_pagination(page_size_val):
+        def create_transaction_pagination(page_size_val, max_size):
             class TransactionPagination(PageNumberPagination):
                 page_size = page_size_val
                 page_size_query_param = 'page_size'
-                max_page_size = max_page_size
+                max_page_size = max_size
             return TransactionPagination
         
-        TransactionPagination = create_transaction_pagination(page_size)
+        TransactionPagination = create_transaction_pagination(page_size, max_page_size)
         paginator = TransactionPagination()
         paginated_transactions = paginator.paginate_queryset(transactions, request)
         

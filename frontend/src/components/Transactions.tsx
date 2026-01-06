@@ -34,6 +34,8 @@ interface Transaction {
   date: string;
   comment: string;
   createdBy: string;
+  teleoperatorName: string | null;
+  confirmateurName: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -477,15 +479,15 @@ export function Transactions() {
     return labels[status] || status;
   };
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      completed: 'bg-green-100 text-green-800',
-      cancelled: 'bg-gray-100 text-gray-800',
-      failed: 'bg-red-100 text-red-800',
-      to_verify: 'bg-blue-100 text-blue-800',
+  const getStatusColor = (status: string): React.CSSProperties => {
+    const colors: Record<string, React.CSSProperties> = {
+      pending: { backgroundColor: '#dbeafe', color: '#000000' }, // blue-100 - En attente
+      completed: { backgroundColor: '#bbf7d0', color: '#000000' }, // green-200 - Terminé
+      cancelled: { backgroundColor: '#fee2e2', color: '#000000' }, // red-100 - Annulé
+      failed: { backgroundColor: '#f3e8ff', color: '#000000' }, // purple-100 - Échoué
+      to_verify: { backgroundColor: '#ffedd5', color: '#000000' }, // orange-100 - A vérifier
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return colors[status] || { backgroundColor: '#f3f4f6', color: '#000000' };
   };
 
   const formatDate = (dateString: string) => {
@@ -595,8 +597,8 @@ export function Transactions() {
           Aucune transaction trouvée
         </div>
       ) : (
-        <div className="border rounded-none overflow-hidden">
-          <table className="w-full">
+        <div className="border rounded-none overflow-x-auto">
+          <table className="w-full min-w-max">
             <thead className="bg-muted">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium">Date</th>
@@ -605,9 +607,12 @@ export function Transactions() {
                 <th className="px-4 py-3 text-left text-sm font-medium">Mode de paiement</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">RIB</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Montant</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Statut</th>
+                <th className="px-4 py-3 text-left text-sm font-medium min-w-[140px]">Statut</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Commentaire</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Téléopérateur</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Confirmateur</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Créé par</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Mis à jour le</th>
                 {(canEdit || canDelete) && (
                   <th className="px-4 py-3 text-right text-sm font-medium">Actions</th>
                 )}
@@ -625,13 +630,16 @@ export function Transactions() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      transaction.type === 'Depot' 
-                        ? 'bg-blue-100 text-blue-800' 
-                        : transaction.type === 'Ouverture'
-                        ? 'bg-purple-100 text-purple-800'
-                        : 'bg-orange-100 text-orange-800'
-                    }`}>
+                    <span 
+                      className="px-2 py-1 rounded text-xs inline-block"
+                      style={
+                        transaction.type === 'Depot' 
+                          ? { backgroundColor: '#bbf7d0', color: '#000000' } // green-200 - Depot
+                          : transaction.type === 'Ouverture'
+                          ? { backgroundColor: '#ffedd5', color: '#000000' } // orange-100 - Ouverture
+                          : { backgroundColor: '#dbeafe', color: '#000000' } // blue-100 - Retrait
+                      }
+                    >
                       {transaction.type}
                     </span>
                   </td>
@@ -642,15 +650,24 @@ export function Transactions() {
                     {transaction.ribText || '-'}
                   </td>
                   <td className="px-4 py-3 text-sm font-medium">{formatAmount(transaction.amount)}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className={`px-2 py-1 rounded text-xs ${getStatusColor(transaction.status)}`}>
+                  <td className="px-4 py-3 text-sm min-w-[140px]">
+                    <span className="px-2 py-1 rounded text-xs inline-block whitespace-nowrap" style={getStatusColor(transaction.status)}>
                       {getStatusLabel(transaction.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
                     {transaction.comment || '-'}
                   </td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">
+                    {transaction.teleoperatorName || '-'}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">
+                    {transaction.confirmateurName || '-'}
+                  </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">{transaction.createdBy || '-'}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">
+                    {transaction.updated_at ? formatDate(transaction.updated_at) : '-'}
+                  </td>
                   {(canEdit || canDelete) && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-2">
