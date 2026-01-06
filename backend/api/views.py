@@ -1684,11 +1684,10 @@ class ContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 500 per page to prevent Heroku timeout)
-            # Heroku has a 30-second HTTP timeout, and large page sizes with complex filters
-            # can exceed this limit, causing requests to fail with CORS errors
-            # Large page sizes also cause slow queries, massive serialization, and ASGI shutdown issues
-            MAX_PAGE_SIZE = 500
+            # Ensure reasonable page size (max 1000 per page)
+            # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
+            # The queryset is optimized with select_related/prefetch_related to minimize database queries
+            MAX_PAGE_SIZE = 1000
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
@@ -1717,8 +1716,15 @@ class ContactView(generics.ListAPIView):
             
             # PERFORMANCE FIX: Don't call queryset.count() here - it's slow for large datasets
             # DRF's pagination already handles counting efficiently, so we rely on that
+            # For very large datasets, optimize by deferring heavy fields
             # Only calculate count if needed for debugging (disabled by default)
             try:
+                # Optimize: Use defer() to skip heavy fields for large page sizes
+                # This reduces memory usage and serialization time
+                # Note: notes and logs are prefetched separately, so deferring them here is safe
+                if page_size >= 500:
+                    queryset = queryset.defer('notes', 'logs')
+                
                 response = super().list(request, *args, **kwargs)
                 
                 # Use pagination's count directly - it's already optimized
@@ -1739,8 +1745,8 @@ class ContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 500 to prevent Heroku 30-second timeout)
-                MAX_LIMIT = 500
+                # Ensure limit is reasonable (max 1000)
+                MAX_LIMIT = 1000
                 if limit > MAX_LIMIT:
                     limit = MAX_LIMIT
                 if limit < 1:
@@ -2680,10 +2686,9 @@ class FosseContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 500 per page to prevent Heroku timeout)
-            # Heroku has a 30-second HTTP timeout, and large page sizes with complex filters
-            # can exceed this limit, causing requests to fail with CORS errors
-            MAX_PAGE_SIZE = 500
+            # Ensure reasonable page size (max 1000 per page)
+            # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
+            MAX_PAGE_SIZE = 1000
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
@@ -2743,8 +2748,8 @@ class FosseContactView(generics.ListAPIView):
         if limit:
             try:
                 limit = int(limit)
-                # Ensure limit is reasonable (max 500 to prevent Heroku 30-second timeout)
-                MAX_LIMIT = 500
+                # Ensure limit is reasonable (max 1000)
+                MAX_LIMIT = 1000
                 if limit > MAX_LIMIT:
                     limit = MAX_LIMIT
                 if limit < 1:
