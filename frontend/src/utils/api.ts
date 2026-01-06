@@ -145,9 +145,15 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     // Use longer timeout only for CSV import (10 minutes), email sending (60 seconds), contacts list (dynamic based on page_size) vs regular requests (10 seconds)
     const isImportRequest = endpoint.includes('/csv-import/');
     const isEmailSendRequest = endpoint.includes('/emails/send/') || endpoint.includes('/emails/fetch/');
-    // Only match the actual list endpoint: /api/contacts/ (with optional query params)
+    // Only match the actual list endpoints: /api/contacts/ and /api/contacts/fosse/ (with optional query params)
     // Exclude endpoints like /api/contacts/create/, /api/contacts/assigned-today-count/, etc.
-    const isContactsListRequest = (endpoint === '/api/contacts/' || endpoint.startsWith('/api/contacts/?')) && !endpoint.includes('/csv-import');
+    // Match pattern: /api/contacts/ or /api/contacts/fosse/ followed by optional query params
+    const isContactsListRequest = (
+      endpoint === '/api/contacts/' || 
+      endpoint.startsWith('/api/contacts/?') ||
+      endpoint === '/api/contacts/fosse/' ||
+      endpoint.startsWith('/api/contacts/fosse/?')
+    ) && !endpoint.includes('/csv-import');
     
     // For contacts list requests, dynamically adjust timeout based on page_size
     let timeoutDuration = 10000; // Default 10 seconds
