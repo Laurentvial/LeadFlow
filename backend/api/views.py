@@ -1740,12 +1740,15 @@ class ContactView(generics.ListAPIView):
                 })
             
             # For smaller page sizes, use normal pagination with count
-            class ContactPagination(PageNumberPagination):
-                page_size = page_size
-                page_size_query_param = 'page_size'
-                max_page_size = MAX_PAGE_SIZE
+            # Create pagination class with captured page_size using closure
+            def create_pagination_class(page_size_value):
+                class ContactPagination(PageNumberPagination):
+                    page_size = page_size_value
+                    page_size_query_param = 'page_size'
+                    max_page_size = MAX_PAGE_SIZE
+                return ContactPagination
             
-            self.pagination_class = ContactPagination
+            self.pagination_class = create_pagination_class(page_size)
             
             try:
                 # For medium page sizes (500-999), still optimize with defer
