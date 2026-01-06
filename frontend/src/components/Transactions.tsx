@@ -25,8 +25,8 @@ interface Transaction {
   id: string;
   contactId: string | null;
   contactName: string | null;
-  type: 'Retrait' | 'Depot';
-  status: 'pending' | 'completed' | 'cancelled' | 'failed';
+  type: 'Retrait' | 'Depot' | 'Ouverture';
+  status: 'pending' | 'completed' | 'cancelled' | 'failed' | 'to_verify';
   payment_type: 'carte' | 'virement' | '';
   ribId: string | null;
   ribText: string | null;
@@ -62,8 +62,8 @@ export function Transactions() {
   
   const [formData, setFormData] = useState({
     contactId: '',
-    type: 'Depot' as 'Retrait' | 'Depot',
-    status: 'pending' as 'pending' | 'completed' | 'cancelled' | 'failed',
+    type: 'Depot' as 'Retrait' | 'Depot' | 'Ouverture',
+    status: 'pending' as 'pending' | 'completed' | 'cancelled' | 'failed' | 'to_verify',
     payment_type: '' as 'carte' | 'virement' | '',
     ribId: '' as string,
     amount: '',
@@ -472,6 +472,7 @@ export function Transactions() {
       completed: 'Terminé',
       cancelled: 'Annulé',
       failed: 'Échoué',
+      to_verify: 'A vérifier',
     };
     return labels[status] || status;
   };
@@ -482,6 +483,7 @@ export function Transactions() {
       completed: 'bg-green-100 text-green-800',
       cancelled: 'bg-gray-100 text-gray-800',
       failed: 'bg-red-100 text-red-800',
+      to_verify: 'bg-blue-100 text-blue-800',
     };
     return colors[status] || 'bg-gray-100 text-gray-800';
   };
@@ -547,6 +549,7 @@ export function Transactions() {
             <SelectItem value="all">Tous les types</SelectItem>
             <SelectItem value="Depot">Dépôt</SelectItem>
             <SelectItem value="Retrait">Retrait</SelectItem>
+            <SelectItem value="Ouverture">Ouverture</SelectItem>
           </SelectContent>
         </Select>
 
@@ -560,6 +563,7 @@ export function Transactions() {
             <SelectItem value="completed">Terminé</SelectItem>
             <SelectItem value="cancelled">Annulé</SelectItem>
             <SelectItem value="failed">Échoué</SelectItem>
+            <SelectItem value="to_verify">A vérifier</SelectItem>
           </SelectContent>
         </Select>
 
@@ -622,7 +626,11 @@ export function Transactions() {
                   </td>
                   <td className="px-4 py-3 text-sm">
                     <span className={`px-2 py-1 rounded text-xs ${
-                      transaction.type === 'Depot' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
+                      transaction.type === 'Depot' 
+                        ? 'bg-blue-100 text-blue-800' 
+                        : transaction.type === 'Ouverture'
+                        ? 'bg-purple-100 text-purple-800'
+                        : 'bg-orange-100 text-orange-800'
                     }`}>
                       {transaction.type}
                     </span>
@@ -800,7 +808,7 @@ export function Transactions() {
                   <Label htmlFor="type">Type *</Label>
                   <Select
                     value={formData.type}
-                    onValueChange={(value) => setFormData({ ...formData, type: value as 'Retrait' | 'Depot' })}
+                    onValueChange={(value) => setFormData({ ...formData, type: value as 'Retrait' | 'Depot' | 'Ouverture' })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -808,6 +816,7 @@ export function Transactions() {
                     <SelectContent>
                       <SelectItem value="Depot">Dépôt</SelectItem>
                       <SelectItem value="Retrait">Retrait</SelectItem>
+                      <SelectItem value="Ouverture">Ouverture</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -826,6 +835,7 @@ export function Transactions() {
                       <SelectItem value="completed">Terminé</SelectItem>
                       <SelectItem value="cancelled">Annulé</SelectItem>
                       <SelectItem value="failed">Échoué</SelectItem>
+                      <SelectItem value="to_verify">A vérifier</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1080,7 +1090,7 @@ export function Transactions() {
                   <Label htmlFor="edit-type">Type *</Label>
                   <Select
                     value={formData.type}
-                    onValueChange={(value) => setFormData({ ...formData, type: value as 'Retrait' | 'Depot' })}
+                    onValueChange={(value) => setFormData({ ...formData, type: value as 'Retrait' | 'Depot' | 'Ouverture' })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1088,6 +1098,7 @@ export function Transactions() {
                     <SelectContent>
                       <SelectItem value="Depot">Dépôt</SelectItem>
                       <SelectItem value="Retrait">Retrait</SelectItem>
+                      <SelectItem value="Ouverture">Ouverture</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1106,6 +1117,7 @@ export function Transactions() {
                       <SelectItem value="completed">Terminé</SelectItem>
                       <SelectItem value="cancelled">Annulé</SelectItem>
                       <SelectItem value="failed">Échoué</SelectItem>
+                      <SelectItem value="to_verify">A vérifier</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

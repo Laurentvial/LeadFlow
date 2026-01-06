@@ -12,8 +12,8 @@ interface ContactTransactionsTabProps {
 interface Transaction {
   id: string;
   contactId: string | null;
-  type: 'Retrait' | 'Depot';
-  status: 'pending' | 'completed' | 'cancelled' | 'failed';
+  type: 'Retrait' | 'Depot' | 'Ouverture';
+  status: 'pending' | 'completed' | 'cancelled' | 'failed' | 'to_verify';
   payment_type: 'carte' | 'virement' | '';
   ribId: string | null;
   ribText: string | null;
@@ -103,7 +103,8 @@ export function ContactTransactionsTab({ contactId }: ContactTransactionsTabProp
       'pending': 'En attente',
       'completed': 'Terminé',
       'cancelled': 'Annulé',
-      'failed': 'Échoué'
+      'failed': 'Échoué',
+      'to_verify': 'A vérifier'
     };
     return labels[status] || status;
   }
@@ -113,13 +114,16 @@ export function ContactTransactionsTab({ contactId }: ContactTransactionsTabProp
       'pending': 'bg-yellow-100 text-yellow-800',
       'completed': 'bg-green-100 text-green-800',
       'cancelled': 'bg-gray-100 text-gray-800',
-      'failed': 'bg-red-100 text-red-800'
+      'failed': 'bg-red-100 text-red-800',
+      'to_verify': 'bg-blue-100 text-blue-800'
     };
     return colors[status] || 'bg-gray-100 text-gray-800';
   }
 
   function getTypeColor(type: string): string {
-    return type === 'Depot' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800';
+    if (type === 'Depot') return 'bg-blue-100 text-blue-800';
+    if (type === 'Ouverture') return 'bg-purple-100 text-purple-800';
+    return 'bg-orange-100 text-orange-800'; // Retrait
   }
 
   return (

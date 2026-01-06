@@ -7304,6 +7304,49 @@ def contact_detail(request, contact_id):
             if 'addressComplement' in request.data:
                 contact.address_complement = request.data.get('addressComplement', '') or ''
             
+            # Update confirmateur email and telephone if provided
+            if 'confirmateur_email' in request.data:
+                confirmateur_email_value = request.data.get('confirmateur_email', '')
+                contact.confirmateur_email = confirmateur_email_value.strip() if confirmateur_email_value else ''
+            elif 'confirmateurEmail' in request.data:
+                # Handle camelCase version from frontend
+                confirmateur_email_value = request.data.get('confirmateurEmail', '')
+                contact.confirmateur_email = confirmateur_email_value.strip() if confirmateur_email_value else ''
+            
+            if 'confirmateur_telephone' in request.data:
+                confirmateur_telephone_value = request.data.get('confirmateur_telephone')
+                # Handle None, empty string, or whitespace-only strings
+                if confirmateur_telephone_value is None or (isinstance(confirmateur_telephone_value, str) and not confirmateur_telephone_value.strip()):
+                    contact.confirmateur_telephone = None
+                else:
+                    try:
+                        # Remove spaces and convert to int (if it's a phone number)
+                        cleaned = ''.join(str(confirmateur_telephone_value).split())
+                        if cleaned:
+                            contact.confirmateur_telephone = cleaned  # Keep as string for phone numbers
+                        else:
+                            contact.confirmateur_telephone = None
+                    except (ValueError, TypeError):
+                        # If conversion fails, keep as string
+                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else None
+            elif 'confirmateurTelephone' in request.data:
+                # Handle camelCase version from frontend
+                confirmateur_telephone_value = request.data.get('confirmateurTelephone')
+                # Handle None, empty string, or whitespace-only strings
+                if confirmateur_telephone_value is None or (isinstance(confirmateur_telephone_value, str) and not confirmateur_telephone_value.strip()):
+                    contact.confirmateur_telephone = None
+                else:
+                    try:
+                        # Remove spaces and convert to int (if it's a phone number)
+                        cleaned = ''.join(str(confirmateur_telephone_value).split())
+                        if cleaned:
+                            contact.confirmateur_telephone = cleaned  # Keep as string for phone numbers
+                        else:
+                            contact.confirmateur_telephone = None
+                    except (ValueError, TypeError):
+                        # If conversion fails, keep as string
+                        contact.confirmateur_telephone = str(confirmateur_telephone_value).strip() if confirmateur_telephone_value else None
+            
             # CRITICAL: Ensure phone and mobile are None (not empty strings) before saving
             # This prevents ValueError when saving to BigIntegerField
             # Check both the attribute value and ensure it's not an empty string

@@ -504,6 +504,7 @@ function ContactList({
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isBulkAssigning, setIsBulkAssigning] = useState(false);
+  const [isSelectingAllPages, setIsSelectingAllPages] = useState(false);
   
   // Pending filters (what user is typing/selecting)
   const [pendingSearchTerm, setPendingSearchTerm] = useState('');
@@ -679,12 +680,15 @@ function ContactList({
     setSelectedNoteCategoryId(categoriesForStatusChange.length > 0 ? categoriesForStatusChange[0].id : '');
   }, [currentUser, categoriesForStatusChange]);
   
-  // Confirmation modal state for status change warning
-  const [isStatusChangeConfirmOpen, setIsStatusChangeConfirmOpen] = useState(false);
+  // Confirmation modal state for bulk actions
+  const [isBulkActionConfirmOpen, setIsBulkActionConfirmOpen] = useState(false);
   const [pendingBulkAction, setPendingBulkAction] = useState<{
-    type: 'teleoperator' | 'confirmateur';
-    value: string;
-    affectedCount: number;
+    type: 'teleoperator' | 'confirmateur' | 'status' | 'delete';
+    value?: string;
+    affectedCount?: number;
+    statusName?: string;
+    teleoperatorName?: string;
+    confirmateurName?: string;
   } | null>(null);
   const [notesPopoverOpen, setNotesPopoverOpen] = useState<string | null>(null);
   const [notesData, setNotesData] = useState<Record<string, any[]>>({});
@@ -1991,6 +1995,113 @@ function ContactList({
     setBulkStatusId('');
   }
 
+  // Function to select all contacts from all pages (respecting filters)
+  async function handleSelectAllPages() {
+    try {
+      setIsSelectingAllPages(true);
+      
+      // Build query parameters with the same filters as loadData
+      const queryParams = new URLSearchParams();
+      
+      // Use maximum page size to minimize API calls
+      const MAX_PAGE_SIZE = 2000;
+      queryParams.append('page_size', MAX_PAGE_SIZE.toString());
+      
+      if (appliedSearchTerm) {
+        queryParams.append('search', appliedSearchTerm);
+      }
+      
+      // On Fosse page, merge forced filters with state filters
+      let filtersToUse = appliedColumnFilters;
+      if (isFossePage) {
+        const refFilters = forcedFiltersAppliedRef.current;
+        const hasRefFilters = Object.keys(refFilters).length > 0;
+        if (hasRefFilters) {
+          filtersToUse = { ...appliedColumnFilters, ...refFilters };
+        }
+      }
+      
+      // Only apply status_type filter if no specific status filter is active
+      const hasStatusFilter = filtersToUse.status && (
+        (Array.isArray(filtersToUse.status) && filtersToUse.status.length > 0) ||
+        (typeof filtersToUse.status === 'string' && filtersToUse.status !== '')
+      );
+      if (!isFossePage && appliedStatusType !== 'all' && !hasStatusFilter) {
+        queryParams.append('status_type', appliedStatusType);
+      }
+      
+      // Add column filters
+      Object.entries(filtersToUse).forEach(([key, value]) => {
+        if (value) {
+          if (Array.isArray(value)) {
+            value.forEach((val) => {
+              queryParams.append(`filter_${key}`, val);
+            });
+          } else if (typeof value === 'string') {
+            queryParams.append(`filter_${key}`, value);
+          } else if (typeof value === 'object' && value !== null) {
+            const dateRange = value as { from?: string; to?: string };
+            if (dateRange.from) {
+              queryParams.append(`filter_${key}_from`, dateRange.from);
+            }
+            if (dateRange.to) {
+              queryParams.append(`filter_${key}_to`, dateRange.to);
+            }
+          }
+        }
+      });
+      
+      // Add ordering parameter
+      let orderToUse: string;
+      if (isFossePage && fosseSettings && !fosseSettingsLoading && fosseSettings.defaultOrder && fosseSettings.defaultOrder !== 'none') {
+        orderToUse = fosseSettings.defaultOrder;
+      } else {
+        orderToUse = selectedOrder;
+      }
+      queryParams.append('order', orderToUse);
+      
+      // Fetch all contacts by paginating through all pages
+      const allContactIds = new Set<string>();
+      let page = 1;
+      let hasMore = true;
+      
+      while (hasMore) {
+        queryParams.set('page', page.toString());
+        const cacheBuster = `&_t=${Date.now()}`;
+        const contactsData = await apiCall(`${apiEndpoint}?${queryParams.toString()}${cacheBuster}`);
+        
+        const contactsList = contactsData.contacts || [];
+        contactsList.forEach((contact: any) => {
+          if (contact.id && canViewContact(contact)) {
+            allContactIds.add(contact.id);
+          }
+        });
+        
+        // Check if there are more pages
+        const totalFromAPI = contactsData.total || contactsData.count || 0;
+        const currentPageSize = contactsList.length;
+        const totalFetched = (page - 1) * MAX_PAGE_SIZE + currentPageSize;
+        
+        if (totalFetched >= totalFromAPI || contactsList.length === 0 || !contactsData.next) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+      
+      // Add all contact IDs to selectedContacts
+      setSelectedContacts(allContactIds);
+      setShowBulkActions(allContactIds.size > 0);
+      
+      toast.success(`${allContactIds.size} contact(s) sélectionné(s)`);
+    } catch (error: any) {
+      console.error('Error selecting all contacts:', error);
+      toast.error(error?.message || 'Erreur lors de la sélection de tous les contacts');
+    } finally {
+      setIsSelectingAllPages(false);
+    }
+  }
+
   const allSelected = displayedContacts.length > 0 && selectedContacts.size === displayedContacts.length;
   const someSelected = selectedContacts.size > 0 && selectedContacts.size < displayedContacts.length;
   
@@ -2997,20 +3108,26 @@ function ContactList({
     // Check if we're clearing teleoperator and if any contacts will become unassigned
     if (teleoperatorId === 'none' || teleoperatorId === '') {
       const affectedCount = countContactsThatWillBecomeUnassigned('teleoperator', teleoperatorId);
-      if (affectedCount > 0) {
-        // Show confirmation modal
-        setPendingBulkAction({
-          type: 'teleoperator',
-          value: teleoperatorIdValue,
-          affectedCount
-        });
-        setIsStatusChangeConfirmOpen(true);
-        return;
-      }
+      // Always show confirmation modal when clearing, regardless of affected count
+      setPendingBulkAction({
+        type: 'teleoperator',
+        value: teleoperatorIdValue,
+        affectedCount
+      });
+      setIsBulkActionConfirmOpen(true);
+      return;
+    } else {
+      // Show confirmation modal for assignment
+      const teleoperator = availableTeleoperateurs.find(t => String(t.id) === String(teleoperatorId));
+      const teleoperatorName = teleoperator ? `${teleoperator.firstName} ${teleoperator.lastName}` : 'le téléopérateur sélectionné';
+      setPendingBulkAction({
+        type: 'teleoperator',
+        value: teleoperatorIdValue,
+        teleoperatorName
+      });
+      setIsBulkActionConfirmOpen(true);
+      return;
     }
-    
-    // Proceed with the action
-    await executeBulkAssignTeleoperator(teleoperatorIdValue);
   }
 
   async function executeBulkAssignTeleoperator(teleoperatorIdValue: string) {
@@ -3050,20 +3167,26 @@ function ContactList({
     // Check if we're clearing confirmateur and if any contacts will become unassigned
     if (confirmateurId === 'none' || confirmateurId === '') {
       const affectedCount = countContactsThatWillBecomeUnassigned('confirmateur', confirmateurId);
-      if (affectedCount > 0) {
-        // Show confirmation modal
-        setPendingBulkAction({
-          type: 'confirmateur',
-          value: confirmateurIdValue,
-          affectedCount
-        });
-        setIsStatusChangeConfirmOpen(true);
-        return;
-      }
+      // Always show confirmation modal when clearing, regardless of affected count
+      setPendingBulkAction({
+        type: 'confirmateur',
+        value: confirmateurIdValue,
+        affectedCount
+      });
+      setIsBulkActionConfirmOpen(true);
+      return;
+    } else {
+      // Show confirmation modal for assignment
+      const confirmateur = confirmateurs.find(c => String(c.id) === String(confirmateurId));
+      const confirmateurName = confirmateur ? `${confirmateur.firstName} ${confirmateur.lastName}` : 'le confirmateur sélectionné';
+      setPendingBulkAction({
+        type: 'confirmateur',
+        value: confirmateurIdValue,
+        confirmateurName
+      });
+      setIsBulkActionConfirmOpen(true);
+      return;
     }
-    
-    // Proceed with the action
-    await executeBulkAssignConfirmateur(confirmateurIdValue);
   }
 
   async function executeBulkAssignConfirmateur(confirmateurIdValue: string) {
@@ -3145,8 +3268,15 @@ function ContactList({
       return;
     }
     
-    // Proceed with the bulk status change
-    await executeBulkStatusChange(statusId);
+    // Show confirmation modal
+    const status = statuses.find(s => String(s.id) === String(statusId));
+    const statusName = status ? status.name : 'le statut sélectionné';
+    setPendingBulkAction({
+      type: 'status',
+      value: statusId,
+      statusName
+    });
+    setIsBulkActionConfirmOpen(true);
   }
 
   async function executeBulkStatusChange(statusId: string) {
@@ -3193,8 +3323,14 @@ function ContactList({
   }
 
   async function handleBulkDelete() {
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer ${selectedContacts.size} contact(s) ? Cette action est irréversible.`)) return;
-    
+    // Show confirmation modal
+    setPendingBulkAction({
+      type: 'delete'
+    });
+    setIsBulkActionConfirmOpen(true);
+  }
+
+  async function executeBulkDelete() {
     setIsDeleting(true);
     try {
       const promises = Array.from(selectedContacts).map(contactId =>
@@ -3487,8 +3623,8 @@ function ContactList({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contactId: selectedContact.id,
-                type: 'Depot',
-                status: 'completed',
+                type: 'Ouverture',
+                status: 'to_verify',
                 payment_type: clientFormData.paiement || '',
                 amount: parseFloat(clientFormData.montantEncaisse),
                 date: dateTime,
@@ -4503,14 +4639,26 @@ function ContactList({
             </div>
           )}
           
+          {/* Pagination Info and Select All Button */}
+          {displayedContacts.length > 0 && (
+            <div className="contacts-pagination-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', marginBottom: totalPages > 1 ? '0.5rem' : '1rem' }}>
+              <span>
+                Affichage de {((currentPage - 1) * itemsPerPage) + 1} à {Math.min(currentPage * itemsPerPage, totalContacts)} sur {totalContacts} contact(s)
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSelectAllPages}
+                disabled={isLoading || isSelectingAllPages}
+              >
+                {isSelectingAllPages ? 'Chargement...' : `Sélectionner tous (${totalContacts})`}
+              </Button>
+            </div>
+          )}
+
           {/* Pagination Controls */}
           {totalPages > 1 && displayedContacts.length > 0 && (
             <div className="contacts-pagination">
-              <div className="contacts-pagination-info">
-                <span>
-                  Affichage de {((currentPage - 1) * itemsPerPage) + 1} à {Math.min(currentPage * itemsPerPage, totalContacts)} sur {totalContacts} contact(s)
-                </span>
-              </div>
               <div className="contacts-pagination-controls">
                 <Button
                   variant="outline"
@@ -5942,8 +6090,8 @@ function ContactList({
         document.body
       )}
 
-      {/* Status Change Confirmation Modal */}
-      {isStatusChangeConfirmOpen && typeof document !== 'undefined' && createPortal(
+      {/* Bulk Action Confirmation Modal */}
+      {isBulkActionConfirmOpen && typeof document !== 'undefined' && createPortal(
         <div 
           className="modal-overlay" 
           onClick={(e) => {
@@ -5954,7 +6102,7 @@ function ContactList({
               if (selection && selection.toString().length > 0) {
                 return;
               }
-              setIsStatusChangeConfirmOpen(false);
+              setIsBulkActionConfirmOpen(false);
               const actionType = pendingBulkAction?.type;
               setPendingBulkAction(null);
               // Reset the select values
@@ -5962,6 +6110,8 @@ function ContactList({
                 setBulkTeleoperatorId('');
               } else if (actionType === 'confirmateur') {
                 setBulkConfirmateurId('');
+              } else if (actionType === 'status') {
+                setBulkStatusId('');
               }
             }
           }}
@@ -5975,7 +6125,7 @@ function ContactList({
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <AlertTriangle className="h-5 w-5 text-amber-500" />
-                <h2 className="modal-title">Attention</h2>
+                <h2 className="modal-title">Confirmation</h2>
               </div>
               <Button
                 type="button"
@@ -5983,7 +6133,7 @@ function ContactList({
                 size="icon"
                 className="modal-close"
                 onClick={() => {
-                  setIsStatusChangeConfirmOpen(false);
+                  setIsBulkActionConfirmOpen(false);
                   const actionType = pendingBulkAction?.type;
                   setPendingBulkAction(null);
                   // Reset the select values
@@ -5991,6 +6141,8 @@ function ContactList({
                     setBulkTeleoperatorId('');
                   } else if (actionType === 'confirmateur') {
                     setBulkConfirmateurId('');
+                  } else if (actionType === 'status') {
+                    setBulkStatusId('');
                   }
                 }}
               >
@@ -6000,10 +6152,55 @@ function ContactList({
             <div className="modal-form">
               <div className="modal-form-field">
                 <p style={{ fontSize: '1rem', color: '#374151', lineHeight: '1.5' }}>
-                  Cette manipulation risque de modifier le statut de <strong>{pendingBulkAction?.affectedCount || 0} contact(s)</strong>.
-                  <br />
-                  <br />
-                  En retirant {pendingBulkAction?.type === 'teleoperator' ? 'le téléopérateur' : 'le confirmateur'}, ces contacts deviendront non assignés et leur statut sera automatiquement modifié selon les paramètres Fosse configurés.
+                  {pendingBulkAction?.type === 'delete' && (
+                    <>
+                      Êtes-vous sûr de vouloir supprimer <strong>{selectedContacts.size} contact(s)</strong> ?
+                      <br />
+                      <br />
+                      <strong>Cette action est irréversible.</strong>
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'status' && (
+                    <>
+                      Êtes-vous sûr de vouloir modifier le statut de <strong>{selectedContacts.size} contact(s)</strong> vers <strong>{pendingBulkAction.statusName || 'le statut sélectionné'}</strong> ?
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'teleoperator' && pendingBulkAction.affectedCount !== undefined && pendingBulkAction.affectedCount > 0 && (
+                    <>
+                      Cette manipulation risque de modifier le statut de <strong>{pendingBulkAction.affectedCount} contact(s)</strong>.
+                      <br />
+                      <br />
+                      En retirant le téléopérateur, ces contacts deviendront non assignés et leur statut sera automatiquement modifié selon les paramètres Fosse configurés.
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'teleoperator' && pendingBulkAction.affectedCount !== undefined && pendingBulkAction.affectedCount === 0 && (
+                    <>
+                      Êtes-vous sûr de vouloir retirer le téléopérateur de <strong>{selectedContacts.size} contact(s)</strong> ?
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'teleoperator' && pendingBulkAction.affectedCount === undefined && (
+                    <>
+                      Êtes-vous sûr de vouloir attribuer <strong>{pendingBulkAction.teleoperatorName || 'le téléopérateur sélectionné'}</strong> à <strong>{selectedContacts.size} contact(s)</strong> ?
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'confirmateur' && pendingBulkAction.affectedCount !== undefined && pendingBulkAction.affectedCount > 0 && (
+                    <>
+                      Cette manipulation risque de modifier le statut de <strong>{pendingBulkAction.affectedCount} contact(s)</strong>.
+                      <br />
+                      <br />
+                      En retirant le confirmateur, ces contacts deviendront non assignés et leur statut sera automatiquement modifié selon les paramètres Fosse configurés.
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'confirmateur' && pendingBulkAction.affectedCount !== undefined && pendingBulkAction.affectedCount === 0 && (
+                    <>
+                      Êtes-vous sûr de vouloir retirer le confirmateur de <strong>{selectedContacts.size} contact(s)</strong> ?
+                    </>
+                  )}
+                  {pendingBulkAction?.type === 'confirmateur' && pendingBulkAction.affectedCount === undefined && (
+                    <>
+                      Êtes-vous sûr de vouloir attribuer <strong>{pendingBulkAction.confirmateurName || 'le confirmateur sélectionné'}</strong> à <strong>{selectedContacts.size} contact(s)</strong> ?
+                    </>
+                  )}
                 </p>
               </div>
               <div className="modal-form-actions">
@@ -6011,7 +6208,7 @@ function ContactList({
                   type="button" 
                   variant="outline" 
                   onClick={() => {
-                    setIsStatusChangeConfirmOpen(false);
+                    setIsBulkActionConfirmOpen(false);
                     const actionType = pendingBulkAction?.type;
                     setPendingBulkAction(null);
                     // Reset the select values
@@ -6019,6 +6216,8 @@ function ContactList({
                       setBulkTeleoperatorId('');
                     } else if (actionType === 'confirmateur') {
                       setBulkConfirmateurId('');
+                    } else if (actionType === 'status') {
+                      setBulkStatusId('');
                     }
                   }}
                 >
@@ -6027,22 +6226,26 @@ function ContactList({
                 <Button 
                   type="button"
                   onClick={async () => {
-                    setIsStatusChangeConfirmOpen(false);
+                    setIsBulkActionConfirmOpen(false);
                     if (pendingBulkAction) {
                       if (pendingBulkAction.type === 'teleoperator') {
-                        await executeBulkAssignTeleoperator(pendingBulkAction.value);
-                      } else {
-                        await executeBulkAssignConfirmateur(pendingBulkAction.value);
+                        await executeBulkAssignTeleoperator(pendingBulkAction.value || '');
+                      } else if (pendingBulkAction.type === 'confirmateur') {
+                        await executeBulkAssignConfirmateur(pendingBulkAction.value || '');
+                      } else if (pendingBulkAction.type === 'status') {
+                        await executeBulkStatusChange(pendingBulkAction.value || '');
+                      } else if (pendingBulkAction.type === 'delete') {
+                        await executeBulkDelete();
                       }
                       setPendingBulkAction(null);
                     }
                   }}
-                  style={{ backgroundColor: '#d97706', color: 'white' }}
+                  style={{ backgroundColor: pendingBulkAction?.type === 'delete' ? '#dc2626' : '#d97706', color: 'white' }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#b45309';
+                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#b91c1c' : '#b45309';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#d97706';
+                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#dc2626' : '#d97706';
                   }}
                 >
                   Confirmer

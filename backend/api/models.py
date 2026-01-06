@@ -622,6 +622,7 @@ class Transaction(models.Model):
     TRANSACTION_TYPE_CHOICES = [
         ('Retrait', 'Retrait'),
         ('Depot', 'Depot'),
+        ('Ouverture', 'Ouverture'),
     ]
     
     TRANSACTION_STATUS_CHOICES = [
@@ -629,6 +630,7 @@ class Transaction(models.Model):
         ('completed', 'Terminé'),
         ('cancelled', 'Annulé'),
         ('failed', 'Échoué'),
+        ('to_verify', 'A vérifier'),
     ]
     
     PAYMENT_TYPE_CHOICES = [

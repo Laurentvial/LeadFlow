@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { apiCall } from '../utils/api';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -32,16 +32,30 @@ export default function Notifications() {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'unread' | 'read'>('unread');
+  const [userManuallyClosed, setUserManuallyClosed] = useState(false);
+  const lastUnreadCountRef = useRef(0);
 
-  // Auto-open modal when there are unread notifications (only if currently closed)
+  // Auto-open modal when there are NEW unread notifications (only if currently closed and user hasn't manually closed)
   useEffect(() => {
-    if (unreadCount > 0 && !isOpen) {
-      console.log('[Notifications] Auto-opening modal - unread count:', unreadCount);
+    // Only auto-open if:
+    // 1. There are unread notifications
+    // 2. Modal is currently closed
+    // 3. User hasn't manually closed it
+    // 4. Unread count actually increased (new notification) or it's the first load
+    const hasNewUnreadNotifications = unreadCount > 0 && unreadCount > lastUnreadCountRef.current;
+    const isFirstLoad = lastUnreadCountRef.current === 0 && unreadCount > 0;
+    
+    if ((hasNewUnreadNotifications || isFirstLoad) && !isOpen && !userManuallyClosed) {
+      console.log('[Notifications] Auto-opening modal - unread count:', unreadCount, 'last count:', lastUnreadCountRef.current);
       setIsOpen(true);
+      setUserManuallyClosed(false); // Reset flag when auto-opening
       // Switch to unread tab when auto-opening
       setActiveTab('unread');
     }
-  }, [unreadCount, isOpen]);
+    
+    // Update last unread count ref
+    lastUnreadCountRef.current = unreadCount;
+  }, [unreadCount, isOpen, userManuallyClosed]);
 
   // Removed auto-close behavior - users can now control when to close the modal
   // The modal will stay open even when all notifications are read
@@ -107,6 +121,7 @@ export default function Notifications() {
         }
         // Close modal when all notifications are read
         setIsOpen(false);
+        // Don't set userManuallyClosed here - this is automatic behavior
       }
     } catch (error: any) {
       console.error('Error marking notification as read:', error);
@@ -131,6 +146,7 @@ export default function Notifications() {
       setActiveTab('read');
       // Close modal when all notifications are read
       setIsOpen(false);
+      // Don't set userManuallyClosed here - this is automatic behavior after user action
     } catch (error: any) {
       console.error('Error marking all notifications as read:', error);
     }
@@ -223,6 +239,10 @@ export default function Notifications() {
           setUnreadCount(prev => prev + 1);
         }
         
+        // Reset userManuallyClosed flag when new notification arrives
+        // This allows the modal to auto-open for new notifications
+        setUserManuallyClosed(false);
+        
         // Show toast notification
         toast.info(message.notification.title, {
           description: message.notification.message,
@@ -238,6 +258,8 @@ export default function Notifications() {
           // This ensures we have the correct ID and all fields from the database
           // The reload will also update the unread count correctly
           // No toast notification - users will see it in the notification modal
+          // Reset userManuallyClosed flag when new event notification arrives
+          setUserManuallyClosed(false);
           loadNotifications(true);
         } else {
           console.warn('[Notifications] event_notification received but notification is missing');
@@ -259,6 +281,7 @@ export default function Notifications() {
               }
               // Close modal when all notifications are read
               setIsOpen(false);
+              // Don't set userManuallyClosed here - this is automatic behavior
             }
           }
         }
@@ -272,6 +295,7 @@ export default function Notifications() {
           }
           // Close modal when all notifications are read
           setIsOpen(false);
+          // Don't set userManuallyClosed here - this is automatic behavior
         }
       } else if (message.type === 'connection_established') {
         setUnreadCount(message.unread_count || 0);
@@ -342,7 +366,7 @@ export default function Notifications() {
             padding: '4px 12px',
             borderRadius: '12px'
           }}>
-            {todayAssignedCount} contact{todayAssignedCount > 1 ? 's' : ''} aujourd'hui
+            {todayAssignedCount} lead{todayAssignedCount > 1 ? 's' : ''} aujourd'hui
           </Badge>
         )}
         <Button
@@ -350,7 +374,14 @@ export default function Notifications() {
           size="icon"
           onClick={() => {
             // Always allow toggling - users can open/close whenever they want
-            setIsOpen(!isOpen);
+            const newIsOpen = !isOpen;
+            setIsOpen(newIsOpen);
+            // Track if user manually closed the modal
+            if (!newIsOpen) {
+              setUserManuallyClosed(true);
+            } else {
+              setUserManuallyClosed(false);
+            }
           }}
           className="notifications-button"
         >
@@ -371,7 +402,10 @@ export default function Notifications() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setIsOpen(false);
+                  setUserManuallyClosed(true);
+                }}
               >
                 <X className="h-4 w-4" />
               </Button>

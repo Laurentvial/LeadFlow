@@ -9,7 +9,7 @@ import { DateInput } from './ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Checkbox } from './ui/checkbox';
-import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2, Star, Upload, CheckCircle2 } from 'lucide-react';
+import { Plus, Calendar, Clock, Send, X, Edit2, Check, Trash2, Star, Upload, CheckCircle2, Copy } from 'lucide-react';
 // Permissions are now computed directly from currentUser.permissions for better performance
 import { useUser } from '../contexts/UserContext';
 import { useUsers } from '../hooks/useUsers';
@@ -863,6 +863,42 @@ export function ContactInfoTab({
     return contactData.statusName || '-';
   }, [statusViewPermissions, statuses]);
   
+  // Helper function to capitalize names (first letter of each word)
+  const capitalizeName = React.useCallback((name: string): string => {
+    if (!name || name === '-') return name;
+    return name
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }, []);
+
+  // Helper function to copy text to clipboard
+  const copyToClipboard = React.useCallback(async (text: string, fieldName: string) => {
+    if (!text || text === '-') {
+      toast.error('Aucun contenu à copier');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${fieldName} copié dans le presse-papiers`);
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        toast.success(`${fieldName} copié dans le presse-papiers`);
+      } catch (fallbackErr) {
+        toast.error('Erreur lors de la copie');
+      }
+      document.body.removeChild(textArea);
+    }
+  }, []);
+  
   // Editing states
   const [editingField, setEditingField] = useState<string | null>(null);
   const [fieldValue, setFieldValue] = useState<string>('');
@@ -1565,15 +1601,12 @@ export function ContactInfoTab({
   }, [isEditAppointmentModalOpen, editingAppointment, currentUser]);
 
   async function handleFieldUpdate(fieldName: string, value: any) {
-    console.log('[handleFieldUpdate] Called with fieldName:', fieldName, 'value:', value, 'canEdit:', canEdit, 'contactId:', contactId);
     if (!contactId) {
-      console.log('[handleFieldUpdate] Early return - contactId missing');
       return;
     }
     
     // Check if user has field-level edit permission (this takes precedence)
     const hasFieldPermission = canEditField(fieldName);
-    console.log('[handleFieldUpdate] hasFieldPermission:', hasFieldPermission);
     
     // If updating status, check permissions differently
     if (fieldName === 'statusId') {
@@ -1605,14 +1638,9 @@ export function ContactInfoTab({
     } else {
       // For other fields, check field-level permission first (takes precedence)
       if (!hasFieldPermission) {
-        console.log('[handleFieldUpdate] Permission denied: no field-level permission');
         toast.error(`Vous n'avez pas la permission de modifier ce champ`);
         return;
       }
-      
-      // If field-level permission exists, allow save even if general canEdit is false
-      // (field-level permissions override general permissions)
-      console.log('[handleFieldUpdate] Field-level permission granted, proceeding with save');
     }
     
     setIsSaving(true);
@@ -1647,17 +1675,17 @@ export function ContactInfoTab({
         'dateProTr': 'dateProTr',
         'potentiel': 'potentiel',
         'produit': 'produit',
-        'confirmateurEmail': 'confirmateurEmail',
-        'confirmateurTelephone': 'confirmateurTelephone',
+        'confirmateurEmail': 'confirmateur_email',
+        'confirmateurTelephone': 'confirmateur_telephone',
         'dateInscription': 'dateInscription',
         'autreInformations': 'autreInformations'
       };
       
       const apiFieldName = fieldMap[fieldName];
-      console.log('[handleFieldUpdate] apiFieldName:', apiFieldName, 'value:', value);
+      
       if (apiFieldName) {
         // Remove spaces from phone numbers before sending to backend
-        if (fieldName === 'phone' || fieldName === 'mobile') {
+        if (fieldName === 'phone' || fieldName === 'mobile' || fieldName === 'confirmateurTelephone') {
           // Ensure we remove all spaces - convert to string first, then remove spaces
           const cleanedValue = value === '' || value === 'none' ? '' : removePhoneSpaces(String(value));
           payload[apiFieldName] = cleanedValue === '' ? null : cleanedValue;
@@ -1666,22 +1694,162 @@ export function ContactInfoTab({
           const numValue = value === '' || value === 'none' ? null : (isNaN(Number(value)) ? null : Number(value));
           payload[apiFieldName] = numValue;
         } else {
-          payload[apiFieldName] = value === '' || value === 'none' ? null : value;
+          const finalValue = value === '' || value === 'none' ? null : value;
+          payload[apiFieldName] = finalValue;
         }
       }
-      
-      console.log('[handleFieldUpdate] Payload to send:', payload);
-      console.log('[handleFieldUpdate] Making API call to:', `/api/contacts/${contactId}/`);
       const response = await apiCall(`/api/contacts/${contactId}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      console.log('[handleFieldUpdate] API response:', response);
       
       if (response?.contact) {
         // Update local contact state immediately for instant UI update
-        setLocalContact(response.contact);
+        let updatedContact = { ...response.contact };
+        
+        // Map snake_case API response fields to camelCase for localContact
+        // Special handling for confirmateur fields - use the value we sent if backend returns empty
+        if (fieldName === 'confirmateurEmail' || fieldName === 'confirmateurTelephone') {
+          // If backend returns empty but we sent a value, use the value we sent (backend might not be saving it)
+          if (fieldName === 'confirmateurEmail') {
+            const backendValue = updatedContact.confirmateur_email || updatedContact.confirmateurEmail || '';
+            if ((backendValue === '' || !backendValue) && value && value !== '' && value !== null) {
+              updatedContact.confirmateurEmail = value;
+              updatedContact.confirmateur_email = value;
+            } else if (backendValue) {
+              updatedContact.confirmateurEmail = backendValue;
+            } else {
+              updatedContact.confirmateurEmail = '';
+            }
+          }
+          
+          if (fieldName === 'confirmateurTelephone') {
+            const backendValue = updatedContact.confirmateur_telephone || updatedContact.confirmateurTelephone || '';
+            if ((backendValue === '' || !backendValue) && value && value !== '' && value !== null) {
+              updatedContact.confirmateurTelephone = value;
+              updatedContact.confirmateur_telephone = value;
+            } else if (backendValue) {
+              updatedContact.confirmateurTelephone = backendValue;
+            } else {
+              updatedContact.confirmateurTelephone = '';
+            }
+          }
+        } else {
+          // For other fields, normal mapping
+          if (updatedContact.confirmateur_email !== undefined) {
+            updatedContact.confirmateurEmail = updatedContact.confirmateur_email;
+          }
+          if (updatedContact.confirmateur_telephone !== undefined) {
+            updatedContact.confirmateurTelephone = updatedContact.confirmateur_telephone;
+          }
+        }
+        
+        // Immediately update the field value in localContact for instant UI feedback
+        // This ensures the UI updates even before the full response is processed
+        if (fieldName !== 'statusId') {
+          setLocalContact(prev => {
+            const newContact = { ...prev };
+            // Map field names to the actual contact properties
+            if (fieldName === 'teleoperatorId') {
+              newContact.teleoperatorId = value;
+              newContact.managerId = value;
+            } else if (fieldName === 'confirmateurId') {
+              newContact.confirmateurId = value;
+            } else if (fieldName === 'sourceId') {
+              newContact.sourceId = value;
+            } else if (fieldName === 'platformId') {
+              newContact.platformId = value;
+            } else if (fieldName === 'confirmateurEmail') {
+              newContact.confirmateurEmail = value;
+            } else if (fieldName === 'confirmateurTelephone') {
+              newContact.confirmateurTelephone = value;
+            } else {
+              // For all other fields, update directly
+              newContact[fieldName] = value;
+            }
+            return newContact;
+          });
+        }
+        
+        // If updating teleoperatorId or confirmateurId, immediately resolve names from users list
+        if (fieldName === 'teleoperatorId' || fieldName === 'confirmateurId') {
+          // Ensure users are loaded before resolving names
+          if (!usersLoaded) {
+            await loadUsersIfNeeded();
+          }
+          
+          if (fieldName === 'teleoperatorId') {
+            const teleoperatorId = updatedContact.teleoperatorId || updatedContact.managerId || '';
+            if (teleoperatorId && users.length > 0) {
+              const user = users.find(u => String(u.id) === String(teleoperatorId));
+              if (user) {
+                const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                updatedContact.teleoperatorName = displayName;
+                updatedContact.managerName = displayName;
+              } else {
+                updatedContact.teleoperatorName = '';
+                updatedContact.managerName = '';
+              }
+            } else {
+              updatedContact.teleoperatorName = '';
+              updatedContact.managerName = '';
+            }
+          }
+          
+          if (fieldName === 'confirmateurId') {
+            const confirmateurId = updatedContact.confirmateurId || '';
+            if (confirmateurId && users.length > 0) {
+              const user = users.find(u => String(u.id) === String(confirmateurId));
+              if (user) {
+                const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                updatedContact.confirmateurName = displayName;
+              } else {
+                updatedContact.confirmateurName = '';
+              }
+            } else {
+              updatedContact.confirmateurName = '';
+            }
+          }
+        }
+        
+        // Resolve source name if sourceId was updated
+        if (fieldName === 'sourceId' && sources.length > 0) {
+          const sourceId = updatedContact.sourceId || '';
+          if (sourceId) {
+            const source = sources.find(s => String(s.id) === String(sourceId));
+            if (source) {
+              updatedContact.source = source.name;
+            } else {
+              updatedContact.source = '';
+            }
+          } else {
+            updatedContact.source = '';
+          }
+        }
+        
+        // Resolve platform name if platformId was updated
+        if (fieldName === 'platformId' && platforms.length > 0) {
+          const platformId = updatedContact.platformId || '';
+          if (platformId) {
+            const platform = platforms.find(p => String(p.id) === String(platformId));
+            if (platform) {
+              updatedContact.platform = platform.name;
+            } else {
+              updatedContact.platform = '';
+            }
+          } else {
+            updatedContact.platform = '';
+          }
+        }
+        
+        // Update with full response data (includes all resolved names and server-side updates)
+        // Use functional update to merge with any pending optimistic updates and ensure UI reflects changes immediately
+        setLocalContact(prev => {
+          // Merge the updated contact with previous state to preserve any optimistic updates
+          // The updatedContact already contains all the processed data including resolved names
+          return { ...prev, ...updatedContact };
+        });
         
         // Update local contact state if onContactUpdated is provided
         if (onContactUpdated) {
@@ -1715,10 +1883,8 @@ export function ContactInfoTab({
         }
       }
     } catch (error: any) {
-      console.error('Error updating field:', error);
       // Extract error message from API response
       const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour';
-      console.error('Error details:', error?.response);
       toast.error(errorMessage);
     } finally {
       setIsSaving(false);
@@ -1895,8 +2061,8 @@ export function ContactInfoTab({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contactId: contactId,
-                type: 'Depot',
-                status: 'completed',
+                type: 'Ouverture',
+                status: 'to_verify',
                 payment_type: clientFormData.paiement || '',
                 amount: parseFloat(clientFormData.montantEncaisse),
                 date: dateTime,
@@ -2130,8 +2296,6 @@ export function ContactInfoTab({
   }
 
   async function saveField(fieldName: string) {
-    console.log('[saveField] Saving field:', fieldName, 'value:', fieldValue);
-    console.log('[saveField] canEdit:', canEdit, 'contactId:', contactId);
     
     // Check if saving statusId and if the status has isEvent=true or clientDefault=true
     let selectedStatusIsEvent = false;
@@ -2221,10 +2385,8 @@ export function ContactInfoTab({
         console.error('[saveField] Error in handleFieldUpdate:', error);
       }
     } else {
-      console.log('[saveField] Calling handleFieldUpdate...');
       try {
         await handleFieldUpdate(fieldName, fieldValue);
-        console.log('[saveField] handleFieldUpdate completed successfully');
       } catch (error) {
         console.error('[saveField] Error in handleFieldUpdate:', error);
       }
@@ -2796,11 +2958,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('sourceId') ? 'editable' : ''}`}
-                    onClick={canEditField('sourceId') ? () => startEditing('sourceId', contact.sourceId) : undefined}
-                  >
-                    {contact.source || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('sourceId') ? 'editable' : ''}`}
+                      onClick={canEditField('sourceId') ? () => startEditing('sourceId', contact.sourceId) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.source || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.source || '', 'Source');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.source && contact.source !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2828,11 +3012,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('campaign') ? 'editable' : ''}`}
-                    onClick={canEditField('campaign') ? () => startEditing('campaign', contact.campaign) : undefined}
-                  >
-                    {contact.campaign || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('campaign') ? 'editable' : ''}`}
+                      onClick={canEditField('campaign') ? () => startEditing('campaign', contact.campaign) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.campaign || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.campaign || '', 'Campagne');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.campaign && contact.campaign !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2896,11 +3102,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('teleoperatorId') ? 'editable' : ''}`}
-                    onClick={canEditField('teleoperatorId') ? () => startEditing('teleoperatorId', localContact.teleoperatorId || localContact.managerId) : undefined}
-                  >
-                    {localContact.teleoperatorName || localContact.managerName || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('teleoperatorId') ? 'editable' : ''}`}
+                      onClick={canEditField('teleoperatorId') ? () => startEditing('teleoperatorId', localContact.teleoperatorId || localContact.managerId) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {capitalizeName(localContact.teleoperatorName || localContact.managerName || '-')}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.teleoperatorName || localContact.managerName || '', 'Téléopérateur');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.teleoperatorName || localContact.managerName) ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2944,11 +3172,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('confirmateurId') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', localContact.confirmateurId) : undefined}
-                  >
-                    {localContact.confirmateurName || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('confirmateurId') ? 'editable' : ''}`}
+                      onClick={canEditField('confirmateurId') ? () => startEditing('confirmateurId', localContact.confirmateurId) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {capitalizeName(localContact.confirmateurName || '-')}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.confirmateurName || '', 'Confirmateur');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.confirmateurName ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2977,11 +3227,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('dateInscription') ? 'editable' : ''}`}
-                    onClick={canEditField('dateInscription') ? () => startEditing('dateInscription', contact.dateInscription) : undefined}
-                  >
-                    {contact.dateInscription || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('dateInscription') ? 'editable' : ''}`}
+                      onClick={canEditField('dateInscription') ? () => startEditing('dateInscription', contact.dateInscription) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.dateInscription || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.dateInscription || '', 'Date d\'inscription');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.dateInscription && contact.dateInscription !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3010,11 +3282,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('autreInformations') ? 'editable' : ''}`}
-                    onClick={canEditField('autreInformations') ? () => startEditing('autreInformations', contact.autreInformations) : undefined}
-                  >
-                    {contact.autreInformations || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('autreInformations') ? 'editable' : ''}`}
+                      onClick={canEditField('autreInformations') ? () => startEditing('autreInformations', contact.autreInformations) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.autreInformations || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.autreInformations || '', 'Autre informations');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.autreInformations && contact.autreInformations !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3164,11 +3458,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('civility') ? 'editable' : ''}`}
-                    onClick={canEditField('civility') ? () => startEditing('civility', contact.civility) : undefined}
-                  >
-                    {contact.civility || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('civility') ? 'editable' : ''}`}
+                      onClick={canEditField('civility') ? () => startEditing('civility', contact.civility) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.civility || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.civility || '', 'Civilité');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.civility && contact.civility !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3196,11 +3512,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('firstName') ? 'editable' : ''}`}
-                    onClick={canEditField('firstName') ? () => startEditing('firstName', localContact.firstName) : undefined}
-                  >
-                    {localContact.firstName || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('firstName') ? 'editable' : ''}`}
+                      onClick={canEditField('firstName') ? () => startEditing('firstName', localContact.firstName) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {capitalizeName(localContact.firstName || '-')}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.firstName || '', 'Prénom');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.firstName ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3228,11 +3566,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('lastName') ? 'editable' : ''}`}
-                    onClick={canEditField('lastName') ? () => startEditing('lastName', localContact.lastName) : undefined}
-                  >
-                    {localContact.lastName || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('lastName') ? 'editable' : ''}`}
+                      onClick={canEditField('lastName') ? () => startEditing('lastName', localContact.lastName) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {capitalizeName(localContact.lastName || '-')}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.lastName || '', 'Nom');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.lastName ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3261,11 +3621,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('email') ? 'editable' : ''}`}
-                    onClick={canEditField('email') ? () => startEditing('email', contact.email) : undefined}
-                  >
-                    {contact.email || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('email') ? 'editable' : ''}`}
+                      onClick={canEditField('email') ? () => startEditing('email', contact.email) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.email || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.email || '', 'Email');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: contact.email ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3297,11 +3679,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('mobile') ? 'editable' : ''}`}
-                    onClick={canEditField('mobile') ? () => startEditing('mobile', contact.mobile) : undefined}
-                  >
-                    {formatPhoneNumber(contact.mobile) || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('mobile') ? 'editable' : ''}`}
+                      onClick={canEditField('mobile') ? () => startEditing('mobile', contact.mobile) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {formatPhoneNumber(contact.mobile) || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(formatPhoneNumber(contact.mobile) || contact.mobile || '', 'Téléphone 2');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: contact.mobile ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3333,11 +3737,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('phone') ? 'editable' : ''}`}
-                    onClick={canEditField('phone') ? () => startEditing('phone', contact.phone) : undefined}
-                  >
-                    {formatPhoneNumber(contact.phone) || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('phone') ? 'editable' : ''}`}
+                      onClick={canEditField('phone') ? () => startEditing('phone', contact.phone) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {formatPhoneNumber(contact.phone) || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(formatPhoneNumber(contact.phone) || contact.phone || '', 'Téléphone 1');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: contact.phone ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3365,20 +3791,52 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('birthDate') ? 'editable' : ''}`}
-                    onClick={canEditField('birthDate') ? () => startEditing('birthDate', contact.birthDate) : undefined}
-                  >
-                    {(() => {
-                      if (!contact.birthDate) return '-';
-                      const date = new Date(contact.birthDate);
-                      if (isNaN(date.getTime())) return '-';
-                      return date.toLocaleDateString('fr-FR', { 
-                        day: '2-digit', 
-                        month: '2-digit', 
-                        year: 'numeric'
-                      });
-                    })()}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('birthDate') ? 'editable' : ''}`}
+                      onClick={canEditField('birthDate') ? () => startEditing('birthDate', contact.birthDate) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {(() => {
+                        if (!contact.birthDate) return '-';
+                        const date = new Date(contact.birthDate);
+                        if (isNaN(date.getTime())) return '-';
+                        return date.toLocaleDateString('fr-FR', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          year: 'numeric'
+                        });
+                      })()}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const dateValue = (() => {
+                          if (!contact.birthDate) return '';
+                          const date = new Date(contact.birthDate);
+                          if (isNaN(date.getTime())) return '';
+                          return date.toLocaleDateString('fr-FR', { 
+                            day: '2-digit', 
+                            month: '2-digit', 
+                            year: 'numeric'
+                          });
+                        })();
+                        copyToClipboard(dateValue || '', 'Date de naissance');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: contact.birthDate ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3406,11 +3864,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('nationality') ? 'editable' : ''}`}
-                    onClick={canEditField('nationality') ? () => startEditing('nationality', contact.nationality) : undefined}
-                  >
-                    {contact.nationality || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('nationality') ? 'editable' : ''}`}
+                      onClick={canEditField('nationality') ? () => startEditing('nationality', contact.nationality) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.nationality || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.nationality || '', 'Nationalité');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.nationality && contact.nationality !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3449,11 +3929,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('address') ? 'editable' : ''}`}
-                    onClick={canEditField('address') ? () => startEditing('address', contact.address) : undefined}
-                  >
-                    {contact.address || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('address') ? 'editable' : ''}`}
+                      onClick={canEditField('address') ? () => startEditing('address', contact.address) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.address || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.address || '', 'Adresse');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.address && contact.address !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3481,11 +3983,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('addressComplement') ? 'editable' : ''}`}
-                    onClick={canEditField('addressComplement') ? () => startEditing('addressComplement', contact.addressComplement) : undefined}
-                  >
-                    {contact.addressComplement || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('addressComplement') ? 'editable' : ''}`}
+                      onClick={canEditField('addressComplement') ? () => startEditing('addressComplement', contact.addressComplement) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.addressComplement || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.addressComplement || '', 'Complément d\'adresse');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.addressComplement && contact.addressComplement !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3513,11 +4037,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('postalCode') ? 'editable' : ''}`}
-                    onClick={canEditField('postalCode') ? () => startEditing('postalCode', contact.postalCode) : undefined}
-                  >
-                    {contact.postalCode || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('postalCode') ? 'editable' : ''}`}
+                      onClick={canEditField('postalCode') ? () => startEditing('postalCode', contact.postalCode) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.postalCode || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.postalCode || '', 'Code postal');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.postalCode && contact.postalCode !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3545,11 +4091,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('city') ? 'editable' : ''}`}
-                    onClick={canEditField('city') ? () => startEditing('city', contact.city) : undefined}
-                  >
-                    {contact.city || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('city') ? 'editable' : ''}`}
+                      onClick={canEditField('city') ? () => startEditing('city', contact.city) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {contact.city || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(contact.city || '', 'Ville');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (contact.city && contact.city !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3567,7 +4135,7 @@ export function ContactInfoTab({
           <div className="grid grid-cols-2 gap-4">
             {canViewField('platformId') && (
               <div>
-                <Label className="text-slate-600">PLATEFORME</Label>
+                <Label className="text-slate-600">Plateforme</Label>
                 {editingField === 'platformId' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Select
@@ -3601,18 +4169,40 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('platformId') ? 'editable' : ''}`}
-                    onClick={canEditField('platformId') ? () => startEditing('platformId', contact.platformId) : undefined}
-                  >
-                    {contact.platform || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('platformId') ? 'editable' : ''}`}
+                      onClick={canEditField('platformId') ? () => startEditing('platformId', localContact.platformId) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.platform || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.platform || '', 'Plateforme');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.platform ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
             )}
             {canViewField('montantEncaisse') && (
               <div>
-                <Label className="text-slate-600">Montant ENCAISSÉ</Label>
+                <Label className="text-slate-600">Montant encaissé</Label>
                 {editingField === 'montantEncaisse' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Input
@@ -3635,11 +4225,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('montantEncaisse') ? 'editable' : ''}`}
-                    onClick={canEditField('montantEncaisse') ? () => startEditing('montantEncaisse', contact.montantEncaisse) : undefined}
-                  >
-                    {contact.montantEncaisse || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('montantEncaisse') ? 'editable' : ''}`}
+                      onClick={canEditField('montantEncaisse') ? () => startEditing('montantEncaisse', localContact.montantEncaisse) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.montantEncaisse || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.montantEncaisse || '', 'Montant encaissé');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.montantEncaisse && localContact.montantEncaisse !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3669,18 +4281,40 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('bonus') ? 'editable' : ''}`}
-                    onClick={canEditField('bonus') ? () => startEditing('bonus', contact.bonus) : undefined}
-                  >
-                    {contact.bonus || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('bonus') ? 'editable' : ''}`}
+                      onClick={canEditField('bonus') ? () => startEditing('bonus', localContact.bonus) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.bonus || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.bonus || '', 'Bonus');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.bonus && localContact.bonus !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
             )}
             {canViewField('paiement') && (
               <div>
-                <Label className="text-slate-600">PAIEMENT</Label>
+                <Label className="text-slate-600">Paiement</Label>
                 {editingField === 'paiement' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Select
@@ -3709,11 +4343,34 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('paiement') ? 'editable' : ''}`}
-                    onClick={canEditField('paiement') ? () => startEditing('paiement', contact.paiement) : undefined}
-                  >
-                    {contact.paiement === 'carte' ? 'Carte' : contact.paiement === 'virement' ? 'Virement' : '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('paiement') ? 'editable' : ''}`}
+                      onClick={canEditField('paiement') ? () => startEditing('paiement', localContact.paiement) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.paiement === 'carte' ? 'Carte' : localContact.paiement === 'virement' ? 'Virement' : '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const paiementValue = localContact.paiement === 'carte' ? 'Carte' : localContact.paiement === 'virement' ? 'Virement' : '';
+                        copyToClipboard(paiementValue || '', 'Paiement');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.paiement ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3751,11 +4408,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('contrat') ? 'editable' : ''}`}
-                    onClick={canEditField('contrat') ? () => startEditing('contrat', contact.contrat) : undefined}
-                  >
-                    {contact.contrat || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('contrat') ? 'editable' : ''}`}
+                      onClick={canEditField('contrat') ? () => startEditing('contrat', localContact.contrat) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.contrat || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.contrat || '', 'Contrat');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.contrat && localContact.contrat !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3783,11 +4462,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('nomDeScene') ? 'editable' : ''}`}
-                    onClick={canEditField('nomDeScene') ? () => startEditing('nomDeScene', contact.nomDeScene) : undefined}
-                  >
-                    {contact.nomDeScene || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('nomDeScene') ? 'editable' : ''}`}
+                      onClick={canEditField('nomDeScene') ? () => startEditing('nomDeScene', localContact.nomDeScene) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {capitalizeName(localContact.nomDeScene || '-')}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.nomDeScene || '', 'Nom de scène');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.nomDeScene && localContact.nomDeScene !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3815,11 +4516,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('dateProTr') ? 'editable' : ''}`}
-                    onClick={canEditField('dateProTr') ? () => startEditing('dateProTr', contact.dateProTr) : undefined}
-                  >
-                    {contact.dateProTr || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('dateProTr') ? 'editable' : ''}`}
+                      onClick={canEditField('dateProTr') ? () => startEditing('dateProTr', localContact.dateProTr) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.dateProTr || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.dateProTr || '', 'Date pro TR');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.dateProTr && localContact.dateProTr !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3847,11 +4570,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('potentiel') ? 'editable' : ''}`}
-                    onClick={canEditField('potentiel') ? () => startEditing('potentiel', contact.potentiel) : undefined}
-                  >
-                    {contact.potentiel || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('potentiel') ? 'editable' : ''}`}
+                      onClick={canEditField('potentiel') ? () => startEditing('potentiel', localContact.potentiel) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.potentiel || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.potentiel || '', 'Potentiel');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.potentiel && localContact.potentiel !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3879,18 +4624,40 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('produit') ? 'editable' : ''}`}
-                    onClick={canEditField('produit') ? () => startEditing('produit', contact.produit) : undefined}
-                  >
-                    {contact.produit || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('produit') ? 'editable' : ''}`}
+                      onClick={canEditField('produit') ? () => startEditing('produit', localContact.produit) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.produit || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.produit || '', 'Produit');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: (localContact.produit && localContact.produit !== '-') ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
             )}
             {canViewField('confirmateurEmail') && (
               <div>
-                <Label className="text-slate-600">Mail Confirmateur</Label>
+                <Label className="text-slate-600">Email Confirmateur</Label>
                 {editingField === 'confirmateurEmail' ? (
                   <div className="contact-field-input-wrapper" ref={editingFieldRef}>
                     <Input
@@ -3912,11 +4679,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('confirmateurEmail') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurEmail') ? () => startEditing('confirmateurEmail', localContact.confirmateurEmail) : undefined}
-                  >
-                    {localContact.confirmateurEmail || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('confirmateurEmail') ? 'editable' : ''}`}
+                      onClick={canEditField('confirmateurEmail') ? () => startEditing('confirmateurEmail', localContact.confirmateurEmail) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {localContact.confirmateurEmail || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(localContact.confirmateurEmail || '', 'Email Confirmateur');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.confirmateurEmail ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -3948,11 +4737,33 @@ export function ContactInfoTab({
                     </Button>
                   </div>
                 ) : (
-                  <div 
-                    className={`contact-field-display ${canEditField('confirmateurTelephone') ? 'editable' : ''}`}
-                    onClick={canEditField('confirmateurTelephone') ? () => startEditing('confirmateurTelephone', localContact.confirmateurTelephone) : undefined}
-                  >
-                    {formatPhoneNumber(localContact.confirmateurTelephone) || '-'}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div 
+                      className={`contact-field-display ${canEditField('confirmateurTelephone') ? 'editable' : ''}`}
+                      onClick={canEditField('confirmateurTelephone') ? () => startEditing('confirmateurTelephone', localContact.confirmateurTelephone) : undefined}
+                      style={{ flex: 1 }}
+                    >
+                      {formatPhoneNumber(localContact.confirmateurTelephone) || '-'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(formatPhoneNumber(localContact.confirmateurTelephone) || localContact.confirmateurTelephone || '', 'Téléphone Confirmateur');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: '#64748b',
+                        opacity: localContact.confirmateurTelephone ? 1 : 0.3
+                      }}
+                      title="Copier"
+                    >
+                      <Copy size={16} />
+                    </button>
                   </div>
                 )}
               </div>
