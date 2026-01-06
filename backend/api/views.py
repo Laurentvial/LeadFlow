@@ -11441,25 +11441,35 @@ def chat_users(request):
 @permission_classes([IsAuthenticated])
 def notification_list(request):
     """Get all notifications for the current user"""
-    notifications = Notification.objects.filter(user=request.user).order_by('-created_at')
+    # Exclude message notifications - they are handled separately via chat popup
+    # Order by unread status first (unread first), then by created_at (newest first)
+    notifications = Notification.objects.filter(user=request.user).exclude(type='message').order_by('is_read', '-created_at')
     
-    # Pagination
-    limit = int(request.query_params.get('limit', 50))
+    # Pagination - increase limit to ensure all unread notifications are included
+    limit = int(request.query_params.get('limit', 200))  # Increased to ensure unread notifications aren't paginated out
     offset = int(request.query_params.get('offset', 0))
     
     notifications = notifications[offset:offset + limit]
     
     serializer = NotificationSerializer(notifications, many=True)
+    
+    # Calculate unread count for debugging
+    unread_count = Notification.objects.filter(user=request.user, is_read=False).exclude(type='message').count()
+    unread_in_response = sum(1 for n in serializer.data if not n.get('is_read', True))
+    
     return Response({
         'notifications': serializer.data,
-        'total': Notification.objects.filter(user=request.user).count()
+        'total': Notification.objects.filter(user=request.user).exclude(type='message').count(),
+        'unread_count': unread_count,  # Include unread count in response for debugging
+        'unread_in_response': unread_in_response  # How many unread notifications are in this response
     })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def notification_unread_count(request):
-    """Get unread notifications count for the current user"""
-    count = Notification.objects.filter(user=request.user, is_read=False).count()
+    """Get unread notifications count for the current user (excluding message notifications)"""
+    # Exclude message notifications - they are handled separately via chat popup
+    count = Notification.objects.filter(user=request.user, is_read=False).exclude(type='message').count()
     return Response({'unread_count': count})
 
 @api_view(['POST'])
@@ -11488,8 +11498,8 @@ def notification_mark_read(request, notification_id):
                 'created_at': notification.created_at.isoformat(),
             }
             
-            # Get updated unread count
-            unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+            # Get updated unread count (excluding message notifications)
+            unread_count = Notification.objects.filter(user=request.user, is_read=False).exclude(type='message').count()
             
             # Send via WebSocket
             async_to_sync(channel_layer.group_send)(
@@ -11509,14 +11519,15 @@ def notification_mark_read(request, notification_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def notification_mark_all_read(request):
-    """Mark all notifications as read for the current user"""
-    Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+    """Mark all notifications as read for the current user (excluding message notifications)"""
+    # Only mark non-message notifications as read - message notifications are handled separately
+    Notification.objects.filter(user=request.user, is_read=False).exclude(type='message').update(is_read=True)
     
     # Send websocket update to notify frontend immediately
     channel_layer = get_channel_layer()
     if channel_layer:
-        # Get updated unread count (should be 0)
-        unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+        # Get updated unread count (excluding message notifications, should be 0)
+        unread_count = Notification.objects.filter(user=request.user, is_read=False).exclude(type='message').count()
         
         # Send via WebSocket
         async_to_sync(channel_layer.group_send)(

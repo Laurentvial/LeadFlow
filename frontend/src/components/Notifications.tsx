@@ -64,10 +64,25 @@ export default function Notifications() {
   const loadNotifications = useCallback(async (silent: boolean = false) => {
     try {
       const data = await apiCall('/api/notifications/');
-      // Filter out message notifications - they are handled separately via chat popup
+      // Backend now excludes message notifications, but filter again as safety measure
       const filteredNotifications = (data.notifications || []).filter((n: Notification) => n.type !== 'message');
+      
+      // Debug logging to help diagnose issues
+      const unreadInList = filteredNotifications.filter((n: Notification) => !n.is_read).length;
+      console.log('[Notifications] Loaded notifications:', {
+        total: filteredNotifications.length,
+        unread: unreadInList,
+        read: filteredNotifications.filter((n: Notification) => n.is_read).length,
+        backend_unread_count: data.unread_count,
+        backend_unread_in_response: data.unread_in_response,
+        notifications_sample: filteredNotifications.slice(0, 5).map(n => ({ id: n.id, type: n.type, is_read: n.is_read }))
+      });
+      
       setNotifications(filteredNotifications);
-      setUnreadCount(filteredNotifications.filter((n: Notification) => !n.is_read).length || 0);
+      // Use unread_count from API response to avoid extra API call and race conditions
+      if (data.unread_count !== undefined) {
+        setUnreadCount(data.unread_count);
+      }
     } catch (error: any) {
       console.error('Error loading notifications:', error);
     } finally {
@@ -232,11 +247,12 @@ export default function Notifications() {
           }
           return [message.notification, ...prev];
         });
-        // Use unread_count from backend instead of incrementing manually
+        // Use unread_count from backend - always reload from API for accuracy
         if (message.unread_count !== undefined) {
           setUnreadCount(message.unread_count);
         } else {
-          setUnreadCount(prev => prev + 1);
+          // If unread_count not provided, reload from API to ensure accuracy
+          loadUnreadCount();
         }
         
         // Reset userManuallyClosed flag when new notification arrives
@@ -256,7 +272,7 @@ export default function Notifications() {
           
           // Event notifications are stored in the database, so reload to get the proper notification
           // This ensures we have the correct ID and all fields from the database
-          // The reload will also update the unread count correctly
+          // unread_count is included in the response, so no separate call needed
           // No toast notification - users will see it in the notification modal
           // Reset userManuallyClosed flag when new event notification arrives
           setUserManuallyClosed(false);
@@ -298,8 +314,12 @@ export default function Notifications() {
           // Don't set userManuallyClosed here - this is automatic behavior
         }
       } else if (message.type === 'connection_established') {
-        setUnreadCount(message.unread_count || 0);
+        // Use unread_count from backend if provided (fastest), otherwise loadNotifications will set it
+        if (message.unread_count !== undefined) {
+          setUnreadCount(message.unread_count);
+        }
         // Reload notifications when connection is established
+        // unread_count is included in the response, so no separate call needed if not provided above
         loadNotifications();
       }
     },
@@ -326,15 +346,22 @@ export default function Notifications() {
 
     const interval = setInterval(() => {
       // Refresh notifications silently (don't show loading state)
+      // unread_count is included in the response, so no separate call needed
       loadNotifications(true);
-      // Also refresh unread count separately for accuracy
-      loadUnreadCount();
       // Refresh today's assigned contacts count
       loadTodayAssignedCount();
     }, 10000); // Refresh every 10 seconds (less frequent than chat since notifications are less time-sensitive)
 
     return () => clearInterval(interval);
-  }, [loading, loadNotifications, loadUnreadCount, loadTodayAssignedCount]);
+  }, [loading, loadNotifications, loadTodayAssignedCount]);
+
+  // Reload notifications and unread count when modal opens to ensure fresh data
+  useEffect(() => {
+    if (isOpen) {
+      loadNotifications(true); // Silent load to avoid showing loading state
+      // unread_count is included in the response, so no separate call needed
+    }
+  }, [isOpen, loadNotifications]);
 
   // Set default tab when modal opens
   useEffect(() => {

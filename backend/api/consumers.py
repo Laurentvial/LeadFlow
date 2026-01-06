@@ -92,9 +92,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             await self.accept()
             logger.info("[NotificationConsumer] Connection accepted")
             
-            # Send unread notifications count
+            # Send unread notifications count (excluding message notifications)
             unread_count = await database_sync_to_async(
-                Notification.objects.filter(user=self.user, is_read=False).count
+                Notification.objects.filter(user=self.user, is_read=False).exclude(type='message').count
             )()
             
             # Close database connections after database operations
@@ -170,9 +170,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                         ).update
                     )(is_read=True)
                     
-                    # Send updated unread count
+                    # Send updated unread count (excluding message notifications)
                     unread_count = await database_sync_to_async(
-                        Notification.objects.filter(user=self.user, is_read=False).count
+                        Notification.objects.filter(user=self.user, is_read=False).exclude(type='message').count
                     )()
                     await self.send(text_data=json.dumps({
                         'type': 'unread_count_updated',
@@ -184,9 +184,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     close_old_connections()
             
             elif message_type == 'mark_all_read':
-                # Mark all notifications as read
+                # Mark all notifications as read (excluding message notifications)
                 await database_sync_to_async(
-                    Notification.objects.filter(user=self.user, is_read=False).update
+                    Notification.objects.filter(user=self.user, is_read=False).exclude(type='message').update
                 )(is_read=True)
                 
                 await self.send(text_data=json.dumps({
