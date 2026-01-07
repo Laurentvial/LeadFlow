@@ -2832,7 +2832,7 @@ class FosseContactView(generics.ListAPIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def contacts_assigned_today_count(request):
-    """Get count of contacts assigned to current user today"""
+    """Get count of contacts assigned to current user today with status type = lead"""
     try:
         from django.utils import timezone
         
@@ -2842,12 +2842,13 @@ def contacts_assigned_today_count(request):
         # Get today's date (based on day only, ignoring time)
         today = timezone.now().date()
         
-        # Count contacts assigned to current user today
-        # Filter by teleoperator = current user AND created_at date is today
+        # Count contacts assigned to current user today with status type = lead
+        # Filter by teleoperator = current user AND created_at date is today AND status type = lead
         # Using __date lookup compares only the date part, ignoring time
         count = Contact.objects.filter(
             teleoperator=user,
-            created_at__date=today
+            created_at__date=today,
+            status__type='lead'
         ).count()
         
         return Response({'count': count}, status=status.HTTP_200_OK)
