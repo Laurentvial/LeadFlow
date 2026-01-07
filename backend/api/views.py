@@ -2843,11 +2843,11 @@ def contacts_assigned_today_count(request):
         today = timezone.now().date()
         
         # Count contacts assigned to current user today
-        # Filter by teleoperator = current user AND assigned_at date is today
+        # Filter by teleoperator = current user AND created_at date is today
         # Using __date lookup compares only the date part, ignoring time
         count = Contact.objects.filter(
             teleoperator=user,
-            assigned_at__date=today
+            created_at__date=today
         ).count()
         
         return Response({'count': count}, status=status.HTTP_200_OK)
