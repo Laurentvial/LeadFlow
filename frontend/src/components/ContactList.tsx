@@ -6,7 +6,15 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy, ChevronDown } from 'lucide-react';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './ui/command';
 import {
   Popover,
   PopoverContent,
@@ -25,6 +33,7 @@ import { toast } from 'sonner';
 import { formatPhoneNumber } from '../utils/phoneNumber';
 import { ACCESS_TOKEN } from '../utils/constants';
 import { handleModalOverlayClick } from '../utils/modal';
+import { cn } from './ui/utils';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -561,6 +570,10 @@ function ContactList({
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [bulkTeleoperatorId, setBulkTeleoperatorId] = useState('');
   const [bulkConfirmateurId, setBulkConfirmateurId] = useState('');
+  const [teleoperatorSearchOpen, setTeleoperatorSearchOpen] = useState(false);
+  const [confirmateurSearchOpen, setConfirmateurSearchOpen] = useState(false);
+  const [teleoperatorSearchQuery, setTeleoperatorSearchQuery] = useState('');
+  const [confirmateurSearchQuery, setConfirmateurSearchQuery] = useState('');
   const [bulkStatusId, setBulkStatusId] = useState('');
   const [isBulkStatusChanging, setIsBulkStatusChanging] = useState(false);
   const [lastOpenedContactId, setLastOpenedContactId] = useState<string | null>(null);
@@ -2031,6 +2044,8 @@ function ContactList({
     setBulkTeleoperatorId('');
     setBulkConfirmateurId('');
     setBulkStatusId('');
+    setTeleoperatorSearchQuery('');
+    setConfirmateurSearchQuery('');
   }
 
   // Function to select all contacts from all pages (respecting filters)
@@ -3450,6 +3465,7 @@ function ContactList({
       
       handleClearSelection();
       setBulkTeleoperatorId('');
+      setTeleoperatorSearchQuery('');
       // Small delay to ensure backend transaction is committed, then reload data
       await new Promise(resolve => setTimeout(resolve, 100));
       await loadData();
@@ -3529,6 +3545,7 @@ function ContactList({
       
       handleClearSelection();
       setBulkConfirmateurId('');
+      setConfirmateurSearchQuery('');
       // Small delay to ensure backend transaction is committed, then reload data
       await new Promise(resolve => setTimeout(resolve, 200));
       await loadData();
@@ -4185,6 +4202,34 @@ function ContactList({
     const isConfirmateur = user.isConfirmateur === true || user.isConfirmateur === 'true';
     return isConfirmateur;
   });
+
+  // Filter teleoperateurs based on search query
+  const filteredTeleoperateurs = useMemo(() => {
+    if (!teleoperatorSearchQuery.trim()) {
+      return teleoperateurs;
+    }
+    const query = teleoperatorSearchQuery.toLowerCase().trim();
+    return teleoperateurs.filter((user) => {
+      const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+      return displayName.toLowerCase().includes(query) ||
+             user.email?.toLowerCase().includes(query) ||
+             user.username?.toLowerCase().includes(query);
+    });
+  }, [teleoperateurs, teleoperatorSearchQuery]);
+
+  // Filter confirmateurs based on search query
+  const filteredConfirmateurs = useMemo(() => {
+    if (!confirmateurSearchQuery.trim()) {
+      return confirmateurs;
+    }
+    const query = confirmateurSearchQuery.toLowerCase().trim();
+    return confirmateurs.filter((user) => {
+      const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+      return displayName.toLowerCase().includes(query) ||
+             user.email?.toLowerCase().includes(query) ||
+             user.username?.toLowerCase().includes(query);
+    });
+  }, [confirmateurs, confirmateurSearchQuery]);
 
   // Helper function to render table content (reused in normal and fullscreen views)
   const renderTableContent = (fullscreen: boolean = false) => (
@@ -5248,72 +5293,192 @@ function ContactList({
                   <>
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un téléopérateur</Label>
-                      <Select value={bulkTeleoperatorId ? String(bulkTeleoperatorId) : undefined} onValueChange={handleBulkAssignTeleoperator} disabled={isBulkAssigning}>
-                        <SelectTrigger className="w-[200px]" disabled={isBulkAssigning}>
-                          {isBulkAssigning ? (
-                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <UserCheck className="w-4 h-4 mr-2" />
-                          )}
-                          <SelectValue placeholder={isBulkAssigning ? "Attribution en cours..." : "Attribuer un téléopérateur"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Aucun téléopérateur</SelectItem>
-                          {usersLoading ? (
-                            <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                          ) : usersError && teleoperateurs.length === 0 ? (
-                            <SelectItem value="error" disabled>
-                              <span className="text-red-600">Erreur de chargement</span>
-                            </SelectItem>
-                          ) : teleoperateurs.length === 0 ? (
-                            <SelectItem value="empty" disabled>Aucun téléopérateur disponible</SelectItem>
-                          ) : (
-                            teleoperateurs.map((user) => {
-                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                              return (
-                                <SelectItem key={user.id} value={String(user.id)}>
-                                  {displayName}
-                                </SelectItem>
-                              );
-                            })
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={teleoperatorSearchOpen} onOpenChange={setTeleoperatorSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={teleoperatorSearchOpen}
+                            className="w-[200px] justify-between"
+                            disabled={isBulkAssigning}
+                          >
+                            {isBulkAssigning ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                <span>Attribution en cours...</span>
+                              </>
+                            ) : bulkTeleoperatorId ? (
+                              <>
+                                <UserCheck className="w-4 h-4 mr-2" />
+                                <span className="truncate">
+                                  {teleoperateurs.find((u) => String(u.id) === String(bulkTeleoperatorId)) 
+                                    ? `${teleoperateurs.find((u) => String(u.id) === String(bulkTeleoperatorId))?.firstName || ''} ${teleoperateurs.find((u) => String(u.id) === String(bulkTeleoperatorId))?.lastName || ''}`.trim() || teleoperateurs.find((u) => String(u.id) === String(bulkTeleoperatorId))?.username || teleoperateurs.find((u) => String(u.id) === String(bulkTeleoperatorId))?.email || `Utilisateur ${bulkTeleoperatorId}`
+                                    : 'Attribuer un téléopérateur'}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="w-4 h-4 mr-2" />
+                                <span>Attribuer un téléopérateur</span>
+                              </>
+                            )}
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[200px] p-0" align="start" style={{ zIndex: 10010, height: '250px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                          <Command className="rounded-none flex flex-col overflow-hidden" shouldFilter={false} style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                            <CommandInput 
+                              placeholder="Rechercher un téléopérateur..." 
+                              value={teleoperatorSearchQuery}
+                              onValueChange={setTeleoperatorSearchQuery}
+                              className="rounded-none"
+                              style={{ flexShrink: 0 }}
+                            />
+                            <CommandList className="overflow-y-scroll overflow-x-hidden" style={{ height: '200px', flexShrink: 0, minHeight: 0 }}>
+                              <CommandEmpty>Aucun téléopérateur trouvé.</CommandEmpty>
+                              {usersLoading ? (
+                                <CommandItem disabled>
+                                  <span>Chargement...</span>
+                                </CommandItem>
+                              ) : usersError ? (
+                                <CommandItem disabled>
+                                  <span className="text-red-600">Erreur de chargement</span>
+                                </CommandItem>
+                              ) : filteredTeleoperateurs.length === 0 && !usersLoading ? (
+                                <CommandItem disabled>
+                                  <span>Aucun téléopérateur disponible</span>
+                                </CommandItem>
+                              ) : (
+                                <>
+                                  <CommandItem
+                                    value="none"
+                                    onSelect={() => {
+                                      handleBulkAssignTeleoperator('none');
+                                      setTeleoperatorSearchOpen(false);
+                                      setTeleoperatorSearchQuery('');
+                                    }}
+                                    className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors rounded-none"
+                                  >
+                                    Aucun téléopérateur
+                                  </CommandItem>
+                                  {filteredTeleoperateurs.map((user) => {
+                                    const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                                    return (
+                                      <CommandItem
+                                        key={user.id}
+                                        value={String(user.id)}
+                                        onSelect={() => {
+                                          handleBulkAssignTeleoperator(String(user.id));
+                                          setTeleoperatorSearchOpen(false);
+                                          setTeleoperatorSearchQuery('');
+                                        }}
+                                        className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors rounded-none"
+                                      >
+                                        {displayName}
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </>
+                              )}
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
 
                     <div className="contacts-bulk-action-select">
                       <Label className="sr-only">Attribuer un confirmateur</Label>
-                      <Select value={bulkConfirmateurId ? String(bulkConfirmateurId) : undefined} onValueChange={handleBulkAssignConfirmateur} disabled={isBulkAssigning}>
-                        <SelectTrigger className="w-[200px]" disabled={isBulkAssigning}>
-                          {isBulkAssigning ? (
-                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <UserCheck className="w-4 h-4 mr-2" />
-                          )}
-                          <SelectValue placeholder={isBulkAssigning ? "Attribution en cours..." : "Attribuer un confirmateur"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Aucun confirmateur</SelectItem>
-                          {usersLoading ? (
-                            <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                          ) : usersError && confirmateurs.length === 0 ? (
-                            <SelectItem value="error" disabled>
-                              <span className="text-red-600">Erreur de chargement</span>
-                            </SelectItem>
-                          ) : confirmateurs.length === 0 ? (
-                            <SelectItem value="empty" disabled>Aucun confirmateur disponible</SelectItem>
-                          ) : (
-                            confirmateurs.map((user) => {
-                              const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
-                              return (
-                                <SelectItem key={user.id} value={String(user.id)}>
-                                  {displayName}
-                                </SelectItem>
-                              );
-                            })
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={confirmateurSearchOpen} onOpenChange={setConfirmateurSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={confirmateurSearchOpen}
+                            className="w-[200px] justify-between"
+                            disabled={isBulkAssigning}
+                          >
+                            {isBulkAssigning ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                <span>Attribution en cours...</span>
+                              </>
+                            ) : bulkConfirmateurId ? (
+                              <>
+                                <UserCheck className="w-4 h-4 mr-2" />
+                                <span className="truncate">
+                                  {confirmateurs.find((u) => String(u.id) === String(bulkConfirmateurId)) 
+                                    ? `${confirmateurs.find((u) => String(u.id) === String(bulkConfirmateurId))?.firstName || ''} ${confirmateurs.find((u) => String(u.id) === String(bulkConfirmateurId))?.lastName || ''}`.trim() || confirmateurs.find((u) => String(u.id) === String(bulkConfirmateurId))?.username || confirmateurs.find((u) => String(u.id) === String(bulkConfirmateurId))?.email || `Utilisateur ${bulkConfirmateurId}`
+                                    : 'Attribuer un confirmateur'}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="w-4 h-4 mr-2" />
+                                <span>Attribuer un confirmateur</span>
+                              </>
+                            )}
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[200px] p-0" align="start" style={{ zIndex: 10010, height: '250px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                          <Command className="rounded-none flex flex-col overflow-hidden" shouldFilter={false} style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                            <CommandInput 
+                              placeholder="Rechercher un confirmateur..." 
+                              value={confirmateurSearchQuery}
+                              onValueChange={setConfirmateurSearchQuery}
+                              className="rounded-none"
+                              style={{ flexShrink: 0 }}
+                            />
+                            <CommandList className="overflow-y-scroll overflow-x-hidden" style={{ height: '200px', flexShrink: 0, minHeight: 0 }}>
+                              <CommandEmpty>Aucun confirmateur trouvé.</CommandEmpty>
+                              {usersLoading ? (
+                                <CommandItem disabled>
+                                  <span>Chargement...</span>
+                                </CommandItem>
+                              ) : usersError ? (
+                                <CommandItem disabled>
+                                  <span className="text-red-600">Erreur de chargement</span>
+                                </CommandItem>
+                              ) : filteredConfirmateurs.length === 0 && !usersLoading ? (
+                                <CommandItem disabled>
+                                  <span>Aucun confirmateur disponible</span>
+                                </CommandItem>
+                              ) : (
+                                <>
+                                  <CommandItem
+                                    value="none"
+                                    onSelect={() => {
+                                      handleBulkAssignConfirmateur('none');
+                                      setConfirmateurSearchOpen(false);
+                                      setConfirmateurSearchQuery('');
+                                    }}
+                                    className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors rounded-none"
+                                  >
+                                    Aucun confirmateur
+                                  </CommandItem>
+                                  {filteredConfirmateurs.map((user) => {
+                                    const displayName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || user.email || `Utilisateur ${user.id}`;
+                                    return (
+                                      <CommandItem
+                                        key={user.id}
+                                        value={String(user.id)}
+                                        onSelect={() => {
+                                          handleBulkAssignConfirmateur(String(user.id));
+                                          setConfirmateurSearchOpen(false);
+                                          setConfirmateurSearchQuery('');
+                                        }}
+                                        className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors rounded-none"
+                                      >
+                                        {displayName}
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </>
+                              )}
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
 
                     <div className="contacts-bulk-action-select">
@@ -6459,8 +6624,10 @@ function ContactList({
               // Reset the select values
               if (actionType === 'teleoperator') {
                 setBulkTeleoperatorId('');
+                setTeleoperatorSearchQuery('');
               } else if (actionType === 'confirmateur') {
                 setBulkConfirmateurId('');
+                setConfirmateurSearchQuery('');
               } else if (actionType === 'status') {
                 setBulkStatusId('');
               }
@@ -6490,8 +6657,10 @@ function ContactList({
                   // Reset the select values
                   if (actionType === 'teleoperator') {
                     setBulkTeleoperatorId('');
+                    setTeleoperatorSearchQuery('');
                   } else if (actionType === 'confirmateur') {
                     setBulkConfirmateurId('');
+                    setConfirmateurSearchQuery('');
                   } else if (actionType === 'status') {
                     setBulkStatusId('');
                   }
