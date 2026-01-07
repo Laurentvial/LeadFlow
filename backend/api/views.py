@@ -3321,111 +3321,104 @@ def contacts_bulk_create(request):
     platforms_dict = {p.id: p for p in Platform.objects.filter(id__in=platform_ids)} if platform_ids else {}
     
     # Fetch users (both Django User and UserDetails)
-    # Use normalized string keys to ensure consistent lookup
+    # IMPORTANT: Frontend sends UserDetails.id (string), not Django User.id (integer)
+    # We need to prioritize UserDetails lookup first, then fall back to Django User ID if numeric
     teleoperator_users_dict = {}
     confirmateur_users_dict = {}
     if teleoperator_ids or confirmateur_ids:
         from api.models import UserDetails
-        # Normalize all IDs to strings for consistent dictionary keys
-        teleoperator_ids_normalized = {str(uid).strip(): str(uid).strip() for uid in teleoperator_ids}
-        confirmateur_ids_normalized = {str(uid).strip(): str(uid).strip() for uid in confirmateur_ids}
         
-        # Try Django User IDs first
-        django_user_ids = []
-        for uid in list(teleoperator_ids) + list(confirmateur_ids):
-            try:
-                django_user_ids.append(int(uid))
-            except (ValueError, TypeError):
-                pass
+        # Step 1: Try UserDetails IDs first (strings) - this is what the frontend sends
+        # Convert all IDs to strings for UserDetails lookup (UserDetails.id is CharField)
+        user_details_id_list = [str(uid).strip() for uid in list(teleoperator_ids) + list(confirmateur_ids)]
+        user_details_list = UserDetails.objects.filter(id__in=user_details_id_list).select_related('django_user')
         
-        django_users = {u.id: u for u in DjangoUser.objects.filter(id__in=django_user_ids)} if django_user_ids else {}
+        # Track which IDs we found via UserDetails
+        found_via_userdetails = set()
         
-        # Try UserDetails IDs - store with normalized string keys
-        # Since we filter by id__in, any returned UserDetails must match one of the requested IDs
-        user_details_list = UserDetails.objects.filter(id__in=list(teleoperator_ids) + list(confirmateur_ids)).select_related('django_user')
         for ud in user_details_list:
-            if ud.django_user:
-                ud_id_str = str(ud.id).strip()
+            if not ud.django_user:
+                continue
                 
-                # Store in teleoperator dict if this ID was requested for teleoperator
-                # Store with all possible ID formats to ensure lookup works
-                for uid in teleoperator_ids:
-                    uid_str = str(uid).strip()
-                    # Match by any format
-                    if (uid_str == ud_id_str or 
-                        str(uid) == str(ud.id) or 
-                        uid == ud.id):
-                        teleoperator_users_dict[ud_id_str] = ud.django_user
-                        teleoperator_users_dict[uid_str] = ud.django_user
-                        if str(uid) != uid_str:
-                            teleoperator_users_dict[str(uid)] = ud.django_user
-                        # Also try integer if applicable
-                        try:
-                            int_uid = int(uid)
-                            teleoperator_users_dict[int_uid] = ud.django_user
-                        except (ValueError, TypeError):
-                            pass
+            ud_id_str = str(ud.id).strip()
+            ud_id_original = str(ud.id)
+            django_user = ud.django_user
+            
+            # Store in teleoperator dict if this UserDetails ID was requested for teleoperator
+            for uid in teleoperator_ids:
+                uid_str = str(uid).strip()
+                uid_original = str(uid)
                 
-                # Store in confirmateur dict if this ID was requested for confirmateur
-                # Since UserDetails was filtered by id__in, ud.id must match one of the IDs
-                # Store with all possible ID formats from confirmateur_ids set to ensure lookup works
-                ud_id_original = str(ud.id)
-                for uid in confirmateur_ids:
-                    uid_str = str(uid).strip()
-                    uid_original = str(uid)
-                    
-                    # Check if this UserDetails ID matches this confirmateur ID (any format)
-                    if (uid_str == ud_id_str or 
-                        uid_original == ud_id_original or
-                        uid_str == ud_id_original or
-                        uid_original == ud_id_str or
-                        str(uid).strip() == str(ud.id).strip() or
-                        uid == ud.id):
-                        # Store with normalized UserDetails ID
-                        confirmateur_users_dict[ud_id_str] = ud.django_user
-                        # Store with normalized request ID
-                        confirmateur_users_dict[uid_str] = ud.django_user
-                        # Store with original formats
-                        if uid_original != uid_str:
-                            confirmateur_users_dict[uid_original] = ud.django_user
-                        if ud_id_original != ud_id_str:
-                            confirmateur_users_dict[ud_id_original] = ud.django_user
-                        # Also try integer if applicable
-                        try:
-                            int_uid = int(uid)
-                            confirmateur_users_dict[int_uid] = ud.django_user
-                        except (ValueError, TypeError):
-                            pass
-                        try:
-                            int_ud_id = int(ud.id)
-                            confirmateur_users_dict[int_ud_id] = ud.django_user
-                        except (ValueError, TypeError):
-                            pass
-                        # Break after first match since we've stored with all formats
-                        break
+                # Exact match: UserDetails ID matches the requested ID
+                if uid_str == ud_id_str or uid_original == ud_id_original or uid == ud.id:
+                    # Store with all possible key formats for reliable lookup
+                    teleoperator_users_dict[uid_str] = django_user
+                    teleoperator_users_dict[ud_id_str] = django_user
+                    if uid_original != uid_str:
+                        teleoperator_users_dict[uid_original] = django_user
+                    if ud_id_original != ud_id_str:
+                        teleoperator_users_dict[ud_id_original] = django_user
+                    found_via_userdetails.add(uid_str)
+                    found_via_userdetails.add(uid_original)
+                    break
+            
+            # Store in confirmateur dict if this UserDetails ID was requested for confirmateur
+            for uid in confirmateur_ids:
+                uid_str = str(uid).strip()
+                uid_original = str(uid)
+                
+                # Exact match: UserDetails ID matches the requested ID
+                if uid_str == ud_id_str or uid_original == ud_id_original or uid == ud.id:
+                    # Store with all possible key formats for reliable lookup
+                    confirmateur_users_dict[uid_str] = django_user
+                    confirmateur_users_dict[ud_id_str] = django_user
+                    if uid_original != uid_str:
+                        confirmateur_users_dict[uid_original] = django_user
+                    if ud_id_original != ud_id_str:
+                        confirmateur_users_dict[ud_id_original] = django_user
+                    found_via_userdetails.add(uid_str)
+                    found_via_userdetails.add(uid_original)
+                    break
         
-        # Add Django users directly - store with both string and int keys
-        for uid in teleoperator_ids:
+        # Step 2: Fallback to Django User IDs only for IDs not found via UserDetails
+        # This handles cases where someone might send Django User ID directly
+        django_user_ids_to_try = []
+        for uid in list(teleoperator_ids) + list(confirmateur_ids):
             uid_str = str(uid).strip()
-            try:
-                int_uid = int(uid)
-                if int_uid in django_users:
-                    teleoperator_users_dict[uid_str] = django_users[int_uid]
-                    # Also store with int key for compatibility
-                    teleoperator_users_dict[int_uid] = django_users[int_uid]
-            except (ValueError, TypeError):
-                pass
+            # Only try Django User ID lookup if:
+            # 1. Not already found via UserDetails
+            # 2. Can be converted to integer (Django User IDs are integers)
+            if uid_str not in found_via_userdetails:
+                try:
+                    django_user_ids_to_try.append(int(uid))
+                except (ValueError, TypeError):
+                    pass
         
-        for uid in confirmateur_ids:
-            uid_str = str(uid).strip()
-            try:
-                int_uid = int(uid)
-                if int_uid in django_users:
-                    confirmateur_users_dict[uid_str] = django_users[int_uid]
-                    # Also store with int key for compatibility
-                    confirmateur_users_dict[int_uid] = django_users[int_uid]
-            except (ValueError, TypeError):
-                pass
+        if django_user_ids_to_try:
+            django_users = {u.id: u for u in DjangoUser.objects.filter(id__in=django_user_ids_to_try)}
+            
+            # Add Django users to dictionaries for IDs not found via UserDetails
+            for uid in teleoperator_ids:
+                uid_str = str(uid).strip()
+                if uid_str not in found_via_userdetails:
+                    try:
+                        int_uid = int(uid)
+                        if int_uid in django_users:
+                            teleoperator_users_dict[uid_str] = django_users[int_uid]
+                            teleoperator_users_dict[int_uid] = django_users[int_uid]
+                    except (ValueError, TypeError):
+                        pass
+            
+            for uid in confirmateur_ids:
+                uid_str = str(uid).strip()
+                if uid_str not in found_via_userdetails:
+                    try:
+                        int_uid = int(uid)
+                        if int_uid in django_users:
+                            confirmateur_users_dict[uid_str] = django_users[int_uid]
+                            confirmateur_users_dict[int_uid] = django_users[int_uid]
+                    except (ValueError, TypeError):
+                        pass
     
     # Pre-fetch existing contacts by old_contact_id for updates
     # NOTE: We ONLY match by old_contact_id, NOT by email (duplicate emails are allowed)
@@ -3558,25 +3551,32 @@ def contacts_bulk_create(request):
                     confirmateur_id = str(confirmateur_id_raw).strip()
                     confirmateur_found = False
                     
-                    # Try exact match first (normalized string)
+                    # Try exact match first (normalized string) - this should be the primary lookup
                     if confirmateur_id in confirmateur_users_dict:
                         existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id]
                         confirmateur_found = True
                     else:
-                        # Try as integer if it's numeric
-                        try:
-                            int_id = int(confirmateur_id)
-                            if int_id in confirmateur_users_dict:
-                                existing_contact.confirmateur = confirmateur_users_dict[int_id]
-                                confirmateur_found = True
-                        except (ValueError, TypeError):
-                            pass
+                        # Try original format (without strip) before trying integer
+                        confirmateur_id_original = str(confirmateur_id_raw).strip()
+                        if confirmateur_id_original != confirmateur_id and confirmateur_id_original in confirmateur_users_dict:
+                            existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id_original]
+                            confirmateur_found = True
                         
-                        # Try original format (without strip)
+                        # Try as integer if it's numeric and not found yet
                         if not confirmateur_found:
-                            confirmateur_id_original = str(confirmateur_id_raw)
-                            if confirmateur_id_original in confirmateur_users_dict:
-                                existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id_original]
+                            try:
+                                int_id = int(confirmateur_id)
+                                if int_id in confirmateur_users_dict:
+                                    existing_contact.confirmateur = confirmateur_users_dict[int_id]
+                                    confirmateur_found = True
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        # Last resort: try without strip
+                        if not confirmateur_found:
+                            confirmateur_id_no_strip = str(confirmateur_id_raw)
+                            if confirmateur_id_no_strip != confirmateur_id and confirmateur_id_no_strip in confirmateur_users_dict:
+                                existing_contact.confirmateur = confirmateur_users_dict[confirmateur_id_no_strip]
                                 confirmateur_found = True
                 elif 'confirmateurId' in contact_data:
                     # Explicitly set to None if field is present but empty
@@ -3792,25 +3792,32 @@ def contacts_bulk_create(request):
                 confirmateur_id = str(confirmateur_id_raw).strip()
                 confirmateur_found = False
                 
-                # Try exact match first (normalized string)
+                # Try exact match first (normalized string) - this should be the primary lookup
                 if confirmateur_id in confirmateur_users_dict:
                     contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id]
                     confirmateur_found = True
                 else:
-                    # Try as integer if it's numeric
-                    try:
-                        int_id = int(confirmateur_id)
-                        if int_id in confirmateur_users_dict:
-                            contact_obj_data['confirmateur'] = confirmateur_users_dict[int_id]
-                            confirmateur_found = True
-                    except (ValueError, TypeError):
-                        pass
+                    # Try original format (without strip) before trying integer
+                    confirmateur_id_original = str(confirmateur_id_raw).strip()
+                    if confirmateur_id_original != confirmateur_id and confirmateur_id_original in confirmateur_users_dict:
+                        contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id_original]
+                        confirmateur_found = True
                     
-                    # Try original format (without strip)
+                    # Try as integer if it's numeric and not found yet
                     if not confirmateur_found:
-                        confirmateur_id_original = str(confirmateur_id_raw)
-                        if confirmateur_id_original in confirmateur_users_dict:
-                            contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id_original]
+                        try:
+                            int_id = int(confirmateur_id)
+                            if int_id in confirmateur_users_dict:
+                                contact_obj_data['confirmateur'] = confirmateur_users_dict[int_id]
+                                confirmateur_found = True
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Last resort: try without strip
+                    if not confirmateur_found:
+                        confirmateur_id_no_strip = str(confirmateur_id_raw)
+                        if confirmateur_id_no_strip != confirmateur_id and confirmateur_id_no_strip in confirmateur_users_dict:
+                            contact_obj_data['confirmateur'] = confirmateur_users_dict[confirmateur_id_no_strip]
                             confirmateur_found = True
             
             # Set platform
@@ -5335,11 +5342,17 @@ def contacts_integration_update(request):
                             # Use CSV value directly (might be an ID)
                             teleoperator_id = teleoperator_value_str
                         
-                        # Try UserDetails ID first, then Django User ID
-                        teleoperator_user = users_by_userdetails_id.get(teleoperator_id)
+                        # Try UserDetails ID first (this is what frontend sends), then Django User ID as fallback
+                        # Normalize the ID for lookup (strip whitespace)
+                        teleoperator_id_normalized = teleoperator_id.strip()
+                        teleoperator_user = users_by_userdetails_id.get(teleoperator_id_normalized)
                         if not teleoperator_user:
+                            # Try original format (without strip) in case it was stored differently
+                            teleoperator_user = users_by_userdetails_id.get(teleoperator_id)
+                        if not teleoperator_user:
+                            # Fallback: try Django User ID if it's numeric
                             try:
-                                django_id = int(teleoperator_id)
+                                django_id = int(teleoperator_id_normalized)
                                 teleoperator_user = users_by_django_id.get(django_id)
                             except (ValueError, TypeError):
                                 pass
@@ -5370,11 +5383,17 @@ def contacts_integration_update(request):
                             # Use CSV value directly (might be an ID)
                             confirmateur_id = confirmateur_value_str
                         
-                        # Try UserDetails ID first, then Django User ID
-                        confirmateur_user = users_by_userdetails_id.get(confirmateur_id)
+                        # Try UserDetails ID first (this is what frontend sends), then Django User ID as fallback
+                        # Normalize the ID for lookup (strip whitespace)
+                        confirmateur_id_normalized = confirmateur_id.strip()
+                        confirmateur_user = users_by_userdetails_id.get(confirmateur_id_normalized)
                         if not confirmateur_user:
+                            # Try original format (without strip) in case it was stored differently
+                            confirmateur_user = users_by_userdetails_id.get(confirmateur_id)
+                        if not confirmateur_user:
+                            # Fallback: try Django User ID if it's numeric
                             try:
-                                django_id = int(confirmateur_id)
+                                django_id = int(confirmateur_id_normalized)
                                 confirmateur_user = users_by_django_id.get(django_id)
                             except (ValueError, TypeError):
                                 pass
