@@ -11,13 +11,13 @@ from .models import Team
 from .models import Event
 from .models import TeamMember
 from .models import Log
-from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP, Transaction, RIB
+from .models import Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, OTP, Transaction, RIB, ContactView
 from .serializer import (
     UserSerializer, ContactSerializer, ContactMigrationSerializer, NoteSerializer, NoteCategorySerializer,
     TeamSerializer, TeamDetailSerializer, UserDetailsSerializer, EventSerializer, TeamMemberSerializer,
     RoleSerializer, PermissionSerializer, PermissionRoleSerializer, StatusSerializer, SourceSerializer, PlatformSerializer, LogSerializer, DocumentSerializer,
     SMTPConfigSerializer, EmailSerializer, EmailSignatureSerializer, ChatRoomSerializer, MessageSerializer, NotificationSerializer,
-    NotificationPreferenceSerializer, FosseSettingsSerializer, TransactionSerializer, RIBSerializer
+    NotificationPreferenceSerializer, FosseSettingsSerializer, TransactionSerializer, RIBSerializer, ContactViewSerializer
 )
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
@@ -12207,4 +12207,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 # Custom token view that uses the custom serializer
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
+# Import contact view endpoints
+from .contact_views_endpoints import get_contact_views, create_contact_view, update_contact_view, delete_contact_view
 

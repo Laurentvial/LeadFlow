@@ -142,9 +142,14 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
     
     // Add timeout for production to prevent hanging requests
     // Maximum timeout is 10 seconds as requested - file size should be validated before upload
-    // Use longer timeout only for CSV import (10 minutes), email sending (60 seconds), contacts list (dynamic based on page_size) vs regular requests (10 seconds)
+    // Use longer timeout only for CSV import (10 minutes), email sending (60 seconds), contacts list (dynamic based on page_size), events (5 minutes) vs regular requests (10 seconds)
     const isImportRequest = endpoint.includes('/csv-import/');
     const isEmailSendRequest = endpoint.includes('/emails/send/') || endpoint.includes('/emails/fetch/');
+    // Match events endpoints: /api/events/ with optional query params
+    const isEventsRequest = (
+      endpoint === '/api/events/' || 
+      endpoint.startsWith('/api/events/?')
+    );
     // Only match the actual list endpoints: /api/contacts/ and /api/contacts/fosse/ (with optional query params)
     // Exclude endpoints like /api/contacts/create/, /api/contacts/assigned-today-count/, etc.
     // Match pattern: /api/contacts/ or /api/contacts/fosse/ followed by optional query params
@@ -161,6 +166,8 @@ export async function apiCall(endpoint: string, options: RequestInit = {}) {
       timeoutDuration = 600000; // 10 min for imports
     } else if (isEmailSendRequest) {
       timeoutDuration = 60000; // 60 sec for email operations
+    } else if (isEventsRequest) {
+      timeoutDuration = 300000; // 5 minutes for events (PlanningAdministrateur loads many pages)
     } else if (isContactsListRequest) {
       // Extract page_size from endpoint URL
       const pageSizeMatch = endpoint.match(/[?&]page_size=(\d+)/);

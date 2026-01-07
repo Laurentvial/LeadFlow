@@ -145,4 +145,9 @@ urlpatterns = [
     # OTP endpoints
     path('otp/send/', api_views.send_otp, name='send-otp'),
     path('otp/verify/', api_views.verify_otp, name='verify-otp'),
+    # Contact Views endpoints
+    path('contact-views/', api_views.get_contact_views, name='get-contact-views'),
+    path('contact-views/create/', api_views.create_contact_view, name='create-contact-view'),
+    path('contact-views/<str:view_id>/update/', api_views.update_contact_view, name='update-contact-view'),
+    path('contact-views/<str:view_id>/delete/', api_views.delete_contact_view, name='delete-contact-view'),
 ]

@@ -681,3 +681,29 @@ class RIB(models.Model):
     
     def __str__(self):
         return f"RIB {self.id} - {self.rib_text[:50] if self.rib_text else 'Empty'}"
+
+class ContactView(models.Model):
+    """Saved views for contact list filtering and display preferences"""
+    id = models.CharField(max_length=12, default="", unique=True, primary_key=True)
+    user = models.ForeignKey(DjangoUser, on_delete=models.CASCADE, related_name='contact_views')
+    name = models.CharField(max_length=200)
+    is_fosse = models.BooleanField(default=False)  # True for Fosse page views, False for Contacts page views
+    search_term = models.CharField(max_length=500, default="", blank=True)
+    status_type = models.CharField(max_length=20, choices=[('all', 'All'), ('lead', 'Lead'), ('client', 'Client')], default='all')
+    order = models.CharField(max_length=50, default='created_at_desc')
+    items_per_page = models.IntegerField(default=50)
+    column_filters = models.JSONField(default=dict, blank=True)  # Store column filters as JSON
+    visible_columns = models.JSONField(default=list, blank=True)  # Store visible column IDs as JSON array
+    column_order = models.JSONField(default=list, blank=True)  # Store column order as JSON array
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),  # Optimize queries filtering by user
+            models.Index(fields=['user', 'is_fosse', '-created_at']),  # Optimize queries filtering by user and page type
+        ]
+    
+    def __str__(self):
+        return f"ContactView {self.id} - {self.name} - {self.user.username}"

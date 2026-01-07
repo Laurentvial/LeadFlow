@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User as DjangoUser
 from rest_framework import serializers
-from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, Transaction, RIB
+from .models import Contact, Note, NoteCategory, UserDetails, Team, Event, TeamMember, Log, Role, Permission, PermissionRole, Status, Source, Platform, Document, SMTPConfig, Email, EmailSignature, ChatRoom, Message, Notification, NotificationPreference, FosseSettings, Transaction, RIB, ContactView
 from django.db import transaction
 import uuid
 
@@ -2307,3 +2307,58 @@ class RIBSerializer(serializers.ModelSerializer):
                 return f"{first_name} {last_name}".strip()
             return obj.created_by.username or ''
         return ''
+
+class ContactViewSerializer(serializers.ModelSerializer):
+    """Serializer for ContactView model"""
+    userId = serializers.CharField(source='user.id', read_only=True)
+    user = serializers.PrimaryKeyRelatedField(queryset=DjangoUser.objects.all(), write_only=True, required=False)
+    isFosse = serializers.BooleanField(source='is_fosse', required=False, default=False)
+    searchTerm = serializers.CharField(source='search_term', required=False, allow_blank=True, default='')
+    statusType = serializers.CharField(source='status_type', required=False, default='all')
+    itemsPerPage = serializers.IntegerField(source='items_per_page', required=False, default=50)
+    columnFilters = serializers.JSONField(source='column_filters', required=False, allow_null=True, default=dict)
+    visibleColumns = serializers.JSONField(source='visible_columns', required=False, allow_null=True, default=list)
+    columnOrder = serializers.JSONField(source='column_order', required=False, allow_null=True, default=list)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+    
+    class Meta:
+        model = ContactView
+        fields = ['id', 'userId', 'user', 'name', 'isFosse', 'searchTerm', 'statusType', 'order', 
+                  'itemsPerPage', 'columnFilters', 'visibleColumns', 'columnOrder', 
+                  'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'createdAt', 'updatedAt']
+    
+    def validate_user(self, value):
+        """Ensure user is set during creation and prevent changes during update"""
+        if not value and not self.instance:
+            # During creation, user should be provided
+            raise serializers.ValidationError("User is required for creating a view.")
+        if self.instance and value and value != self.instance.user:
+            # Prevent changing user during update
+            raise serializers.ValidationError("Cannot change the user of an existing view.")
+        return value
+    
+    def update(self, instance, validated_data):
+        """Update view - remove user from validated_data to prevent changes"""
+        validated_data.pop('user', None)  # Remove user if present to prevent changes
+        return super().update(instance, validated_data)
+    
+    def create(self, validated_data):
+        """Create a new ContactView with auto-generated ID"""
+        # Ensure default values are set if not provided
+        validated_data.setdefault('is_fosse', False)
+        validated_data.setdefault('search_term', '')
+        validated_data.setdefault('status_type', 'all')
+        validated_data.setdefault('items_per_page', 50)
+        validated_data.setdefault('column_filters', {})
+        validated_data.setdefault('visible_columns', [])
+        validated_data.setdefault('column_order', [])
+        
+        # Generate unique ID
+        view_id = uuid.uuid4().hex[:12]
+        while ContactView.objects.filter(id=view_id).exists():
+            view_id = uuid.uuid4().hex[:12]
+        
+        validated_data['id'] = view_id
+        return super().create(validated_data)

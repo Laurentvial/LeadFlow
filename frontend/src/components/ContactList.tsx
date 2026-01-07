@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy, ChevronDown } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy, ChevronDown, Bookmark, BookmarkCheck, MoreVertical, Table } from 'lucide-react';
 import {
   Command,
   CommandEmpty,
@@ -592,6 +592,25 @@ function ContactList({
   const [eventMinute, setEventMinute] = useState('');
   const [eventTeleoperatorId, setEventTeleoperatorId] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // View management types and state
+  interface SavedView {
+    id: string;
+    name: string;
+    searchTerm: string;
+    statusType: 'all' | 'lead' | 'client';
+    order: 'created_at_asc' | 'created_at_desc' | 'updated_at_asc' | 'updated_at_desc' | 'assigned_at_asc' | 'assigned_at_desc' | 'date_lead_to_client_asc' | 'date_lead_to_client_desc' | 'email_asc' | 'random';
+    itemsPerPage: number;
+    columnFilters: Record<string, string | string[] | { from?: string; to?: string }>;
+    visibleColumns: string[];
+    columnOrder: string[];
+  }
+  
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [currentViewId, setCurrentViewId] = useState<string | null>(null);
+  const [isSaveViewDialogOpen, setIsSaveViewDialogOpen] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   
   // Client form state
   const [clientFormData, setClientFormData] = useState({
@@ -1246,6 +1265,212 @@ function ContactList({
     localStorage.setItem(storageKey, JSON.stringify(columns));
     setVisibleColumns(columns);
   };
+  
+  // View management functions
+  // Load saved views from API (database)
+  const loadSavedViews = useCallback(async () => {
+    try {
+      const response = await apiCall(`/api/contact-views/?isFosse=${isFossePage}`);
+      // Map API response to SavedView format
+      const views: SavedView[] = response.map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        searchTerm: v.searchTerm || '',
+        statusType: v.statusType || 'all',
+        order: v.order || 'created_at_desc',
+        itemsPerPage: v.itemsPerPage || 50,
+        columnFilters: v.columnFilters || {},
+        visibleColumns: v.visibleColumns || [],
+        columnOrder: v.columnOrder || [],
+      }));
+      setSavedViews(views);
+    } catch (error: any) {
+      console.error('Error loading views:', error);
+      setSavedViews([]);
+    }
+  }, [isFossePage]);
+  
+  // Save current state as a view (to database)
+  const saveCurrentView = useCallback(async (name: string) => {
+    try {
+      const viewData = {
+        name,
+        isFosse: isFossePage,
+        searchTerm: appliedSearchTerm,
+        statusType: appliedStatusType,
+        order: selectedOrder,
+        itemsPerPage,
+        columnFilters: { ...appliedColumnFilters },
+        visibleColumns: [...visibleColumns],
+        columnOrder: [...columnOrder],
+      };
+      
+      const response = await apiCall('/api/contact-views/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(viewData),
+      });
+      
+      // Map API response to SavedView format
+      const newView: SavedView = {
+        id: response.id,
+        name: response.name,
+        searchTerm: response.searchTerm || '',
+        statusType: response.statusType || 'all',
+        order: response.order || 'created_at_desc',
+        itemsPerPage: response.itemsPerPage || 50,
+        columnFilters: response.columnFilters || {},
+        visibleColumns: response.visibleColumns || [],
+        columnOrder: response.columnOrder || [],
+      };
+      
+      setSavedViews(prev => [...prev, newView]);
+      setCurrentViewId(newView.id);
+      setIsSaveViewDialogOpen(false);
+      setNewViewName('');
+      toast.success(`Vue "${name}" enregistrée`);
+    } catch (error: any) {
+      console.error('Error saving view:', error);
+      // Show actual error message from backend if available
+      const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de l\'enregistrement de la vue';
+      // If it's a validation error, show field-specific errors
+      if (error?.response && typeof error.response === 'object') {
+        const validationErrors = Object.entries(error.response)
+          .filter(([key]) => key !== 'error' && key !== 'detail')
+          .map(([key, value]) => {
+            if (Array.isArray(value)) {
+              return `${key}: ${value.join(', ')}`;
+            }
+            return `${key}: ${value}`;
+          });
+        if (validationErrors.length > 0) {
+          toast.error(`Erreur de validation: ${validationErrors.join('; ')}`);
+          return;
+        }
+      }
+      toast.error(errorMessage);
+    }
+  }, [appliedSearchTerm, appliedStatusType, selectedOrder, itemsPerPage, appliedColumnFilters, visibleColumns, columnOrder, isFossePage]);
+  
+  // Update existing view (in database)
+  const updateView = useCallback(async (viewId: string) => {
+    try {
+      const view = savedViews.find(v => v.id === viewId);
+      if (!view) return;
+      
+      const viewData = {
+        name: view.name,
+        isFosse: isFossePage,
+        searchTerm: appliedSearchTerm,
+        statusType: appliedStatusType,
+        order: selectedOrder,
+        itemsPerPage,
+        columnFilters: { ...appliedColumnFilters },
+        visibleColumns: [...visibleColumns],
+        columnOrder: [...columnOrder],
+      };
+      
+      const response = await apiCall(`/api/contact-views/${viewId}/update/`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(viewData),
+      });
+      
+      // Map API response to SavedView format
+      const updatedView: SavedView = {
+        id: response.id,
+        name: response.name,
+        searchTerm: response.searchTerm || '',
+        statusType: response.statusType || 'all',
+        order: response.order || 'created_at_desc',
+        itemsPerPage: response.itemsPerPage || 50,
+        columnFilters: response.columnFilters || {},
+        visibleColumns: response.visibleColumns || [],
+        columnOrder: response.columnOrder || [],
+      };
+      
+      setSavedViews(prev => prev.map(v => v.id === viewId ? updatedView : v));
+      toast.success(`Vue "${view.name}" mise à jour`);
+    } catch (error: any) {
+      console.error('Error updating view:', error);
+      // Show actual error message from backend if available
+      const errorMessage = error?.response?.error || error?.response?.detail || error?.message || 'Erreur lors de la mise à jour de la vue';
+      // If it's a validation error, show field-specific errors
+      if (error?.response && typeof error.response === 'object') {
+        const validationErrors = Object.entries(error.response)
+          .filter(([key]) => key !== 'error' && key !== 'detail')
+          .map(([key, value]) => {
+            if (Array.isArray(value)) {
+              return `${key}: ${value.join(', ')}`;
+            }
+            return `${key}: ${value}`;
+          });
+        if (validationErrors.length > 0) {
+          toast.error(`Erreur de validation: ${validationErrors.join('; ')}`);
+          return;
+        }
+      }
+      toast.error(errorMessage);
+    }
+  }, [savedViews, appliedSearchTerm, appliedStatusType, selectedOrder, itemsPerPage, appliedColumnFilters, visibleColumns, columnOrder, isFossePage]);
+  
+  // Load a saved view (from database)
+  const loadView = useCallback((viewId: string) => {
+    const view = savedViews.find(v => v.id === viewId);
+    if (!view) return;
+    
+    setAppliedSearchTerm(view.searchTerm);
+    setPendingSearchTerm(view.searchTerm);
+    setAppliedStatusType(view.statusType);
+    setPendingStatusType(view.statusType);
+    setSelectedOrder(view.order);
+    setItemsPerPage(view.itemsPerPage);
+    setPendingItemsPerPage(view.itemsPerPage);
+    setAppliedColumnFilters({ ...view.columnFilters });
+    setPendingColumnFilters({ ...view.columnFilters });
+    setVisibleColumns([...view.visibleColumns]);
+    setColumnOrder([...view.columnOrder]);
+    setCurrentViewId(viewId);
+    setCurrentPage(1); // Reset to first page when loading a view
+    
+    // Save individual settings to localStorage for backward compatibility (default view)
+    const storageKey = getStorageKey('order');
+    localStorage.setItem(storageKey, view.order);
+    const columnOrderKey = getStorageKey('column-order');
+    localStorage.setItem(columnOrderKey, JSON.stringify(view.columnOrder));
+    const columnsKey = getStorageKey('columns');
+    localStorage.setItem(columnsKey, JSON.stringify(view.visibleColumns));
+    
+    toast.success(`Vue "${view.name}" chargée`);
+  }, [savedViews, isFossePage]);
+  
+  // Delete a view (from database)
+  const deleteView = useCallback(async (viewId: string) => {
+    try {
+      const view = savedViews.find(v => v.id === viewId);
+      if (!view) return;
+      
+      await apiCall(`/api/contact-views/${viewId}/delete/`, {
+        method: 'DELETE',
+      });
+      
+      setSavedViews(prev => prev.filter(v => v.id !== viewId));
+      
+      if (currentViewId === viewId) {
+        setCurrentViewId(null);
+      }
+      
+      toast.success(`Vue "${view.name}" supprimée`);
+    } catch (error: any) {
+      console.error('Error deleting view:', error);
+      toast.error('Erreur lors de la suppression de la vue');
+    }
+  }, [savedViews, currentViewId]);
+  
+  // Load saved views on mount
+  useEffect(() => {
+    loadSavedViews();
+  }, [loadSavedViews]);
   
   const handleToggleColumn = (columnId: string) => {
     // If on Fosse page, check forced columns restrictions
@@ -5240,6 +5465,7 @@ function ContactList({
                 </SelectContent>
               </Select>
             </div>
+
           </div>
         </CardContent>
       </Card>
@@ -5636,6 +5862,106 @@ function ContactList({
                   </>
                 )}
               </Button>
+              <Popover open={isViewMenuOpen} onOpenChange={setIsViewMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    title="Sélectionner une vue"
+                  >
+                    <Table className="w-4 h-4 mr-2" />
+                    {currentViewId ? savedViews.find(v => v.id === currentViewId)?.name || 'Sélectionner une vue' : 'Sélectionner une vue'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80" style={{ zIndex: 10001 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '4px' }}>Vues enregistrées</div>
+                    {savedViews.length === 0 ? (
+                      <div style={{ fontSize: '0.875rem', color: '#6b7280', padding: '8px' }}>
+                        Aucune vue enregistrée
+                      </div>
+                    ) : (
+                      savedViews.map((view) => (
+                        <div
+                          key={view.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '8px',
+                            borderRadius: '4px',
+                            backgroundColor: currentViewId === view.id ? '#eff6ff' : 'transparent',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => {
+                            loadView(view.id);
+                            setIsViewMenuOpen(false);
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                            {currentViewId === view.id && <BookmarkCheck className="w-4 h-4 text-blue-600" />}
+                            <span style={{ fontSize: '0.875rem' }}>{view.name}</span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Supprimer la vue "${view.name}" ?`)) {
+                                deleteView(view.id);
+                              }
+                            }}
+                            style={{ padding: '4px', minWidth: 'auto' }}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-600" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                    <div style={{ borderTop: '1px solid #e5e7eb', marginTop: '8px', paddingTop: '8px' }}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setIsViewMenuOpen(false);
+                          setIsSaveViewDialogOpen(true);
+                        }}
+                        style={{ width: '100%' }}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Enregistrer la vue actuelle
+                      </Button>
+                      {currentViewId && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            updateView(currentViewId);
+                            setIsViewMenuOpen(false);
+                          }}
+                          style={{ width: '100%', marginTop: '8px' }}
+                        >
+                          <BookmarkCheck className="w-4 h-4 mr-2" />
+                          Mettre à jour la vue actuelle
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              {currentViewId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setCurrentViewId(null);
+                    toast.success('Vue désactivée');
+                  }}
+                  title="Désactiver la vue actuelle"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
               <Button 
                 variant="outline" 
                 size="sm"
@@ -6772,6 +7098,92 @@ function ContactList({
                 </Button>
               </div>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Save View Modal */}
+      {isSaveViewDialogOpen && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" onClick={(e) => handleModalOverlayClick(e, () => {
+          setIsSaveViewDialogOpen(false);
+          setNewViewName('');
+        })}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Enregistrer une vue</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="modal-close"
+                onClick={() => {
+                  setIsSaveViewDialogOpen(false);
+                  setNewViewName('');
+                }}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <form 
+              className="modal-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (newViewName.trim()) {
+                  saveCurrentView(newViewName.trim());
+                } else {
+                  toast.error('Veuillez entrer un nom pour la vue');
+                }
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <Label htmlFor="view-name">Nom de la vue</Label>
+                  <Input
+                    id="view-name"
+                    value={newViewName}
+                    onChange={(e) => setNewViewName(e.target.value)}
+                    placeholder="Ex: Mes leads actifs"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newViewName.trim()) {
+                        e.preventDefault();
+                        saveCurrentView(newViewName.trim());
+                      }
+                    }}
+                    style={{ marginTop: '8px' }}
+                  />
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', padding: '12px', backgroundColor: '#f9fafb', borderRadius: '4px' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>Cette vue inclura :</div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <li>Recherche : {appliedSearchTerm || 'Aucune'}</li>
+                    <li>Type de contact : {appliedStatusType === 'all' ? 'Tous' : appliedStatusType === 'lead' ? 'Lead' : 'Client'}</li>
+                    <li>Ordre : {selectedOrder}</li>
+                    <li>Affichage par : {itemsPerPage}</li>
+                    <li>Filtres de colonnes : {Object.keys(appliedColumnFilters).length} filtre(s)</li>
+                    <li>Colonnes visibles : {visibleColumns.length}</li>
+                  </ul>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+                <Button 
+                  type="button"
+                  variant="outline" 
+                  onClick={() => {
+                    setIsSaveViewDialogOpen(false);
+                    setNewViewName('');
+                  }}
+                >
+                  Annuler
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!newViewName.trim()}
+                >
+                  Enregistrer
+                </Button>
+              </div>
+            </form>
           </div>
         </div>,
         document.body

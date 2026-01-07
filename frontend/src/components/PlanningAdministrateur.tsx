@@ -20,6 +20,7 @@ import '../styles/PlanningCalendar.css';
 import '../styles/Modal.css';
 import '../styles/PageHeader.css';
 import { toast } from 'sonner';
+import LoadingIndicator from './LoadingIndicator';
 
 export function PlanningAdministrateur() {
   const { currentUser } = useUser();
@@ -1960,6 +1961,12 @@ export function PlanningAdministrateur() {
             </div>
           </CardHeader>
           <CardContent>
+            {loading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+                <LoadingIndicator />
+              </div>
+            ) : (
+              <>
             {view === 'month' && (
               <div className="planning-calendar-grid">
                 {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day) => (
@@ -2325,6 +2332,8 @@ export function PlanningAdministrateur() {
                   })}
                 </div>
               </div>
+            )}
+              </>
             )}
           </CardContent>
         </Card>
