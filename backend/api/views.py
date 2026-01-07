@@ -293,6 +293,116 @@ def send_contact_notification(contact, notification_type='nouveau_client'):
         print(traceback.format_exc())
 
 
+def send_transaction_update_notification(contact, transaction):
+    """
+    Send notification when a transaction with type 'Ouverture' is updated.
+    Notifies all users who can see the contact.
+    
+    Args:
+        contact: Contact instance
+        transaction: Transaction instance (should be type 'Ouverture')
+    """
+    try:
+        # Only send notification for 'Ouverture' transactions
+        if transaction.type != 'Ouverture':
+            return
+        
+        # Get all users who can see this contact based on data_access permissions
+        users_to_notify = []
+        
+        # Get contact's assigned users
+        contact_users = []
+        if contact.teleoperator:
+            contact_users.append(contact.teleoperator)
+        if contact.confirmateur:
+            contact_users.append(contact.confirmateur)
+        if contact.creator:
+            contact_users.append(contact.creator)
+        
+        # Get all users with their roles and data_access
+        all_user_details = UserDetails.objects.select_related('role_id', 'django_user').all()
+        
+        for user_details in all_user_details:
+            user = user_details.django_user
+            if not user_details.role:
+                continue
+                
+            data_access = user_details.role.data_access
+            
+            # Check if user can see this contact
+            can_see_contact = False
+            
+            if data_access == 'all':
+                # User can see all contacts
+                can_see_contact = True
+            elif data_access == 'own_only':
+                # User can only see contacts where they are teleoperator or confirmateur
+                if user in contact_users:
+                    can_see_contact = True
+            elif data_access == 'team_only':
+                # User can see contacts from their team
+                team_member = user_details.team_memberships.select_related('team').first()
+                if team_member:
+                    team = team_member.team
+                    # Get all users in the same team
+                    team_user_ids = TeamMember.objects.filter(team=team).values_list('user__django_user__id', flat=True)
+                    # Check if contact's teleoperator/confirmateur/creator is in the same team
+                    if (contact.teleoperator and contact.teleoperator.id in team_user_ids) or \
+                       (contact.confirmateur and contact.confirmateur.id in team_user_ids) or \
+                       (contact.creator and contact.creator.id in team_user_ids) or \
+                       (user in contact_users):
+                        can_see_contact = True
+                else:
+                    # User has no team, fall back to own_only behavior
+                    if user in contact_users:
+                        can_see_contact = True
+            
+            if can_see_contact:
+                users_to_notify.append(user)
+        
+        # Remove duplicates
+        users_to_notify = list(set(users_to_notify))
+        
+        if not users_to_notify:
+            return  # No users to notify
+        
+        # Build notification message
+        contact_name = f"{contact.fname} {contact.lname}".strip() or "Contact"
+        title = 'Transaction modifiée'
+        message = f"La transaction d'ouverture a été modifiée pour le contact {contact_name}"
+        
+        # Create database notifications for each user
+        # The signal handler will automatically send them via WebSocket
+        for user in users_to_notify:
+            try:
+                notification_id = uuid.uuid4().hex[:12]
+                while Notification.objects.filter(id=notification_id).exists():
+                    notification_id = uuid.uuid4().hex[:12]
+                
+                Notification.objects.create(
+                    id=notification_id,
+                    user=user,
+                    type='contact',
+                    title=title,
+                    message=message,
+                    contact_id=contact.id,
+                    is_read=False,
+                    data={
+                        'notification_type': 'transaction_updated',
+                        'transaction_id': transaction.id,
+                    }
+                )
+            except Exception as e:
+                import traceback
+                print(f"Error creating transaction update notification for contact {contact.id} to user {user.id}: {str(e)}")
+                print(traceback.format_exc())
+                
+    except Exception as e:
+        import traceback
+        print(f"Error sending transaction update notification: {str(e)}")
+        print(traceback.format_exc())
+
+
 def send_confirmateur_assignment_notification(contact, confirmateur_user):
     """
     Send notification to confirmateur when they are assigned to a contact with client_default=True status.
@@ -7505,6 +7615,99 @@ def contact_detail(request, contact_id):
                 # Verify assigned_at was saved
                 contact.refresh_from_db()
                 
+                # Create transaction with type 'Ouverture' when fiche client is filled
+                # Check if montantEncaisse was provided in the request
+                montant_encaisse_provided = 'montantEncaisse' in request.data
+                montant_encaisse_value = None
+                
+                if montant_encaisse_provided:
+                    montant_encaisse_raw = request.data.get('montantEncaisse')
+                    
+                    # Handle None, empty string, or numeric values
+                    if montant_encaisse_raw is not None and montant_encaisse_raw != '':
+                        try:
+                            montant_encaisse_value = float(montant_encaisse_raw)
+                        except (ValueError, TypeError):
+                            montant_encaisse_value = None
+                
+                # Check if contact has client status
+                # Priority: Check statusId from request first (the status being set), then check saved contact status
+                is_client_status = False
+                status_id_from_request = request.data.get('statusId')
+                
+                if status_id_from_request:
+                    # Check the status that was just set in the request
+                    new_status_type = Status.objects.filter(id=status_id_from_request).values_list('type', flat=True).first()
+                    is_client_status = new_status_type == 'client'
+                elif contact.status_id:
+                    # Fallback: check the contact's current status after save
+                    status_type = Status.objects.filter(id=contact.status_id).values_list('type', flat=True).first()
+                    is_client_status = status_type == 'client'
+                
+                # Create or update transaction with type 'Ouverture' when fiche client is filled
+                # A contact can only have one transaction with type 'Ouverture'
+                # Condition: montantEncaisse must be provided (can be 0), and contact must have client status
+                if montant_encaisse_provided and montant_encaisse_value is not None and is_client_status:
+                    try:
+                        # Check if a transaction with type 'Ouverture' already exists for this contact
+                        existing_ouverture_transaction = Transaction.objects.filter(
+                            contact=contact,
+                            type='Ouverture'
+                        ).first()
+                        
+                        # Get bonus value if provided
+                        bonus_value = None
+                        if 'bonus' in request.data:
+                            bonus_raw = request.data.get('bonus')
+                            if bonus_raw:
+                                try:
+                                    bonus_value = float(bonus_raw)
+                                except (ValueError, TypeError):
+                                    bonus_value = None
+                        
+                        # Get payment type if provided
+                        payment_type = request.data.get('paiement', '') or ''
+                        
+                        # Build comment with montant encaisse and bonus if provided
+                        comment_parts = [f'Montant encaissé: {montant_encaisse_value}€']
+                        if bonus_value and bonus_value > 0:
+                            comment_parts.append(f'Bonus: {bonus_value}€')
+                        comment = ' - '.join(comment_parts)
+                        
+                        if existing_ouverture_transaction:
+                            # Update existing transaction (contact already has one 'Ouverture' transaction)
+                            # Only update: montant encaisse (amount), mode de paiement (payment_type), and updated_at (automatic)
+                            existing_ouverture_transaction.amount = montant_encaisse_value
+                            existing_ouverture_transaction.payment_type = payment_type
+                            # Note: updated_at is automatically updated by Django's auto_now=True
+                            existing_ouverture_transaction.save()
+                            
+                            # Send notification to all users who have access to the contact
+                            send_transaction_update_notification(contact, existing_ouverture_transaction)
+                        else:
+                            # No transaction found - create a new one
+                            from api.signals import generate_unique_id
+                            from django.utils import timezone as tz
+                            transaction_id = generate_unique_id(Transaction)
+                            
+                            transaction = Transaction.objects.create(
+                                id=transaction_id,
+                                contact=contact,
+                                type='Ouverture',
+                                status='to_verify',
+                                payment_type=payment_type,
+                                amount=montant_encaisse_value,
+                                date=tz.now(),
+                                comment=comment,
+                                created_by=request.user if request.user.is_authenticated else None,
+                                bonus=True if bonus_value and bonus_value > 0 else False
+                            )
+                    except Exception as e:
+                        # Log error but don't fail the contact update
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error creating/updating transaction with type 'Ouverture' for contact {contact.id}: {str(e)}")
+                
                 # Send notification if contact moved to client_default status
                 if should_send_client_notification:
                     print(f"[DEBUG] Contact {contact.id} moved to client_default status, sending notification")
@@ -8881,7 +9084,15 @@ def transaction_update(request, transaction_id):
             # Explicitly set to None if empty string or None
             rib = None
         
+        # Store old transaction type to check if it's an 'Ouverture' transaction
+        old_transaction_type = transaction.type
+        
         transaction = serializer.save(contact=contact, rib=rib)
+        
+        # Send notification if transaction type is 'Ouverture' (either was already 'Ouverture' or was updated to 'Ouverture')
+        if transaction.type == 'Ouverture':
+            send_transaction_update_notification(contact, transaction)
+        
         return Response(TransactionSerializer(transaction).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

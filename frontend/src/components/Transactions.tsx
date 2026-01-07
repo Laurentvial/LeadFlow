@@ -295,7 +295,7 @@ export function Transactions() {
       let comparison = 0;
       
       if (sortBy === 'date') {
-        comparison = new Date(a.date).getTime() - new Date(b.date).getTime();
+        comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       } else if (sortBy === 'amount') {
         comparison = a.amount - b.amount;
       } else if (sortBy === 'type') {
@@ -601,7 +601,7 @@ export function Transactions() {
           <table className="w-full min-w-max">
             <thead className="bg-muted">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium">Date</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Créé le</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Contact</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Type</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Mode de paiement</th>
@@ -621,7 +621,7 @@ export function Transactions() {
             <tbody>
               {filteredAndSortedTransactions.map((transaction) => (
                 <tr key={transaction.id} className="border-t hover:bg-muted/50">
-                  <td className="px-4 py-3 text-sm">{formatDate(transaction.date)}</td>
+                  <td className="px-4 py-3 text-sm">{formatDate(transaction.created_at)}</td>
                   <td className="px-4 py-3 text-sm">
                     {transaction.contactName || (
                       <span className="text-muted-foreground cursor-pointer hover:underline" onClick={() => transaction.contactId && navigate(`/contacts/${transaction.contactId}`)}>

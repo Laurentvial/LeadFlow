@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useHasNoteCategoryPermission, useAccessibleNoteCategoryIds } from '../hooks/usePermissions';
 import { useUser } from '../contexts/UserContext';
+import { EmojiPicker } from './EmojiPicker';
 
 interface NoteCategory {
   id: string;
@@ -35,6 +36,7 @@ const NoteItem: React.FC<NoteItemProps> = ({ note, onDelete, onEdit }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(note.text);
   const [isSaving, setIsSaving] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   
   const handleStartEdit = () => {
     setEditText(note.text);
@@ -103,14 +105,37 @@ const NoteItem: React.FC<NoteItemProps> = ({ note, onDelete, onEdit }) => {
       </div>
       {isEditing ? (
         <>
-          <Textarea
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            className="resize-none"
-            rows={4}
-            disabled={isSaving}
-            autoFocus
-          />
+          <div className="relative">
+            <Textarea
+              ref={editTextareaRef}
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="resize-none pr-8"
+              rows={4}
+              disabled={isSaving}
+              autoFocus
+            />
+            <EmojiPicker
+              onEmojiSelect={(emoji) => {
+                const textarea = editTextareaRef.current;
+                if (textarea) {
+                  const start = textarea.selectionStart;
+                  const end = textarea.selectionEnd;
+                  const text = editText;
+                  const newText = text.substring(0, start) + emoji + text.substring(end);
+                  setEditText(newText);
+                  // Set cursor position after the inserted emoji
+                  setTimeout(() => {
+                    textarea.focus();
+                    textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                  }, 0);
+                } else {
+                  setEditText(editText + emoji);
+                }
+              }}
+              textareaRef={editTextareaRef}
+            />
+          </div>
           <div className="flex gap-1 mt-2">
             <Button
               variant="ghost"
@@ -170,6 +195,7 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
   const [categories, setCategories] = useState<NoteCategory[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [localNotes, setLocalNotes] = useState<any[]>(notes);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Sync local notes with props when they change
   useEffect(() => {
@@ -450,15 +476,38 @@ export function ContactNotesTab({ notes, contactId, onRefresh }: ContactNotesTab
           <form onSubmit={handleCreateNote} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="note-text">Note</Label>
-              <Textarea
-                id="note-text"
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Saisissez votre note..."
-                rows={4}
-                className="resize-none"
-                disabled={isSubmitting}
-              />
+              <div className="relative">
+                <Textarea
+                  id="note-text"
+                  ref={noteTextareaRef}
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Saisissez votre note..."
+                  rows={4}
+                  className="resize-none pr-8"
+                  disabled={isSubmitting}
+                />
+                <EmojiPicker
+                  onEmojiSelect={(emoji) => {
+                    const textarea = noteTextareaRef.current;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const text = noteText;
+                      const newText = text.substring(0, start) + emoji + text.substring(end);
+                      setNoteText(newText);
+                      // Set cursor position after the inserted emoji
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                      }, 0);
+                    } else {
+                      setNoteText(noteText + emoji);
+                    }
+                  }}
+                  textareaRef={noteTextareaRef}
+                />
+              </div>
             </div>
             {canCreateInSelectedCategory && (
               <Button type="submit" disabled={isSubmitting || !noteText.trim()}>

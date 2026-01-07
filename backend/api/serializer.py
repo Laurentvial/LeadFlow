@@ -2186,6 +2186,8 @@ class TransactionSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'id': {'required': False},
             'created_by': {'read_only': True},
+            'created_at': {'read_only': True},
+            'updated_at': {'read_only': True},
             'payment_type': {'required': False, 'allow_blank': True},
             'rib': {'read_only': True}
         }
@@ -2244,6 +2246,9 @@ class TransactionSerializer(serializers.ModelSerializer):
         # Remove contactId and ribId from validated_data as they're not model fields
         validated_data.pop('contactId', None)
         validated_data.pop('ribId', None)
+        # Ensure created_at and created_by are never updated
+        validated_data.pop('created_at', None)
+        validated_data.pop('created_by', None)
         # Handle empty string for payment_type - convert to empty string explicitly
         if 'payment_type' in validated_data and validated_data['payment_type'] == '':
             validated_data['payment_type'] = ''

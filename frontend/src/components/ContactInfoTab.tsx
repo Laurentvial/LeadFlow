@@ -17,6 +17,7 @@ import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { handleModalOverlayClick } from '../utils/modal';
 import { formatPhoneNumber, removePhoneSpaces, formatPhoneNumberAsYouType } from '../utils/phoneNumber';
+import { EmojiPicker } from './EmojiPicker';
 import '../styles/Contacts.css';
 import '../styles/Modal.css';
 import '../styles/ContactTab.css';
@@ -63,6 +64,7 @@ const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdi
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(note.text);
   const [isSaving, setIsSaving] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   
   const handleStartEdit = () => {
     setEditText(note.text);
@@ -100,14 +102,37 @@ const NoteItemCompact: React.FC<NoteItemCompactProps> = ({ note, onDelete, onEdi
     <div className="text-sm" style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       {isEditing ? (
         <div className="space-y-2">
-          <Textarea
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            className="resize-none text-sm"
-            rows={3}
-            disabled={isSaving}
-            autoFocus
-          />
+          <div className="relative">
+            <Textarea
+              ref={editTextareaRef}
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="resize-none text-sm pr-8"
+              rows={3}
+              disabled={isSaving}
+              autoFocus
+            />
+            <EmojiPicker
+              onEmojiSelect={(emoji) => {
+                const textarea = editTextareaRef.current;
+                if (textarea) {
+                  const start = textarea.selectionStart;
+                  const end = textarea.selectionEnd;
+                  const text = editText;
+                  const newText = text.substring(0, start) + emoji + text.substring(end);
+                  setEditText(newText);
+                  // Set cursor position after the inserted emoji
+                  setTimeout(() => {
+                    textarea.focus();
+                    textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                  }, 0);
+                } else {
+                  setEditText(editText + emoji);
+                }
+              }}
+              textareaRef={editTextareaRef}
+            />
+          </div>
           <div className="flex gap-2">
             <Button
               variant="ghost"
@@ -910,6 +935,7 @@ export function ContactInfoTab({
   const [selectedStatusId, setSelectedStatusId] = useState('');
   const [statusChangeNote, setStatusChangeNote] = useState('');
   const [statusChangeNoteCategoryId, setStatusChangeNoteCategoryId] = useState<string>('');
+  const statusChangeNoteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [statusModalFilterType, setStatusModalFilterType] = useState<'lead' | 'client'>('lead');
   // Event fields for status with is_event=true
   const [eventDate, setEventDate] = useState('');
@@ -1185,6 +1211,7 @@ export function ContactInfoTab({
   // Notes state
   const [noteText, setNoteText] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [categories, setCategories] = useState<NoteCategory[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false); // Start as false - don't block display
@@ -2035,7 +2062,6 @@ export function ContactInfoTab({
         if (!clientFormData.contrat) errors.contrat = true;
         if (clientFormData.montantEncaisse === '') errors.montantEncaisse = true;
         if (clientFormData.bonus === '') errors.bonus = true;
-        if (!clientFormData.paiement) errors.paiement = true;
         
         if (Object.keys(errors).length > 0) {
           setFieldErrors(errors);
@@ -2074,31 +2100,7 @@ export function ContactInfoTab({
         });
         console.log('[Status Update] Contact updated successfully');
         
-        // Create transaction for the first payment when moving to client status
-        if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
-          try {
-            const now = new Date();
-            const dateTime = now.toISOString();
-            
-            await apiCall('/api/transactions/create/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contactId: contactId,
-                type: 'Ouverture',
-                status: 'to_verify',
-                payment_type: clientFormData.paiement || '',
-                amount: parseFloat(clientFormData.montantEncaisse),
-                date: dateTime,
-                comment: `Premier paiement - Montant encaissé: ${clientFormData.montantEncaisse}€${clientFormData.bonus ? `, Bonus: ${clientFormData.bonus}€` : ''}`,
-              }),
-            });
-          } catch (transactionError: any) {
-            console.error('Error creating transaction:', transactionError);
-            // Don't fail the whole operation if transaction creation fails
-            toast.error('Contact mis à jour mais erreur lors de la création de la transaction');
-          }
-        }
+        // Transaction creation is now handled automatically by the backend when montantEncaisse is provided
       } else {
         // Update status (non-client default status)
         console.log('[Status Update] Processing non-client default status...');
@@ -5162,14 +5164,37 @@ export function ContactInfoTab({
                   {/* Show form only if user has create permission for informations tab AND category permission */}
                   {canCreateInSelectedCategory && canCreateInformationsTab && (
                     <form onSubmit={handleCreateNote} className="space-y-2">
-                      <Textarea
-                        value={noteText}
-                        onChange={(e) => setNoteText(e.target.value)}
-                        placeholder="Ajouter une note..."
-                        rows={2}
-                        className="resize-none text-sm w-full"
-                        disabled={isSubmittingNote}
-                      />
+                      <div className="relative w-full">
+                        <Textarea
+                          ref={noteTextareaRef}
+                          value={noteText}
+                          onChange={(e) => setNoteText(e.target.value)}
+                          placeholder="Ajouter une note..."
+                          rows={2}
+                          className="resize-none text-sm w-full pr-8"
+                          disabled={isSubmittingNote}
+                        />
+                        <EmojiPicker
+                          onEmojiSelect={(emoji) => {
+                            const textarea = noteTextareaRef.current;
+                            if (textarea) {
+                              const start = textarea.selectionStart;
+                              const end = textarea.selectionEnd;
+                              const text = noteText;
+                              const newText = text.substring(0, start) + emoji + text.substring(end);
+                              setNoteText(newText);
+                              // Set cursor position after the inserted emoji
+                              setTimeout(() => {
+                                textarea.focus();
+                                textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                              }, 0);
+                            } else {
+                              setNoteText(noteText + emoji);
+                            }
+                          }}
+                          textareaRef={noteTextareaRef}
+                        />
+                      </div>
                       <Button 
                         type="submit" 
                         size="sm" 
@@ -5837,24 +5862,47 @@ export function ContactInfoTab({
                     ))}
                   </div>
                 )}
-                <Textarea
-                  id="statusNote"
-                  placeholder={requiresNoteForStatusChange ? "Saisissez une note expliquant le changement de statut..." : "Saisissez une note expliquant le changement de statut (optionnel)..."}
-                  value={statusChangeNote}
-                  onChange={(e) => {
-                    setStatusChangeNote(e.target.value);
-                    if (fieldErrors.note) {
-                      setFieldErrors(prev => {
-                        const newErrors = { ...prev };
-                        delete newErrors.note;
-                        return newErrors;
-                      });
-                    }
-                  }}
-                  rows={4}
-                  className={`resize-none ${fieldErrors.note ? 'border-red-500' : ''}`}
-                  required={requiresNoteForStatusChange}
-                />
+                <div className="relative">
+                  <Textarea
+                    id="statusNote"
+                    ref={statusChangeNoteTextareaRef}
+                    placeholder={requiresNoteForStatusChange ? "Saisissez une note expliquant le changement de statut..." : "Saisissez une note expliquant le changement de statut (optionnel)..."}
+                    value={statusChangeNote}
+                    onChange={(e) => {
+                      setStatusChangeNote(e.target.value);
+                      if (fieldErrors.note) {
+                        setFieldErrors(prev => {
+                          const newErrors = { ...prev };
+                          delete newErrors.note;
+                          return newErrors;
+                        });
+                      }
+                    }}
+                    rows={4}
+                    className={`resize-none pr-8 ${fieldErrors.note ? 'border-red-500' : ''}`}
+                    required={requiresNoteForStatusChange}
+                  />
+                  <EmojiPicker
+                    onEmojiSelect={(emoji) => {
+                      const textarea = statusChangeNoteTextareaRef.current;
+                      if (textarea) {
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        const text = statusChangeNote;
+                        const newText = text.substring(0, start) + emoji + text.substring(end);
+                        setStatusChangeNote(newText);
+                        // Set cursor position after the inserted emoji
+                        setTimeout(() => {
+                          textarea.focus();
+                          textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                        }, 0);
+                      } else {
+                        setStatusChangeNote(statusChangeNote + emoji);
+                      }
+                    }}
+                    textareaRef={statusChangeNoteTextareaRef}
+                  />
+                </div>
                 {requiresNoteForStatusChange && (
                   <p style={{ fontSize: '0.875rem', color: 'rgb(217, 119, 6)', marginTop: '0.5rem' }}>
                     Une note est obligatoire pour changer le statut.
@@ -6298,7 +6346,7 @@ export function ContactInfoTab({
                     </div>
 
                     <div className="modal-form-field">
-                      <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                      <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement</Label>
                       <Select
                         value={clientFormData.paiement || 'none'}
                         onValueChange={(value) => updateFormField('paiement', value === 'none' ? '' : value)}

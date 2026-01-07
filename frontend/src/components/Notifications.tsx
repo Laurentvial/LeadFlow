@@ -181,9 +181,15 @@ export default function Notifications() {
       // Navigate to email
       window.location.href = `/mails?email=${notification.email_id}`;
     } else if (notification.type === 'contact' && notification.contact_id) {
-      // Navigate to contact detail page (same format as ContactSearchBar)
-      // This handles all contact notifications including "Nouveau client"
-      window.open(`/contacts/${notification.contact_id}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+      // Check if this is a transaction update notification
+      if (notification.data?.notification_type === 'transaction_updated') {
+        // Navigate to transactions page in a new tab
+        window.open('/transactions', '_blank');
+      } else {
+        // Navigate to contact detail page (same format as ContactSearchBar)
+        // This handles all contact notifications including "Nouveau client"
+        window.open(`/contacts/${notification.contact_id}`, '_blank', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+      }
     } else if (notification.type === 'event' && notification.event_id) {
       // Navigate to planning calendar in a new tab
       window.open('/planning', '_blank');
@@ -213,7 +219,12 @@ export default function Notifications() {
   };
 
   // Get notification icon
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = (type: string, data?: any) => {
+    // Check if this is a transaction update notification
+    if (type === 'contact' && data?.notification_type === 'transaction_updated') {
+      return '⚠️';
+    }
+    
     switch (type) {
       case 'message':
         return '💬';
@@ -472,7 +483,7 @@ export default function Notifications() {
                           style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
                         >
                           <div className="notification-icon">
-                            {getNotificationIcon(notification.type)}
+                            {getNotificationIcon(notification.type, notification.data)}
                           </div>
                           <div className="notification-content">
                             <div className="notification-title">{notification.title}</div>
@@ -521,7 +532,7 @@ export default function Notifications() {
                           style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}
                         >
                           <div className="notification-icon">
-                            {getNotificationIcon(notification.type)}
+                            {getNotificationIcon(notification.type, notification.data)}
                           </div>
                           <div className="notification-content">
                             <div className="notification-title">{notification.title}</div>

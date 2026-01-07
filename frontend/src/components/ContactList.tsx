@@ -34,6 +34,7 @@ import { formatPhoneNumber } from '../utils/phoneNumber';
 import { ACCESS_TOKEN } from '../utils/constants';
 import { handleModalOverlayClick } from '../utils/modal';
 import { cn } from './ui/utils';
+import { EmojiPicker } from './EmojiPicker';
 import '../styles/Contacts.css';
 import '../styles/PageHeader.css';
 import '../styles/Modal.css';
@@ -585,6 +586,7 @@ function ContactList({
   const [selectedStatusId, setSelectedStatusId] = useState('');
   const [statusChangeNote, setStatusChangeNote] = useState('');
   const [statusChangeNoteCategoryId, setStatusChangeNoteCategoryId] = useState<string>('');
+  const statusChangeNoteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
   // Event fields for status with is_event=true
   const [eventDate, setEventDate] = useState('');
@@ -3312,6 +3314,7 @@ function ContactList({
               <PopoverContent 
                 className="w-96 h-96 p-4 flex flex-col" 
                 align="start"
+                side="right"
                 onMouseEnter={() => {
                   // Keep popover open when hovering over content
                   if (hoverTimeoutRef.current[contact.id]) {
@@ -4165,7 +4168,6 @@ function ContactList({
         if (!clientFormData.contrat) errors.contrat = true;
         if (clientFormData.montantEncaisse === '') errors.montantEncaisse = true;
         if (clientFormData.bonus === '') errors.bonus = true;
-        if (!clientFormData.paiement) errors.paiement = true;
         
         if (Object.keys(errors).length > 0) {
           setFieldErrors(errors);
@@ -4204,31 +4206,7 @@ function ContactList({
         });
         console.log('[Status Update] Contact updated successfully');
         
-        // Create transaction for the first payment when moving to client status
-        if (clientFormData.montantEncaisse && parseFloat(clientFormData.montantEncaisse) > 0) {
-          try {
-            const now = new Date();
-            const dateTime = now.toISOString();
-            
-            await apiCall('/api/transactions/create/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contactId: selectedContact.id,
-                type: 'Ouverture',
-                status: 'to_verify',
-                payment_type: clientFormData.paiement || '',
-                amount: parseFloat(clientFormData.montantEncaisse),
-                date: dateTime,
-                comment: `Premier paiement - Montant encaissé: ${clientFormData.montantEncaisse}€${clientFormData.bonus ? `, Bonus: ${clientFormData.bonus}€` : ''}`,
-              }),
-            });
-          } catch (transactionError: any) {
-            console.error('Error creating transaction:', transactionError);
-            // Don't fail the whole operation if transaction creation fails
-            toast.error('Contact mis à jour mais erreur lors de la création de la transaction');
-          }
-        }
+        // Transaction creation is now handled automatically by the backend when montantEncaisse is provided
       } else {
         // Update status (non-client default status)
         console.log('[Status Update] Processing non-client default status...');
@@ -6335,24 +6313,47 @@ function ContactList({
                     ))}
                   </div>
                 )}
-                <Textarea
-                  id="statusNote"
-                  placeholder={requiresNoteForStatusChange ? "Saisissez une note expliquant le changement de statut..." : "Saisissez une note expliquant le changement de statut (optionnel)..."}
-                  value={statusChangeNote}
-                  onChange={(e) => {
-                    setStatusChangeNote(e.target.value);
-                    if (fieldErrors.note) {
-                      setFieldErrors(prev => {
-                        const newErrors = { ...prev };
-                        delete newErrors.note;
-                        return newErrors;
-                      });
-                    }
-                  }}
-                  rows={4}
-                  className={`resize-none ${fieldErrors.note ? 'border-red-500' : ''}`}
-                  required={requiresNoteForStatusChange}
-                />
+                <div className="relative">
+                  <Textarea
+                    id="statusNote"
+                    ref={statusChangeNoteTextareaRef}
+                    placeholder={requiresNoteForStatusChange ? "Saisissez une note expliquant le changement de statut..." : "Saisissez une note expliquant le changement de statut (optionnel)..."}
+                    value={statusChangeNote}
+                    onChange={(e) => {
+                      setStatusChangeNote(e.target.value);
+                      if (fieldErrors.note) {
+                        setFieldErrors(prev => {
+                          const newErrors = { ...prev };
+                          delete newErrors.note;
+                          return newErrors;
+                        });
+                      }
+                    }}
+                    rows={4}
+                    className={`resize-none pr-8 ${fieldErrors.note ? 'border-red-500' : ''}`}
+                    required={requiresNoteForStatusChange}
+                  />
+                  <EmojiPicker
+                    onEmojiSelect={(emoji) => {
+                      const textarea = statusChangeNoteTextareaRef.current;
+                      if (textarea) {
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        const text = statusChangeNote;
+                        const newText = text.substring(0, start) + emoji + text.substring(end);
+                        setStatusChangeNote(newText);
+                        // Set cursor position after the inserted emoji
+                        setTimeout(() => {
+                          textarea.focus();
+                          textarea.setSelectionRange(start + emoji.length, start + emoji.length);
+                        }, 0);
+                      } else {
+                        setStatusChangeNote(statusChangeNote + emoji);
+                      }
+                    }}
+                    textareaRef={statusChangeNoteTextareaRef}
+                  />
+                </div>
                 {requiresNoteForStatusChange && (
                   <p style={{ fontSize: '0.875rem', color: 'rgb(217, 119, 6)', marginTop: '0.5rem' }}>
                     Une note est obligatoire pour changer le statut.
@@ -6784,7 +6785,7 @@ function ContactList({
                     </div>
 
                     <div className="modal-form-field">
-                        <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement <span style={{ color: '#ef4444' }}>*</span></Label>
+                        <Label htmlFor="client-paiement" style={fieldErrors.paiement ? { color: '#ef4444' } : {}}>Paiement</Label>
                       <Select
                         value={clientFormData.paiement || 'none'}
                         onValueChange={(value) => updateFormField('paiement', value === 'none' ? '' : value)}
