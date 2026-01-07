@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -79,6 +79,103 @@ export function PlanningCalendar() {
     clientId: '',
     userId: ''
   });
+  const [statuses, setStatuses] = useState<any[]>([]);
+
+  // Get status view permissions
+  const statusViewPermissions = useMemo(() => {
+    if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {
+      return new Set<string>();
+    }
+    
+    const viewPerms = currentUser.permissions
+      .filter((p: any) => {
+        // Check for status-specific view permissions
+        // These have component='statuses', action='view', and a statusId
+        const matches = p.component === 'statuses' && 
+               p.action === 'view' && 
+               p.statusId !== null && 
+               p.statusId !== undefined && 
+               p.statusId !== '';
+        
+        return matches;
+      })
+      .map((p: any) => {
+        const statusId = p.statusId;
+        if (!statusId) return null;
+        // Normalize statusId to string and trim whitespace
+        const normalizedId = String(statusId).trim();
+        return normalizedId !== '' ? normalizedId : null;
+      })
+      .filter((id): id is string => id !== null && id !== '');
+    
+    return new Set(viewPerms);
+  }, [currentUser?.permissions]);
+
+  // Get contact status info for an event
+  function getEventContactStatus(event: any): { id: string | null; name: string | null; color: string | null } {
+    // First, try to get status from event object directly (from API)
+    // Check for both camelCase and snake_case field names
+    const eventStatusId = event.contactStatusId || event.contact_status_id;
+    const eventStatusName = event.contactStatusName || event.contact_status_name;
+    const eventStatusColor = event.contactStatusColor || event.contact_status_color;
+    
+    if (eventStatusId && eventStatusName) {
+      // Find status in statuses list to get color if available
+      const status = statuses.find(s => s.id === eventStatusId);
+      const result = { 
+        id: eventStatusId, 
+        name: eventStatusName, 
+        color: status?.color || eventStatusColor || null 
+      };
+      console.log('Event status from API:', result, 'Event:', event);
+      return result;
+    }
+    
+    // Fallback: try to get status from contact cache
+    const contactId = event.clientId_read || event.contactId;
+    if (!contactId) return { id: null, name: null, color: null };
+    
+    const contact = contacts.find(c => c.id === contactId);
+    if (!contact) {
+      // Contact not loaded yet, return null
+      return { id: null, name: null, color: null };
+    }
+    
+    // Try to get statusId from contact (check multiple possible field names)
+    const contactStatusId = contact.statusId || contact.status?.id || contact.status_id;
+    
+    if (contactStatusId) {
+      // Find status in statuses list
+      const status = statuses.find(s => s.id === contactStatusId);
+      if (status) {
+        return { id: status.id, name: status.name, color: status.color || null };
+      }
+      // Status not found in statuses list, use contact's status info
+      return { 
+        id: contactStatusId, 
+        name: contact.statusName || contact.status_name || null, 
+        color: contact.statusColor || contact.status_color || null 
+      };
+    }
+    
+    // No statusId, but check if we have statusName directly
+    if (contact.statusName || contact.status_name) {
+      const statusName = contact.statusName || contact.status_name;
+      // Try to find status by name
+      const statusByName = statuses.find(s => s.name === statusName);
+      if (statusByName) {
+        return { id: statusByName.id, name: statusByName.name, color: statusByName.color || null };
+      }
+      // Return status info from contact if status not found in statuses list
+      return { 
+        id: null, 
+        name: statusName, 
+        color: contact.statusColor || contact.status_color || null 
+      };
+    }
+    
+    return { id: null, name: null, color: null };
+  }
 
   // Initialize userId with current user and date/time when modal opens
   useEffect(() => {
@@ -119,10 +216,21 @@ export function PlanningCalendar() {
 
   useEffect(() => {
     loadData();
+    loadStatuses();
     // Initialize currentMonthYear
     const date = new Date();
     setCurrentMonthYear(`${date.getFullYear()}-${date.getMonth()}`);
   }, []);
+
+  // Load statuses for filter
+  async function loadStatuses() {
+    try {
+      const data = await apiCall('/api/statuses/');
+      setStatuses(data.statuses || []);
+    } catch (error: any) {
+      console.error('Error loading statuses:', error);
+    }
+  }
 
   // Reload events only when the month/year changes, not on every date or view change
   useEffect(() => {
@@ -839,6 +947,7 @@ export function PlanningCalendar() {
       });
   }
 
+
   // Get events for a specific date
   function getEventsForDate(date: Date) {
     // Normalize date to midnight local time for consistent comparison
@@ -874,6 +983,7 @@ export function PlanningCalendar() {
         return dateA - dateB; // Sort chronologically (earliest first)
       });
   }
+
 
   // Get week days (Monday to Sunday)
   function getWeekDays(): Date[] {
@@ -963,15 +1073,17 @@ export function PlanningCalendar() {
           <p className="page-subtitle">Gestion des rendez-vous</p>
         </div>
         
-        {canCreate && (
-          <Button type="button" onClick={() => {
-            setPrefilledDateTime(null); // Clear any prefilled data
-            setIsModalOpen(true);
-          }}>
-            <Plus className="planning-icon planning-icon-with-margin" />
-            Ajouter un rendez-vous
-          </Button>
-        )}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {canCreate && (
+            <Button type="button" onClick={() => {
+              setPrefilledDateTime(null); // Clear any prefilled data
+              setIsModalOpen(true);
+            }}>
+              <Plus className="planning-icon planning-icon-with-margin" />
+              Ajouter un rendez-vous
+            </Button>
+          )}
+        </div>
         
         {isModalOpen && (
           <div className="modal-overlay" onClick={() => {
@@ -1488,6 +1600,27 @@ export function PlanningCalendar() {
                                     {event.contactName || event.clientName}
                                   </div>
                                 )}
+                                {(() => {
+                                  const contactStatus = getEventContactStatus(event);
+                                  if (contactStatus.name) {
+                                    return (
+                                      <div className="planning-event-status" style={{ marginTop: '2px' }}>
+                                        <span 
+                                          className="inline-block px-1 py-0.5 rounded text-xs font-medium"
+                                          style={{
+                                            backgroundColor: contactStatus.color || '#e5e7eb',
+                                            color: contactStatus.color ? '#000000' : '#374151',
+                                            fontSize: '0.65rem'
+                                          }}
+                                          title={contactStatus.name.length > 10 ? contactStatus.name : undefined}
+                                        >
+                                          {contactStatus.name.length > 10 ? `${contactStatus.name.substring(0, 10)}...` : contactStatus.name}
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                                 {eventUserId && (
                                   <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px', minWidth: 0 }}>
                                     <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
@@ -1635,6 +1768,26 @@ export function PlanningCalendar() {
                                       {event.contactName || event.clientName}
                                     </div>
                                   )}
+                                  {(() => {
+                                    const contactStatus = getEventContactStatus(event);
+                                    if (contactStatus.name) {
+                                      return (
+                                        <div className="planning-event-status" style={{ marginTop: '4px' }}>
+                                          <span 
+                                            className="inline-block px-1.5 py-0.5 rounded text-xs font-medium"
+                                            style={{
+                                              backgroundColor: contactStatus.color || '#e5e7eb',
+                                              color: contactStatus.color ? '#000000' : '#374151'
+                                            }}
+                                            title={contactStatus.name.length > 12 ? contactStatus.name : undefined}
+                                          >
+                                            {contactStatus.name.length > 12 ? `${contactStatus.name.substring(0, 12)}...` : contactStatus.name}
+                                          </span>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                   {eventUserId && (
                                     <div className="planning-event-user" style={{ fontSize: '0.65rem', color: '#1e293b', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                                       <User className="planning-icon-sm" style={{ width: '10px', height: '10px', flexShrink: 0, color: '#1e293b' }} />
@@ -1791,6 +1944,26 @@ export function PlanningCalendar() {
                                           Non assigné
                                         </div>
                                       )}
+                                      {(() => {
+                                        const contactStatus = getEventContactStatus(event);
+                                        if (contactStatus.name) {
+                                          return (
+                                            <div className="planning-day-event-status" style={{ marginTop: '6px' }}>
+                                              <span 
+                                                className="inline-block px-2 py-0.5 rounded text-xs font-medium"
+                                                style={{
+                                                  backgroundColor: contactStatus.color || '#e5e7eb',
+                                                  color: contactStatus.color ? '#000000' : '#374151'
+                                                }}
+                                                title={contactStatus.name.length > 15 ? contactStatus.name : undefined}
+                                              >
+                                                {contactStatus.name.length > 15 ? `${contactStatus.name.substring(0, 15)}...` : contactStatus.name}
+                                              </span>
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
                                     </>
                                   );
                                 })()}
@@ -1899,6 +2072,7 @@ export function PlanningCalendar() {
                 return new Date(event.datetime) <= now;
               });
               
+              
               // Filter by day if selected or in day view
               if (selectedDay !== null || view === 'day') {
                 const dateToFilter = view === 'day' ? selectedDate : new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDay!);
@@ -1954,11 +2128,26 @@ export function PlanningCalendar() {
                           .map((event) => {
                             const contactId = event.clientId_read || event.contactId;
                             const notes = contactId ? (contactNotes[contactId] || []) : [];
+                            const contactStatus = getEventContactStatus(event);
+                            // Debug logging
+                            if (!contactStatus.name && contactId) {
+                              console.log('[AppointmentCard] No status found for event:', {
+                                eventId: event.id,
+                                contactId: contactId,
+                                hasContactInCache: !!contacts.find(c => c.id === contactId),
+                                eventKeys: Object.keys(event),
+                                contactStatusId: event.contactStatusId,
+                                contactStatusName: event.contactStatusName,
+                                contactStatusColor: event.contactStatusColor
+                              });
+                            }
+                            // Show status if available (user can already see the event and contact)
                             const cardProps: any = {
                               appointment: event,
                               variant: 'planning' as const,
                               showActions: canEdit || canDelete,
                               notes: notes,
+                              contactStatus: contactStatus.name ? contactStatus : undefined,
                             };
                             if (canEdit) cardProps.onEdit = handleEditEvent;
                             if (canDelete) cardProps.onDelete = handleDeleteEvent;
@@ -1999,11 +2188,14 @@ export function PlanningCalendar() {
                           .map((event) => {
                             const contactId = event.clientId_read || event.contactId;
                             const notes = contactId ? (contactNotes[contactId] || []) : [];
+                            const contactStatus = getEventContactStatus(event);
+                            // Show status if available (user can already see the event and contact)
                             const cardProps: any = {
                               appointment: event,
                               variant: 'planning' as const,
                               showActions: false, // No edit/delete for past events
                               notes: notes,
+                              contactStatus: contactStatus.name ? contactStatus : undefined,
                             };
                             return (
                               <AppointmentCard

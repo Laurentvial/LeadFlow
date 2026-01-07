@@ -7676,9 +7676,11 @@ def contact_detail(request, contact_id):
                         
                         if existing_ouverture_transaction:
                             # Update existing transaction (contact already has one 'Ouverture' transaction)
-                            # Only update: montant encaisse (amount), mode de paiement (payment_type), and updated_at (automatic)
+                            # Update: montant encaisse (amount), mode de paiement (payment_type), comment, bonus, and updated_at (automatic)
                             existing_ouverture_transaction.amount = montant_encaisse_value
                             existing_ouverture_transaction.payment_type = payment_type
+                            existing_ouverture_transaction.comment = comment
+                            existing_ouverture_transaction.bonus = True if bonus_value and bonus_value > 0 else False
                             # Note: updated_at is automatically updated by Django's auto_now=True
                             existing_ouverture_transaction.save()
                             
@@ -8223,7 +8225,7 @@ def event_list(request):
     
     if contact_id:
         # Return events for this contact with pagination support
-        events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId').order_by('-datetime')  # Most recent first
+        events = Event.objects.filter(contactId=contact_id).select_related('userId', 'contactId', 'contactId__status').order_by('-datetime')  # Most recent first
         
         # Apply pagination if requested
         if requested_page or requested_page_size:
@@ -8271,7 +8273,7 @@ def event_list(request):
     else:
         # If all_events=true, bypass permission filtering and return all events (admin view)
         if all_events:
-            events = Event.objects.all().select_related('userId', 'contactId')
+            events = Event.objects.all().select_related('userId', 'contactId', 'contactId__status')
         else:
             # Filter events based on user's role data_access level
             # Events are filtered based on the contacts the user can access
@@ -8282,7 +8284,7 @@ def event_list(request):
                     
                     if data_access == 'all':
                         # User has access to all contacts, so show all events (including events without contacts)
-                        events = Event.objects.all().select_related('userId', 'contactId')
+                        events = Event.objects.all().select_related('userId', 'contactId', 'contactId__status')
                     elif data_access == 'team_only':
                         # Get user's team members
                         team_member = user_details.team_memberships.first()
@@ -8303,7 +8305,7 @@ def event_list(request):
                             events = Event.objects.filter(
                                 models.Q(contactId__id__in=accessible_contact_ids) |
                                 models.Q(contactId__isnull=True, userId__id__in=team_user_ids)
-                            ).select_related('userId', 'contactId')
+                            ).select_related('userId', 'contactId', 'contactId__status')
                         else:
                             # User has no team, fall back to own_only behavior
                             is_teleoperateur = user_details.role.is_teleoperateur
@@ -8328,7 +8330,7 @@ def event_list(request):
                             events = Event.objects.filter(
                                 models.Q(contactId__id__in=accessible_contact_ids) |
                                 models.Q(contactId__isnull=True, userId=user)
-                            ).select_related('userId', 'contactId')
+                            ).select_related('userId', 'contactId', 'contactId__status')
                     else:  # own_only
                         # Show events where BOTH conditions are true:
                         # 1. User is assigned to the event (userId = user)

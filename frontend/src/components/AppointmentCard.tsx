@@ -27,6 +27,11 @@ interface AppointmentCardProps {
     createdBy?: string;
     categoryName?: string;
   }>;
+  contactStatus?: {
+    id: string | null;
+    name: string | null;
+    color: string | null;
+  };
 }
 
 export function AppointmentCard({ 
@@ -35,8 +40,13 @@ export function AppointmentCard({
   onEdit, 
   onDelete,
   variant = 'default',
-  notes = []
+  notes = [],
+  contactStatus
 }: AppointmentCardProps) {
+  // Debug logging
+  if (contactStatus) {
+    console.log('[AppointmentCard] Rendering with contactStatus:', contactStatus);
+  }
   const datetime = new Date(appointment.datetime);
   const isPast = datetime < new Date();
   const contactName = appointment.clientName || appointment.contactName;
@@ -99,6 +109,21 @@ export function AppointmentCard({
                 <p className={`text-sm ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
                   Assigné à: <span className="font-medium">{appointment.assignedTo}</span>
                 </p>
+              </>
+            )}
+            {contactStatus?.name && (
+              <>
+                <span className={`text-slate-400 ${isPast ? 'opacity-40' : ''}`}>•</span>
+                <span 
+                  className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${isPast ? 'opacity-60' : ''}`}
+                  style={{
+                    backgroundColor: contactStatus.color || '#e5e7eb',
+                    color: contactStatus.color ? '#000000' : '#374151'
+                  }}
+                  title={contactStatus.name.length > 15 ? contactStatus.name : undefined}
+                >
+                  {contactStatus.name.length > 15 ? `${contactStatus.name.substring(0, 15)}...` : contactStatus.name}
+                </span>
               </>
             )}
           </div>
@@ -198,29 +223,29 @@ export function AppointmentCard({
           <div className="space-y-2">
             {notes.map((note) => (
               <div key={note.id} className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-600'}`}>
-                <div className="flex items-start gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
-                    {note.categoryName && (
-                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${isPast ? 'bg-slate-200 text-slate-500 opacity-60' : 'bg-blue-100 text-blue-700'}`}>
-                        {note.categoryName}
-                      </span>
-                    )}
-                    {(note.createdBy || note.created_at || note.createdAt) && (
-                      <span className={`text-xs whitespace-nowrap ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
-                        {note.createdBy && `${note.createdBy} • `}
-                        {new Date(note.createdAt || note.created_at || '').toLocaleDateString('fr-FR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric'
-                        })}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-600'}`} style={{ wordBreak: 'break-word' }}>
-                      {note.text && note.text.length > 100 ? `${note.text.substring(0, 100)}...` : note.text}
-                    </p>
-                  </div>
+                {/* Metadata (category, createdBy, createdAt) */}
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  {note.categoryName && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${isPast ? 'bg-slate-200 text-slate-500 opacity-60' : 'bg-blue-100 text-blue-700'}`}>
+                      {note.categoryName}
+                    </span>
+                  )}
+                  {(note.createdBy || note.created_at || note.createdAt) && (
+                    <span className={`text-xs whitespace-nowrap ${isPast ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {note.createdBy && `${note.createdBy} • `}
+                      {new Date(note.createdAt || note.created_at || '').toLocaleDateString('fr-FR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric'
+                      })}
+                    </span>
+                  )}
+                </div>
+                {/* Note content */}
+                <div className="mt-1">
+                  <p className={`text-xs ${isPast ? 'text-slate-400' : 'text-slate-600'}`} style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                    {note.text && note.text.length > 100 ? `${note.text.substring(0, 100)}...` : note.text}
+                  </p>
                 </div>
               </div>
             ))}

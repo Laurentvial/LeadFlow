@@ -1163,10 +1163,13 @@ class EventSerializer(serializers.ModelSerializer):
     assignedTo = serializers.SerializerMethodField()
     userId_read = serializers.SerializerMethodField()
     clientId_read = serializers.SerializerMethodField()
+    contactStatusId = serializers.SerializerMethodField()
+    contactStatusName = serializers.SerializerMethodField()
+    contactStatusColor = serializers.SerializerMethodField()
     
     class Meta:
         model = Event
-        fields = ['id', 'datetime', 'userId', 'userId_read', 'contactId', 'clientId_read', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo']
+        fields = ['id', 'datetime', 'userId', 'userId_read', 'contactId', 'clientId_read', 'comment', 'created_at', 'updated_at', 'contactName', 'createdBy', 'assignedTo', 'contactStatusId', 'contactStatusName', 'contactStatusColor']
         extra_kwargs = {
             'id': {'required': False}
         }
@@ -1211,6 +1214,24 @@ class EventSerializer(serializers.ModelSerializer):
                 return f"{first_name} {last_name}".strip()
             return obj.userId.username or ''
         return ''
+    
+    def get_contactStatusId(self, obj):
+        """Get the contact's status ID"""
+        if obj.contactId and obj.contactId.status:
+            return obj.contactId.status.id
+        return None
+    
+    def get_contactStatusName(self, obj):
+        """Get the contact's status name"""
+        if obj.contactId and obj.contactId.status:
+            return obj.contactId.status.name
+        return None
+    
+    def get_contactStatusColor(self, obj):
+        """Get the contact's status color"""
+        if obj.contactId and obj.contactId.status:
+            return obj.contactId.status.color or None
+        return None
     
     def to_internal_value(self, data):
         # Traiter le datetime comme heure locale (naive) sans conversion de timezone
