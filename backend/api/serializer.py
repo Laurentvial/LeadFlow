@@ -611,12 +611,59 @@ class ContactSerializer(serializers.ModelSerializer):
         ret['notesLatestText'] = latest_note.text[:100] if latest_note else ''  # First 100 chars
         ret['hasNotes'] = notes_count > 0
         
+        # Add logs information
+        from .models import Log
+        # Use prefetched data if available, otherwise query
+        if hasattr(instance, '_prefetched_objects_cache') and 'contact_logs' in instance._prefetched_objects_cache:
+            logs_list = list(instance._prefetched_objects_cache['contact_logs'])
+        else:
+            logs = Log.objects.filter(contact_id=instance).order_by('-created_at')
+            logs_list = list(logs)
+        
+        # Sort logs by created_at descending to ensure latest log is first
+        from datetime import datetime
+        logs_list = sorted(logs_list, key=lambda l: l.created_at if l.created_at else datetime.min, reverse=True)
+        
+        logs_count = len(logs_list)
+        latest_log = logs_list[0] if logs_list else None
+        
+        # Get latest log text from event_type or details
+        logs_latest_text = ''
+        if latest_log:
+            if latest_log.event_type:
+                logs_latest_text = latest_log.event_type
+            elif latest_log.details and isinstance(latest_log.details, dict):
+                # Try to extract meaningful text from details
+                details_str = str(latest_log.details)
+                logs_latest_text = details_str[:100] if details_str else ''
+        
+        ret['logsCount'] = logs_count
+        ret['logsLatestText'] = logs_latest_text[:100] if logs_latest_text else ''  # First 100 chars
+        ret['hasLogs'] = logs_count > 0
+        
+        # Add next event (appointment) information
+        from .models import Event
+        from django.utils import timezone
+        # Get the next upcoming event for this contact
+        now = timezone.now()
+        next_event = Event.objects.filter(
+            contactId=instance,
+            datetime__gte=now
+        ).order_by('datetime').first()
+        
+        if next_event:
+            ret['nextEventDate'] = next_event.datetime.isoformat() if next_event.datetime else None
+            ret['nextEventDatetime'] = next_event.datetime.isoformat() if next_event.datetime else None
+            ret['hasNextEvent'] = True
+        else:
+            ret['nextEventDate'] = None
+            ret['nextEventDatetime'] = None
+            ret['hasNextEvent'] = False
+        
         # Add most recent log date (from annotated field if available, otherwise query)
         if hasattr(instance, 'last_log_date'):
             ret['lastLogDate'] = instance.last_log_date
         else:
-            from .models import Log
-            latest_log = Log.objects.filter(contact_id=instance).order_by('-created_at').first()
             ret['lastLogDate'] = latest_log.created_at if latest_log else None
         
         # Add previous status and previous teleoperator from logs (keep this for backward compatibility)

@@ -693,7 +693,11 @@ function ContactList({
   const [notesPopoverOpen, setNotesPopoverOpen] = useState<string | null>(null);
   const [notesData, setNotesData] = useState<Record<string, any[]>>({});
   const [notesLoading, setNotesLoading] = useState<Record<string, boolean>>({});
+  const [logsPopoverOpen, setLogsPopoverOpen] = useState<string | null>(null);
+  const [logsData, setLogsData] = useState<Record<string, any[]>>({});
+  const [logsLoading, setLogsLoading] = useState<Record<string, boolean>>({});
   const hoverTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const logsHoverTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   
   // Column resizing state
   const getInitialColumnWidths = () => {
@@ -773,19 +777,45 @@ function ContactList({
     };
   }, [handleResizeMove, handleResizeEnd]);
   
+  // Check if user has permission to view/edit historique tab
+  const canViewHistoriqueTab = React.useMemo(() => {
+    if (!currentUser?.permissions) return true; // Default to visible if no permissions loaded
+    // Check if user has permission to view or edit historique tab
+    const hasViewPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'view' && 
+      p.fieldName === 'historique' &&
+      !p.statusId
+    );
+    const hasEditPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs' && 
+      p.action === 'edit' && 
+      p.fieldName === 'historique' &&
+      !p.statusId
+    );
+    // If no contact_tabs permissions exist at all, default to visible
+    const hasAnyContactTabsPermission = currentUser.permissions.some((p: any) => 
+      p.component === 'contact_tabs'
+    );
+    if (!hasAnyContactTabsPermission) return true;
+    return hasViewPermission || hasEditPermission;
+  }, [currentUser?.permissions]);
+
   // Define all available columns
-  const allColumns = [
-    { id: 'createdAt', label: 'Créé le', defaultVisible: true },
-    { id: 'fullName', label: 'Nom entier', defaultVisible: true },
-    { id: 'source', label: 'Source', defaultVisible: true },
-    { id: 'phone', label: 'Téléphone 1', defaultVisible: true },
-    { id: 'mobile', label: 'Telephone 2', defaultVisible: false },
-    { id: 'email', label: 'E-Mail', defaultVisible: true },
-    { id: 'status', label: 'Statut', defaultVisible: true },
-    { id: 'updatedAt', label: 'Modifié le', defaultVisible: true },
-    { id: 'notes', label: 'Notes', defaultVisible: true },
-    { id: 'id', label: 'Id', defaultVisible: true },
-    { id: 'firstName', label: 'Prénom', defaultVisible: false },
+  const allColumns = React.useMemo(() => {
+    const baseColumns = [
+      { id: 'createdAt', label: 'Créé le', defaultVisible: true },
+      { id: 'fullName', label: 'Nom entier', defaultVisible: true },
+      { id: 'source', label: 'Source', defaultVisible: true },
+      { id: 'phone', label: 'Téléphone 1', defaultVisible: true },
+      { id: 'mobile', label: 'Telephone 2', defaultVisible: false },
+      { id: 'email', label: 'E-Mail', defaultVisible: true },
+      { id: 'status', label: 'Statut', defaultVisible: true },
+      { id: 'updatedAt', label: 'Modifié le', defaultVisible: true },
+      { id: 'nextEvent', label: 'Prochain rdv', defaultVisible: true },
+      { id: 'notes', label: 'Notes', defaultVisible: true },
+      { id: 'id', label: 'Id', defaultVisible: true },
+      { id: 'firstName', label: 'Prénom', defaultVisible: false },
     { id: 'lastName', label: 'Nom', defaultVisible: false },
     { id: 'civility', label: 'Civilité', defaultVisible: false },
     { id: 'birthDate', label: 'Date de naissance', defaultVisible: false },
@@ -805,9 +835,17 @@ function ContactList({
     { id: 'platform', label: 'Plateforme', defaultVisible: false },
     { id: 'creator', label: 'Créateur', defaultVisible: false },
     { id: 'managerTeam', label: 'Équipe', defaultVisible: false },
-    { id: 'previousStatus', label: 'Statut précédent', defaultVisible: false },
-    { id: 'previousTeleoperator', label: 'Téléopérateur précédent', defaultVisible: false },
-  ];
+      { id: 'previousStatus', label: 'Statut précédent', defaultVisible: false },
+      { id: 'previousTeleoperator', label: 'Téléopérateur précédent', defaultVisible: false },
+    ];
+    
+    // Add logs column only if user has permission to view/edit historique tab
+    if (canViewHistoriqueTab) {
+      baseColumns.splice(9, 0, { id: 'logs', label: 'Logs', defaultVisible: true });
+    }
+    
+    return baseColumns;
+  }, [canViewHistoriqueTab]);
   
   // Load column visibility and order from localStorage or use defaults
   // Use separate localStorage keys for Contacts vs Fosse to avoid conflicts
@@ -2277,10 +2315,78 @@ function ContactList({
     }, 200);
   }, []);
 
+  // Load logs for a contact
+  const loadLogs = useCallback(async (contactId: string) => {
+    if (logsData[contactId] || logsLoading[contactId]) {
+      return; // Already loaded or loading
+    }
+
+    setLogsLoading(prev => ({ ...prev, [contactId]: true }));
+    try {
+      const data = await apiCall(`/api/contacts/${contactId}/logs/`);
+      // Handle both paginated response (data.logs) and direct array response
+      const logsArray = Array.isArray(data) ? data : (data.logs || []);
+      setLogsData(prev => ({ ...prev, [contactId]: logsArray }));
+    } catch (error) {
+      console.error('Error loading logs:', error);
+      setLogsData(prev => ({ ...prev, [contactId]: [] }));
+    } finally {
+      setLogsLoading(prev => ({ ...prev, [contactId]: false }));
+    }
+  }, [logsData, logsLoading]);
+
+  // Handle hover on logs cell
+  const handleLogsHover = useCallback((contactId: string, isEntering: boolean) => {
+    if (isEntering) {
+      // Clear any existing timeout
+      if (logsHoverTimeoutRef.current[contactId]) {
+        clearTimeout(logsHoverTimeoutRef.current[contactId]);
+        delete logsHoverTimeoutRef.current[contactId];
+      }
+      // Set timeout to open popover after a short delay
+      logsHoverTimeoutRef.current[contactId] = setTimeout(() => {
+        setLogsPopoverOpen(contactId);
+        loadLogs(contactId);
+      }, 300); // 300ms delay
+    } else {
+      // Clear timeout if mouse leaves before delay
+      if (logsHoverTimeoutRef.current[contactId]) {
+        clearTimeout(logsHoverTimeoutRef.current[contactId]);
+        delete logsHoverTimeoutRef.current[contactId];
+      }
+    }
+  }, [loadLogs]);
+
+  // Handle mouse leave from logs popover content
+  const handleLogsPopoverLeave = useCallback((contactId: string) => {
+    // Close popover after a short delay (to allow moving back to trigger)
+    setTimeout(() => {
+      setLogsPopoverOpen(prev => prev === contactId ? null : prev);
+    }, 200);
+  }, []);
+
+  // Get French label for event type
+  const getEventTypeLabel = (eventType: string): string => {
+    const labels: { [key: string]: string } = {
+      'addContact': 'Création du contact',
+      'editContact': 'Modification du contact',
+      'deleteContact': 'Suppression du contact',
+      'createEvent': 'Création d\'événement',
+      'editEvent': 'Modification d\'événement',
+      'deleteEvent': 'Suppression d\'événement',
+    };
+    return labels[eventType] || eventType;
+  };
+
   // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
+      // Clear all hover timeouts for notes
       Object.values(hoverTimeoutRef.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout as ReturnType<typeof setTimeout>);
+      });
+      // Clear all hover timeouts for logs
+      Object.values(logsHoverTimeoutRef.current).forEach(timeout => {
         if (timeout) clearTimeout(timeout as ReturnType<typeof setTimeout>);
       });
     };
@@ -2934,7 +3040,7 @@ function ContactList({
         return (
           <td 
             key={columnId} 
-            title={notesText || (notesCount > 0 ? `${notesCount} note(s)` : 'Aucune note')}
+            title={notesCount > 0 ? `${notesCount} note(s)` : 'Aucune note'}
             onMouseEnter={(e) => {
               e.stopPropagation();
               notesCount > 0 && handleNotesHover(contact.id, true);
@@ -2957,14 +3063,7 @@ function ContactList({
               <PopoverTrigger asChild>
                 <div style={{ cursor: notesCount > 0 ? 'pointer' : 'default' }}>
                   {notesCount > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <span style={{ fontWeight: '500' }}>{notesCount} note{notesCount > 1 ? 's' : ''}</span>
-                      {notesText && (
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
-                          {truncateText(notesText, 50)}
-                        </span>
-                      )}
-                    </div>
+                    <span style={{ fontWeight: '500' }}>{notesCount} note{notesCount > 1 ? 's' : ''}</span>
                   ) : (
                     <span style={{ color: '#9ca3af' }}>-</span>
                   )}
@@ -3052,6 +3151,169 @@ function ContactList({
             </Popover>
           </td>
         );
+      case 'nextEvent':
+        const nextEventDate = contact.nextEventDate || contact.nextEventDatetime;
+        const hasNextEvent = contact.hasNextEvent || !!nextEventDate;
+        
+        return (
+          <td key={columnId} title={nextEventDate ? new Date(nextEventDate).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : 'Aucun rendez-vous'}>
+            {hasNextEvent && nextEventDate ? (
+              <span style={{ fontSize: '0.875rem' }}>
+                {new Date(nextEventDate).toLocaleDateString('fr-FR', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric'
+                })}
+                {' '}
+                <span style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                  {new Date(nextEventDate).toLocaleTimeString('fr-FR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </span>
+            ) : (
+              <span style={{ color: '#9ca3af' }}>-</span>
+            )}
+          </td>
+        );
+      case 'logs':
+        const logsCount = contact.logsCount || 0;
+        const rawContactLogs = logsData[contact.id] || [];
+        const isLoadingLogs = logsLoading[contact.id];
+        const isLogsPopoverOpen = logsPopoverOpen === contact.id;
+        
+        return (
+          <td 
+            key={columnId} 
+            title={logsCount > 0 ? `${logsCount} log(s)` : 'Aucun log'}
+            onMouseEnter={(e) => {
+              e.stopPropagation();
+              logsCount > 0 && handleLogsHover(contact.id, true);
+            }}
+            onMouseLeave={(e) => {
+              e.stopPropagation();
+              handleLogsHover(contact.id, false);
+            }}
+            onClick={stopPropagation}
+            style={{ position: 'relative' }}
+          >
+            <Popover open={isLogsPopoverOpen} onOpenChange={(open) => {
+              if (!open) {
+                setLogsPopoverOpen(null);
+              } else {
+                setLogsPopoverOpen(contact.id);
+                loadLogs(contact.id);
+              }
+            }}>
+              <PopoverTrigger asChild>
+                <div style={{ cursor: logsCount > 0 ? 'pointer' : 'default' }}>
+                  {logsCount > 0 ? (
+                    <span style={{ fontWeight: '500' }}>{logsCount} log{logsCount > 1 ? 's' : ''}</span>
+                  ) : (
+                    <span style={{ color: '#9ca3af' }}>-</span>
+                  )}
+                </div>
+              </PopoverTrigger>
+              <PopoverContent 
+                className="w-96 h-96 p-4 flex flex-col" 
+                align="start"
+                onMouseEnter={() => {
+                  // Keep popover open when hovering over content
+                  if (logsHoverTimeoutRef.current[contact.id]) {
+                    clearTimeout(logsHoverTimeoutRef.current[contact.id]);
+                    delete logsHoverTimeoutRef.current[contact.id];
+                  }
+                  setLogsPopoverOpen(contact.id);
+                }}
+                onMouseLeave={() => handleLogsPopoverLeave(contact.id)}
+                style={{ zIndex: 10002, width: '384px', maxWidth: '384px', minWidth: '384px' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Logs ({rawContactLogs.length})</h3>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                  {isLoadingLogs ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                      Chargement...
+                    </div>
+                  ) : rawContactLogs.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', minWidth: 0 }}>
+                      {rawContactLogs
+                        .sort((a: any, b: any) => {
+                          // Sort by date descending (most recent first)
+                          const dateA = new Date(a.createdAt || a.created_at).getTime();
+                          const dateB = new Date(b.createdAt || b.created_at).getTime();
+                          return dateB - dateA;
+                        })
+                        .map((log: any) => (
+                        <div key={log.id} style={{ fontSize: '0.875rem', color: '#374151', lineHeight: '1.6', width: '100%', minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                            {log.eventType && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: '600', 
+                                color: '#3b82f6',
+                                backgroundColor: '#dbeafe',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {getEventTypeLabel(log.eventType)}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                              {log.userName && `Par ${log.userName}`}
+                              {log.createdAt && (
+                                <span style={{ marginLeft: '4px' }}>
+                                  {new Date(log.createdAt).toLocaleString('fr-FR', {
+                                    dateStyle: 'short',
+                                    timeStyle: 'short'
+                                  })}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          {(log.oldValue || log.newValue) && (
+                            <div style={{ 
+                              marginTop: '4px', 
+                              wordBreak: 'break-word', 
+                              overflowWrap: 'break-word',
+                              whiteSpace: 'pre-wrap',
+                              maxWidth: '100%',
+                              fontSize: '0.75rem',
+                              color: '#6b7280',
+                              fontFamily: 'monospace',
+                              backgroundColor: '#f9fafb',
+                              padding: '8px',
+                              borderRadius: '4px',
+                              overflow: 'auto'
+                            }}>
+                              {log.oldValue && (
+                                <div>
+                                  <strong>Ancien:</strong> {typeof log.oldValue === 'object' ? JSON.stringify(log.oldValue) : log.oldValue}
+                                </div>
+                              )}
+                              {log.newValue && (
+                                <div style={{ marginTop: '4px' }}>
+                                  <strong>Nouveau:</strong> {typeof log.newValue === 'object' ? JSON.stringify(log.newValue) : log.newValue}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>
+                      Aucun log
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </td>
+        );
       default:
         return <td key={columnId}>-</td>;
     }
@@ -3130,17 +3392,62 @@ function ContactList({
     }
   }
 
+  // Helper function to process contacts in batches to avoid overwhelming the browser/server
+  async function processBatch<T>(
+    items: T[],
+    batchSize: number,
+    processor: (item: T) => Promise<{ success: boolean; item: T; error?: string }>
+  ): Promise<{ successCount: number; failureCount: number }> {
+    let successCount = 0;
+    let failureCount = 0;
+    
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      const results = await Promise.all(batch.map(processor));
+      
+      results.forEach(result => {
+        if (result.success) {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      });
+    }
+    
+    return { successCount, failureCount };
+  }
+
   async function executeBulkAssignTeleoperator(teleoperatorIdValue: string) {
     setIsBulkAssigning(true);
     try {
-      const promises = Array.from(selectedContacts).map(contactId =>
-        apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          body: JSON.stringify({ teleoperatorId: teleoperatorIdValue })
-        })
+      const contactIds = Array.from(selectedContacts);
+      const { successCount, failureCount } = await processBatch(
+        contactIds,
+        50, // Process 50 contacts at a time
+        async (contactId) => {
+          try {
+            await apiCall(`/api/contacts/${contactId}/`, {
+              method: 'PATCH',
+              body: JSON.stringify({ teleoperatorId: teleoperatorIdValue })
+            });
+            return { success: true, item: contactId };
+          } catch (error: any) {
+            console.error(`Error updating teleoperator for contact ${contactId}:`, error);
+            return { 
+              success: false, 
+              item: contactId, 
+              error: error?.response?.error || error?.message 
+            };
+          }
+        }
       );
-      await Promise.all(promises);
-      toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
+      
+      if (failureCount > 0) {
+        toast.warning(`${successCount} contact(s) mis à jour, ${failureCount} erreur(s)`);
+      } else {
+        toast.success(`${successCount} contact(s) mis à jour avec succès`);
+      }
+      
       handleClearSelection();
       setBulkTeleoperatorId('');
       // Small delay to ensure backend transaction is committed, then reload data
@@ -3192,15 +3499,34 @@ function ContactList({
   async function executeBulkAssignConfirmateur(confirmateurIdValue: string) {
     setIsBulkAssigning(true);
     try {
-      const promises = Array.from(selectedContacts).map(async (contactId) => {
-        const response = await apiCall(`/api/contacts/${contactId}/`, {
-          method: 'PATCH',
-          body: JSON.stringify({ confirmateurId: confirmateurIdValue })
-        });
-        return response;
-      });
-      await Promise.all(promises);
-      toast.success(`${selectedContacts.size} contact(s) mis à jour avec succès`);
+      const contactIds = Array.from(selectedContacts);
+      const { successCount, failureCount } = await processBatch(
+        contactIds,
+        50, // Process 50 contacts at a time
+        async (contactId) => {
+          try {
+            await apiCall(`/api/contacts/${contactId}/`, {
+              method: 'PATCH',
+              body: JSON.stringify({ confirmateurId: confirmateurIdValue })
+            });
+            return { success: true, item: contactId };
+          } catch (error: any) {
+            console.error(`Error updating confirmateur for contact ${contactId}:`, error);
+            return { 
+              success: false, 
+              item: contactId, 
+              error: error?.response?.error || error?.message 
+            };
+          }
+        }
+      );
+      
+      if (failureCount > 0) {
+        toast.warning(`${successCount} contact(s) mis à jour, ${failureCount} erreur(s)`);
+      } else {
+        toast.success(`${successCount} contact(s) mis à jour avec succès`);
+      }
+      
       handleClearSelection();
       setBulkConfirmateurId('');
       // Small delay to ensure backend transaction is committed, then reload data
@@ -3285,22 +3611,26 @@ function ContactList({
       const selectedContactIds = Array.from(selectedContacts);
       const statusIdValue = statusId !== 'none' ? statusId : '';
       
-      const promises = selectedContactIds.map(async (contactId) => {
-        try {
-          await apiCall(`/api/contacts/${contactId}/`, {
-            method: 'PATCH',
-            body: JSON.stringify({ statusId: statusIdValue || null })
-          });
-          return { success: true, contactId };
-        } catch (error: any) {
-          console.error(`Error updating status for contact ${contactId}:`, error);
-          return { success: false, contactId, error: error?.response?.error || error?.message };
+      const { successCount, failureCount } = await processBatch(
+        selectedContactIds,
+        50, // Process 50 contacts at a time
+        async (contactId) => {
+          try {
+            await apiCall(`/api/contacts/${contactId}/`, {
+              method: 'PATCH',
+              body: JSON.stringify({ statusId: statusIdValue || null })
+            });
+            return { success: true, item: contactId };
+          } catch (error: any) {
+            console.error(`Error updating status for contact ${contactId}:`, error);
+            return { 
+              success: false, 
+              item: contactId, 
+              error: error?.response?.error || error?.message 
+            };
+          }
         }
-      });
-      
-      const results = await Promise.all(promises);
-      const successCount = results.filter(r => r.success).length;
-      const failureCount = results.filter(r => !r.success).length;
+      );
       
       if (failureCount > 0) {
         toast.warning(`${successCount} contact(s) mis à jour, ${failureCount} erreur(s)`);
@@ -3333,13 +3663,33 @@ function ContactList({
   async function executeBulkDelete() {
     setIsDeleting(true);
     try {
-      const promises = Array.from(selectedContacts).map(contactId =>
-        apiCall(`/api/contacts/${contactId}/delete/`, { method: 'DELETE' })
+      const contactIds = Array.from(selectedContacts);
+      const { successCount, failureCount } = await processBatch(
+        contactIds,
+        50, // Process 50 contacts at a time
+        async (contactId) => {
+          try {
+            await apiCall(`/api/contacts/${contactId}/delete/`, { method: 'DELETE' });
+            return { success: true, item: contactId };
+          } catch (error: any) {
+            console.error(`Error deleting contact ${contactId}:`, error);
+            return { 
+              success: false, 
+              item: contactId, 
+              error: error?.response?.error || error?.message 
+            };
+          }
+        }
       );
-      await Promise.all(promises);
+      
+      if (failureCount > 0) {
+        toast.warning(`${successCount} contact(s) supprimé(s), ${failureCount} erreur(s)`);
+      } else {
+        toast.success(`${successCount} contact(s) supprimé(s) avec succès`);
+      }
+      
       loadData();
       handleClearSelection();
-      toast.success(`${selectedContacts.size} contact(s) supprimé(s) avec succès`);
     } catch (error) {
       console.error('Error deleting contacts:', error);
       toast.error('Erreur lors de la suppression des contacts');
@@ -4841,6 +5191,7 @@ function ContactList({
                   <SelectItem value="100">100</SelectItem>
                   <SelectItem value="200">200</SelectItem>
                   <SelectItem value="500">500</SelectItem>
+                  <SelectItem value="1000">1000</SelectItem>
                 </SelectContent>
               </Select>
             </div>

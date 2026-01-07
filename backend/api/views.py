@@ -1684,10 +1684,10 @@ class ContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 500 per page)
+            # Ensure reasonable page size (max 1000 per page)
             # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
             # The queryset is optimized with select_related/prefetch_related to minimize database queries
-            MAX_PAGE_SIZE = 500
+            MAX_PAGE_SIZE = 1000
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
@@ -1782,7 +1782,7 @@ class ContactView(generics.ListAPIView):
         class DefaultContactPagination(PageNumberPagination):
             page_size = 50  # Default page size matching frontend default
             page_size_query_param = 'page_size'
-            max_page_size = 500  # Max 500 per page
+            max_page_size = 1000  # Max 1000 per page
         
         self.pagination_class = DefaultContactPagination
         queryset = self.get_queryset()
@@ -2680,9 +2680,9 @@ class FosseContactView(generics.ListAPIView):
             page_size = int(requested_page_size) if requested_page_size else 100
             page = int(requested_page) if requested_page else 1
             
-            # Ensure reasonable page size (max 500 per page)
+            # Ensure reasonable page size (max 1000 per page)
             # Note: Heroku has a 30-second HTTP timeout, so queries must complete within that time
-            MAX_PAGE_SIZE = 500
+            MAX_PAGE_SIZE = 1000
             if page_size > MAX_PAGE_SIZE:
                 page_size = MAX_PAGE_SIZE
             if page_size < 1:
