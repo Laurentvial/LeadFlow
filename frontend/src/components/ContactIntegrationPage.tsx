@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowLeft, Upload, Loader2, AlertCircle, CheckCircle2, Zap } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, AlertCircle, CheckCircle2, Zap, Info } from 'lucide-react';
 import { apiCall } from '../utils/api';
 import { toast } from 'sonner';
 import { useUsers } from '../hooks/useUsers';
@@ -45,6 +45,8 @@ export function ContactIntegrationPage() {
   const [error, setError] = useState<string | null>(null);
   const [excludeFirstRow, setExcludeFirstRow] = useState(true);
   const [importResults, setImportResults] = useState<any>(null);
+  const [oldContactIdMatchCount, setOldContactIdMatchCount] = useState<number | null>(null);
+  const [isCheckingOldIds, setIsCheckingOldIds] = useState(false);
 
   // Get teleoperateurs and confirmateurs
   const teleoperateurs = Array.isArray(users) ? users.filter((u: any) => u?.isTeleoperateur === true) : [];
@@ -412,6 +414,60 @@ export function ContactIntegrationPage() {
     }
   };
 
+  // Check old contact IDs when column mapping changes
+  useEffect(() => {
+    const checkOldContactIds = async () => {
+      if (!columnMapping.oldContactId || csvData.length === 0) {
+        setOldContactIdMatchCount(null);
+        return;
+      }
+
+      setIsCheckingOldIds(true);
+      try {
+        const oldIdColumn = columnMapping.oldContactId;
+        // Get all unique old_contact_id values from CSV
+        const oldContactIds = Array.from(
+          new Set(
+            csvData
+              .map(row => row[oldIdColumn])
+              .filter(val => val && val.toString().trim() !== '')
+              .map(val => val.toString().trim())
+          )
+        );
+
+        if (oldContactIds.length === 0) {
+          setOldContactIdMatchCount(0);
+          setIsCheckingOldIds(false);
+          return;
+        }
+
+        // Call API to check how many contacts match
+        const response = await apiCall('/api/contacts/by-old-ids/', {
+          method: 'POST',
+          body: JSON.stringify({ oldContactIds })
+        });
+
+        const matchedContacts = response.contacts || [];
+        setOldContactIdMatchCount(matchedContacts.length);
+      } catch (err: any) {
+        console.error('Error checking old contact IDs:', err);
+        setOldContactIdMatchCount(null);
+      } finally {
+        setIsCheckingOldIds(false);
+      }
+    };
+
+    if (step === 'mapping' && columnMapping.oldContactId && csvData.length > 0) {
+      // Debounce the check to avoid too many API calls
+      const timeoutId = setTimeout(() => {
+        checkOldContactIds();
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    } else {
+      setOldContactIdMatchCount(null);
+    }
+  }, [columnMapping.oldContactId, csvData, step]);
+
   const handleReset = () => {
     setStep('upload');
     setCsvFile(null);
@@ -423,6 +479,7 @@ export function ContactIntegrationPage() {
     setSourceMapping({});
     setError(null);
     setImportResults(null);
+    setOldContactIdMatchCount(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -653,27 +710,46 @@ export function ContactIntegrationPage() {
                         {field.required && <span className="text-red-500 ml-1">*</span>}
                       </Label>
                     </div>
-                    <Select
-                      value={columnMapping[field.value] || '__ignore__'}
-                      onValueChange={(value) => {
-                        setColumnMapping({
-                          ...columnMapping,
-                          [field.value]: value === '__ignore__' ? '' : value,
-                        });
-                      }}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Sélectionner une colonne" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__ignore__">Ignorer</SelectItem>
-                        {csvHeaders.map((header) => (
-                          <SelectItem key={header} value={header}>
-                            {header}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex-1 flex items-center gap-2">
+                      <Select
+                        value={columnMapping[field.value] || '__ignore__'}
+                        onValueChange={(value) => {
+                          setColumnMapping({
+                            ...columnMapping,
+                            [field.value]: value === '__ignore__' ? '' : value,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Sélectionner une colonne" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__ignore__">Ignorer</SelectItem>
+                          {csvHeaders.map((header) => (
+                            <SelectItem key={header} value={header}>
+                              {header}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {field.value === 'oldContactId' && columnMapping.oldContactId && (
+                        <div className="flex items-center gap-2 text-sm">
+                          {isCheckingOldIds ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                              <span className="text-gray-600">Vérification...</span>
+                            </>
+                          ) : oldContactIdMatchCount !== null ? (
+                            <>
+                              <Info className="w-4 h-4 text-blue-600" />
+                              <span className={oldContactIdMatchCount > 0 ? 'text-green-600 font-medium' : 'text-orange-600 font-medium'}>
+                                {oldContactIdMatchCount} contact(s) trouvé(s)
+                              </span>
+                            </>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
