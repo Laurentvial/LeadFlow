@@ -6,6 +6,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from api import views
 from rest_framework_simplejwt.views import TokenRefreshView
+from api.views import CustomTokenRefreshView
 
 def health_check(request):
     """Health check endpoint for Choreo to verify the service is running."""
@@ -25,7 +26,7 @@ urlpatterns = [
     path('cors-test/', cors_test, name='cors_test'),
     path('admin/', admin.site.urls),
     path('api/token/', views.CustomTokenObtainPairView.as_view(), name='get_token'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='refresh'),
+    path('api/token/refresh/', CustomTokenRefreshView.as_view(), name='refresh'),
     path("api-auth/", include('rest_framework.urls')),
     path('api/', include('api.urls')),
 ]

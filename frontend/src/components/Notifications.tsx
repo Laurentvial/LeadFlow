@@ -421,7 +421,7 @@ export default function Notifications() {
               setUserManuallyClosed(false);
             }
           }}
-          className="notifications-button"
+          className="header-button notifications-button"
         >
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (

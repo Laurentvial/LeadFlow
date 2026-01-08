@@ -91,7 +91,15 @@
 }
 
 .header-button:hover {
-  box-shadow: 0 2px 8px 0 rgba(83, 83, 83, 0.1) inset, 2px 2px 2px 0 rgba(75, 75, 75, 0.1) inset;
+  box-shadow: 0 2px 8px 0 rgba(83, 83, 83, 0.1) inset, 2px 2px 2px 0 rgba(75, 75, 75, 0.1) inset !important;
+}
+
+.header-button-user:hover {
+  box-shadow: 0 2px 8px 0 rgba(83, 83, 83, 0.1) inset, 2px 2px 2px 0 rgba(75, 75, 75, 0.1) inset !important;
+}
+
+.notifications-button:hover {
+  box-shadow: 0 2px 8px 0 rgba(83, 83, 83, 0.1) inset, 2px 2px 2px 0 rgba(75, 75, 75, 0.1) inset !important;
 }
 
 .header-button-notifications {
@@ -124,7 +132,7 @@
 }
 
 .header-button-user {
-  border-radius: 0;
+  border-radius: var(--radius);
 }
 
 .header-user-name {

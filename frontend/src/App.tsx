@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
+import { ThemeProvider } from 'next-themes';
 import Login from './components/LoginPage';
 import Dashboard from './components/Dashboard';
 import NotFound from './components/NotFound';
@@ -52,13 +53,14 @@ function ContactDetailWrapper() {
 
 function App() {
     return (
-        <Router>
-            <UserProvider>
-                <UnreadMessagesProvider children={
-                    <>
-                        <Toaster />
-                        <MessagePopupWrapper />
-                        <Routes>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+            <Router>
+                <UserProvider>
+                    <UnreadMessagesProvider children={
+                        <>
+                            <Toaster />
+                            <MessagePopupWrapper />
+                            <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/login/otp" element={<Login />} />
                     <Route path="/logout" element={<Logout />} />
@@ -266,8 +268,9 @@ function App() {
                     </Routes>
                     </>
                 } />
-            </UserProvider>
-        </Router>
+                </UserProvider>
+            </Router>
+        </ThemeProvider>
     );
 }
 

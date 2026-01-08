@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
-import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy, ChevronDown, Bookmark, BookmarkCheck, MoreVertical, Table } from 'lucide-react';
+import { Plus, Search, Trash2, UserCheck, X, Upload, Settings2, GripVertical, ChevronLeft, ChevronRight, Filter, Check, Maximize2, Minimize2, RefreshCw, AlertTriangle, Calendar, Clock, Send, Tag, Copy, ChevronDown, Bookmark, BookmarkCheck, MoreVertical, Table, ArrowDown } from 'lucide-react';
 import {
   Command,
   CommandEmpty,
@@ -514,6 +514,7 @@ function ContactList({
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isBulkAssigning, setIsBulkAssigning] = useState(false);
+  const [isMovingToFosse, setIsMovingToFosse] = useState(false);
   const [isSelectingAllPages, setIsSelectingAllPages] = useState(false);
   
   // Pending filters (what user is typing/selecting)
@@ -717,7 +718,7 @@ function ContactList({
   // Confirmation modal state for bulk actions
   const [isBulkActionConfirmOpen, setIsBulkActionConfirmOpen] = useState(false);
   const [pendingBulkAction, setPendingBulkAction] = useState<{
-    type: 'teleoperator' | 'confirmateur' | 'status' | 'delete';
+    type: 'teleoperator' | 'confirmateur' | 'status' | 'delete' | 'moveToFosse';
     value?: string;
     affectedCount?: number;
     statusName?: string;
@@ -3943,6 +3944,80 @@ function ContactList({
     }
   }
 
+  async function handleBulkMoveToFosse() {
+    // Show confirmation modal
+    setPendingBulkAction({
+      type: 'moveToFosse'
+    });
+    setIsBulkActionConfirmOpen(true);
+  }
+
+  async function executeBulkMoveToFosse() {
+    setIsMovingToFosse(true);
+    try {
+      const contactIds = Array.from(selectedContacts);
+      
+      // Use the optimized bulk endpoint
+      const response = await apiCall('/api/contacts/bulk-move-to-fosse/', {
+        method: 'POST',
+        body: JSON.stringify({ contactIds })
+      });
+      
+      if (response.updated !== undefined) {
+        const updatedCount = response.updated;
+        const totalRequested = response.total_requested || contactIds.length;
+        const skippedCount = response.skipped || 0;
+        const missingCount = response.missing_ids?.length || 0;
+        
+        if (updatedCount === totalRequested) {
+          toast.success(`${updatedCount} contact(s) basculé(s) dans la fosse avec succès`);
+        } else if (updatedCount > 0) {
+          let message = `${updatedCount} contact(s) basculé(s) dans la fosse`;
+          const parts: string[] = [];
+          if (skippedCount > 0) {
+            parts.push(`${skippedCount} déjà dans la fosse`);
+          }
+          if (missingCount > 0) {
+            parts.push(`${missingCount} introuvable(s)`);
+          }
+          if (parts.length > 0) {
+            message += ` (${parts.join(', ')})`;
+          }
+          toast.warning(message);
+        } else {
+          // No contacts were updated
+          let message = 'Aucun contact modifié';
+          const parts: string[] = [];
+          if (skippedCount > 0) {
+            parts.push(`${skippedCount} déjà dans la fosse`);
+          }
+          if (missingCount > 0) {
+            parts.push(`${missingCount} introuvable(s)`);
+          }
+          if (parts.length > 0) {
+            message += ` : ${parts.join(', ')}`;
+          }
+          toast.info(message);
+        }
+      } else {
+        toast.success(`${contactIds.length} contact(s) basculé(s) dans la fosse avec succès`);
+      }
+      
+      handleClearSelection();
+      // Longer delay for bulk operations to ensure backend transaction is fully committed
+      await new Promise(resolve => setTimeout(resolve, 300));
+      // Force refresh by resetting to first page and reloading data
+      setCurrentPage(1);
+      await loadData();
+    } catch (error: any) {
+      console.error('Error moving contacts to fosse:', error);
+      const errorMessage = error?.response?.error || error?.message || 'Erreur lors du basculement dans la fosse';
+      toast.error(errorMessage);
+    } finally {
+      setIsMovingToFosse(false);
+    }
+  }
+
 
   // Check if user can create planning events
   const canCreatePlanning = useHasPermission('planning', 'create');
@@ -5732,6 +5807,32 @@ function ContactList({
                   </>
                 )}
 
+                {canCreate && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleBulkMoveToFosse}
+                    disabled={isMovingToFosse || isBulkAssigning || isDeleting}
+                    style={isMovingToFosse ? { 
+                      opacity: 0.7, 
+                      cursor: 'not-allowed',
+                      backgroundColor: '#f3f4f6'
+                    } : {}}
+                  >
+                    {isMovingToFosse ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                        <span>Basculement en cours... ({selectedContacts.size} contact(s))</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDown className="w-4 h-4 mr-2" />
+                        Basculer dans la fosse
+                      </>
+                    )}
+                  </Button>
+                )}
+
                 {canDelete && (
                   <Button 
                     variant="destructive" 
@@ -7052,6 +7153,14 @@ function ContactList({
                       Êtes-vous sûr de vouloir attribuer <strong>{pendingBulkAction.confirmateurName || 'le confirmateur sélectionné'}</strong> à <strong>{selectedContacts.size} contact(s)</strong> ?
                     </>
                   )}
+                  {pendingBulkAction?.type === 'moveToFosse' && (
+                    <>
+                      Êtes-vous sûr de vouloir basculer <strong>{selectedContacts.size} contact(s)</strong> dans la fosse ?
+                      <br />
+                      <br />
+                      Cette action va retirer le téléopérateur et le confirmateur de ces contacts, et modifier leur statut selon les paramètres Fosse configurés.
+                    </>
+                  )}
                 </p>
               </div>
               <div className="modal-form-actions">
@@ -7087,16 +7196,18 @@ function ContactList({
                         await executeBulkStatusChange(pendingBulkAction.value || '');
                       } else if (pendingBulkAction.type === 'delete') {
                         await executeBulkDelete();
+                      } else if (pendingBulkAction.type === 'moveToFosse') {
+                        await executeBulkMoveToFosse();
                       }
                       setPendingBulkAction(null);
                     }
                   }}
-                  style={{ backgroundColor: pendingBulkAction?.type === 'delete' ? '#dc2626' : '#d97706', color: 'white' }}
+                  style={{ backgroundColor: pendingBulkAction?.type === 'delete' ? '#dc2626' : pendingBulkAction?.type === 'moveToFosse' ? '#059669' : '#d97706', color: 'white' }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#b91c1c' : '#b45309';
+                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#b91c1c' : pendingBulkAction?.type === 'moveToFosse' ? '#047857' : '#b45309';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#dc2626' : '#d97706';
+                    e.currentTarget.style.backgroundColor = pendingBulkAction?.type === 'delete' ? '#dc2626' : pendingBulkAction?.type === 'moveToFosse' ? '#059669' : '#d97706';
                   }}
                 >
                   Confirmer

@@ -20,6 +20,7 @@ urlpatterns = [
     path('contacts/fosse/', api_views.FosseContactView.as_view(), name='fosse-contact-list'),
     path('contacts/create/', api_views.contact_create, name='contact-create'),
     path('contacts/bulk-create/', api_views.contacts_bulk_create, name='contacts-bulk-create'),
+    path('contacts/bulk-move-to-fosse/', api_views.contacts_bulk_move_to_fosse, name='contacts-bulk-move-to-fosse'),
     path('contacts/csv-import-preview/', api_views.csv_import_preview, name='csv-import-preview'),
     path('contacts/csv-import/', api_views.csv_import_contacts, name='csv-import-contacts'),
     path('contacts/integration-update/', api_views.contacts_integration_update, name='contacts-integration-update'),

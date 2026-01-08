@@ -4078,6 +4078,226 @@ def contacts_bulk_create(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def contacts_bulk_move_to_fosse(request):
+    """
+    Optimized bulk operation to move contacts to fosse by clearing teleoperator and confirmateur.
+    This is much faster than individual PATCH requests because it uses bulk_update.
+    
+    Expected request body: {
+        'contactIds': ['id1', 'id2', ...]
+    }
+    """
+    try:
+        contact_ids = request.data.get('contactIds', [])
+        if not isinstance(contact_ids, list):
+            return Response({'error': 'contactIds must be a list'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not contact_ids:
+            return Response({'error': 'No contact IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get contacts that exist
+        contacts = Contact.objects.filter(id__in=contact_ids)
+        existing_ids = set(contacts.values_list('id', flat=True))
+        missing_ids = [cid for cid in contact_ids if cid not in existing_ids]
+        
+        if not contacts.exists():
+            return Response({
+                'error': 'No contacts found',
+                'missing_ids': missing_ids
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get default fosse status once (not per contact)
+        status_to_use = None
+        try:
+            user_details = UserDetails.objects.filter(django_user=request.user).first()
+            if user_details and user_details.role_id:
+                fosse_setting = FosseSettings.objects.select_related('default_status').filter(role_id=user_details.role_id).first()
+                if fosse_setting:
+                    default_status_id = getattr(fosse_setting, 'default_status_id', None)
+                    if default_status_id:
+                        try:
+                            status_to_use = Status.objects.get(id=default_status_id)
+                        except Status.DoesNotExist:
+                            pass
+                
+                # Fallback: if no status from FosseSettings, use the status with is_fosse_default=True
+                if not status_to_use:
+                    status_to_use = Status.objects.filter(is_fosse_default=True).first()
+        except Exception as e:
+            # Log error but don't fail the operation
+            import traceback
+            traceback.print_exc()
+        
+        # Use bulk_update for maximum efficiency
+        from django.db import transaction
+        
+        # Get request details for logs (IP, browser)
+        details = {
+            'ip_address': get_client_ip(request),
+            'browser': get_browser_info(request),
+        }
+        
+        with transaction.atomic():
+            # Store old values before updating for logging
+            contacts_with_changes = []
+            
+            # Update all contacts in one operation
+            contacts_to_update = []
+            for contact in contacts:
+                # Track if we need to update this contact
+                needs_update = False
+                
+                # Store old values for logging
+                old_values = {}
+                new_values = {}
+                
+                # Get old teleoperator info
+                old_teleoperator_id = contact.teleoperator_id
+                old_teleoperator_name = None
+                if contact.teleoperator:
+                    old_teleoperator_name = f"{contact.teleoperator.first_name or ''} {contact.teleoperator.last_name or ''}".strip() or contact.teleoperator.username or contact.teleoperator.email
+                
+                # Get old confirmateur info
+                old_confirmateur_id = contact.confirmateur_id
+                old_confirmateur_name = None
+                if contact.confirmateur:
+                    old_confirmateur_name = f"{contact.confirmateur.first_name or ''} {contact.confirmateur.last_name or ''}".strip() or contact.confirmateur.username or contact.confirmateur.email
+                
+                # Get old status info
+                old_status_id = getattr(contact, 'status_id', None)
+                old_status_name = contact.status.name if contact.status else None
+                
+                # Get old assigned_at
+                old_assigned_at = contact.assigned_at
+                
+                # Clear teleoperator and confirmateur if they exist
+                if contact.teleoperator_id is not None:
+                    contact.teleoperator = None
+                    # Only log names, not IDs, and only if there's a value
+                    if old_teleoperator_name:
+                        old_values['teleoperatorName'] = old_teleoperator_name
+                    # Don't add new_values for None/empty values
+                    needs_update = True
+                
+                if contact.confirmateur_id is not None:
+                    contact.confirmateur = None
+                    # Only log names, not IDs, and only if there's a value
+                    if old_confirmateur_name:
+                        old_values['confirmateurName'] = old_confirmateur_name
+                    # Don't add new_values for None/empty values
+                    needs_update = True
+                
+                # Clear assigned_at when moving to fosse (if it was set)
+                if contact.assigned_at is not None:
+                    contact.assigned_at = None
+                    # Only log if there was a previous value
+                    if old_assigned_at:
+                        # Format date for display
+                        from datetime import datetime
+                        if isinstance(old_assigned_at, datetime):
+                            old_values['assignedAt'] = old_assigned_at.strftime('%d/%m/%Y %H:%M:%S')
+                        else:
+                            old_values['assignedAt'] = str(old_assigned_at)
+                    # Don't add new_values for None/empty values
+                    needs_update = True
+                
+                # Set status if we found a default fosse status and it's different from current
+                if status_to_use:
+                    current_status_id = getattr(contact, 'status_id', None)
+                    if current_status_id != status_to_use.id:
+                        contact.status = status_to_use
+                        # Only log names, not IDs, and only if there's a value
+                        new_values['statusName'] = status_to_use.name
+                        if old_status_name:
+                            old_values['statusName'] = old_status_name
+                        needs_update = True
+                
+                # Add to update list if any changes are needed
+                if needs_update:
+                    # Explicitly update updated_at field (bulk_update doesn't trigger auto_now)
+                    contact.updated_at = timezone.now()
+                    contacts_to_update.append(contact)
+                    # Store changes for logging
+                    contacts_with_changes.append({
+                        'contact': contact,
+                        'old_values': old_values,
+                        'new_values': new_values
+                    })
+            
+            if contacts_to_update:
+                # Use bulk_update with only the fields we're changing
+                Contact.objects.bulk_update(
+                    contacts_to_update,
+                    ['teleoperator', 'confirmateur', 'assigned_at', 'status', 'updated_at'],
+                    batch_size=500  # Process in batches of 500 for optimal performance
+                )
+                
+                # Create logs for all updated contacts using bulk_create for performance
+                if contacts_with_changes:
+                    logs_to_create = []
+                    for change_data in contacts_with_changes:
+                        contact = change_data['contact']
+                        old_values = change_data['old_values']
+                        new_values = change_data['new_values']
+                        
+                        # Filter out empty values and only keep non-empty values
+                        filtered_old_values = {k: v for k, v in old_values.items() if v is not None and v != '' and v != 'None'}
+                        filtered_new_values = {k: v for k, v in new_values.items() if v is not None and v != '' and v != 'None'}
+                        
+                        # Only create log if there are actual changes (non-empty values)
+                        if filtered_old_values or filtered_new_values:
+                            # Generate unique log ID
+                            log_id = uuid.uuid4().hex[:12]
+                            while Log.objects.filter(id=log_id).exists():
+                                log_id = uuid.uuid4().hex[:12]
+                            
+                            # Serialize values for JSON storage
+                            serialized_old_value = serialize_for_json(filtered_old_values) if filtered_old_values else {}
+                            serialized_new_value = serialize_for_json(filtered_new_values) if filtered_new_values else {}
+                            
+                            logs_to_create.append(Log(
+                                id=log_id,
+                                event_type='editContact',  # Use same event type as regular contact edits for consistency
+                                user_id=request.user if request.user.is_authenticated else None,
+                                contact_id=contact,
+                                details=details,
+                                old_value=serialized_old_value,
+                                new_value=serialized_new_value,
+                                created_at=timezone.now()
+                            ))
+                    
+                    # Bulk create all logs at once
+                    if logs_to_create:
+                        try:
+                            Log.objects.bulk_create(logs_to_create, batch_size=500)
+                        except Exception as e:
+                            # Log creation failure shouldn't fail the operation
+                            import traceback
+                            traceback.print_exc()
+                            print(f"Error creating bulk logs: {str(e)}")
+        
+        updated_count = len(contacts_to_update)
+        skipped_count = len(contact_ids) - updated_count - len(missing_ids)
+        
+        return Response({
+            'success': True,
+            'updated': updated_count,
+            'total_requested': len(contact_ids),
+            'skipped': skipped_count,  # Contacts that already had no teleoperator/confirmateur and no status change needed
+            'missing_ids': missing_ids,
+            'message': f'{updated_count} contact(s) moved to fosse successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return Response({
+            'error': str(e),
+            'details': error_details
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def csv_import_preview(request):
     """Preview CSV or Excel file and return headers and sample rows"""
     if 'file' not in request.FILES:
@@ -12421,6 +12641,51 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 # Custom token view that uses the custom serializer
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
+# Custom token refresh view that handles deleted users gracefully
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+class CustomTokenRefreshView(TokenRefreshView):
+    """
+    Custom token refresh view that handles cases where the user referenced
+    in the refresh token no longer exists in the database.
+    """
+    def handle_exception(self, exc):
+        """
+        Override handle_exception to catch DoesNotExist errors and return
+        a proper 401 response instead of 500.
+        """
+        # Check if the exception is related to a non-existent user
+        if isinstance(exc, DjangoUser.DoesNotExist) or (
+            hasattr(exc, '__cause__') and 
+            isinstance(exc.__cause__, DjangoUser.DoesNotExist)
+        ):
+            from rest_framework.response import Response
+            from rest_framework import status
+            return Response(
+                {
+                    'detail': 'Token de rafraîchissement invalide. L\'utilisateur associé n\'existe plus. Veuillez vous reconnecter.',
+                    'code': 'user_not_found'
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if the exception message contains DoesNotExist
+        error_str = str(exc)
+        if 'DoesNotExist' in error_str or 'matching query does not exist' in error_str:
+            from rest_framework.response import Response
+            from rest_framework import status
+            return Response(
+                {
+                    'detail': 'Token de rafraîchissement invalide. L\'utilisateur associé n\'existe plus. Veuillez vous reconnecter.',
+                    'code': 'user_not_found'
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Let other exceptions be handled normally
+        return super().handle_exception(exc)
 
 # Import contact view endpoints
 from .contact_views_endpoints import get_contact_views, create_contact_view, update_contact_view, delete_contact_view

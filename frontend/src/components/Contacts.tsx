@@ -45,7 +45,7 @@ export function Contacts({ onSelectContact }: ContactsProps) {
   
   // Check if user has permission to create contacts (for checkbox column visibility)
   const canCreate = useHasPermission('contacts', 'create');
-  const canDelete = false;
+  const canDelete = useHasPermission('contacts', 'delete');
   
   const statusEditPermissions = React.useMemo(() => {
     if (!currentUser?.permissions || !Array.isArray(currentUser.permissions)) {

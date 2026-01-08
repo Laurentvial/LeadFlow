@@ -9,9 +9,11 @@ import {
   DropdownMenuTrigger 
 } from './ui/dropdown-menu';
 import { Bell, User, LogOut } from 'lucide-react';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { useTheme } from 'next-themes';
 import Notifications from './Notifications';
 import { ContactSearchBar } from './ContactSearchBar';
+import { ThemeToggle } from './ThemeToggle';
 import '../styles/Header.css';
 
 interface HeaderProps {
@@ -20,6 +22,14 @@ interface HeaderProps {
 
 export function Header({ user }: HeaderProps) {
   const navigate = useNavigate();
+  const { theme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+
+  // Handle hydration to prevent mismatch
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Returns full name only if both firstName and lastName exist and are non-empty (after trimming)
   function getFullName() {
@@ -41,6 +51,20 @@ export function Header({ user }: HeaderProps) {
   const fullName = getFullName();
   const mainUserDisplay = fullName || user?.email || user?.userId || 'User';
 
+  // Determine logo based on theme
+  // Fallback to logo.png if logo-black.png doesn't exist or fails to load
+  const getLogoSrc = () => {
+    if (!mounted) return '/images/logo.png';
+    if (theme === 'dark' && !logoError) {
+      return '/images/logo-black.png';
+    }
+    return '/images/logo.png';
+  };
+
+  const handleLogoError = () => {
+    setLogoError(true);
+  };
+
   return (
     <header className="header">
       <div className="header-container">
@@ -49,7 +73,13 @@ export function Header({ user }: HeaderProps) {
             <div className="header-logo">
             </div>
             <div className="header-title-section">
-              <img src="/images/logo.png" alt="Logo" className="header-logo-img" style={{ maxHeight: 100, maxWidth: 140 }} />
+              <img 
+                src={getLogoSrc()} 
+                alt="Logo" 
+                className="header-logo-img" 
+                style={{ maxHeight: 100, maxWidth: 140 }} 
+                onError={handleLogoError}
+              />
               <p className="header-subtitle">Outil de prospecting et de gestion de clients</p>
             </div>
           </div>
@@ -60,6 +90,9 @@ export function Header({ user }: HeaderProps) {
           </div>
           
           <div className="header-actions">
+            {/* Theme Toggle */}
+            <ThemeToggle />
+
             {/* Notifications */}
             <Notifications />
 

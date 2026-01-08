@@ -122,6 +122,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       Object.keys(log.newValue).forEach(key => {
         // Skip updatedAt field
         if (key === 'updatedAt') return;
+        // Skip ID fields (statusId, teleoperatorId, confirmateurId, etc.)
+        if (key.toLowerCase().endsWith('id')) return;
         const newVal = log.newValue[key];
         // Only include non-empty fields for creation
         if (newVal !== null && newVal !== undefined && newVal !== '') {
@@ -140,6 +142,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       Object.keys(log.oldValue).forEach(key => {
         // Skip updatedAt field
         if (key === 'updatedAt') return;
+        // Skip ID fields (statusId, teleoperatorId, confirmateurId, etc.)
+        if (key.toLowerCase().endsWith('id')) return;
         const oldVal = log.oldValue[key];
         if (oldVal !== null && oldVal !== undefined && oldVal !== '') {
           changes.push({
@@ -163,6 +167,8 @@ export function ContactHistoryTab({ contactId }: ContactHistoryTabProps) {
       allKeys.forEach(key => {
         // Skip updatedAt field
         if (key === 'updatedAt') return;
+        // Skip ID fields (statusId, teleoperatorId, confirmateurId, etc.)
+        if (key.toLowerCase().endsWith('id')) return;
         const oldVal = log.oldValue[key];
         const newVal = log.newValue[key];
         
